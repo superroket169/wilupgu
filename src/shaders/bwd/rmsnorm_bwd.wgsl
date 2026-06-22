@@ -24,11 +24,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let dy_w = dY[offset + i] * Weight[i];
         sum_grad = sum_grad + (dy_w * norm_x);
         
-        if (row == 0u) { dWeight[i] = dWeight[i] + (dY[offset + i] * norm_x); }
+        if (row == 0u) { 
+            dWeight[i] = dWeight[i] + (dY[offset + i] * norm_x); 
+        }
     }
 
     for (var i: u32 = 0u; i < config.size; i = i + 1u) {
-        let norm_x = X[offset + i] * rsqrt; dy_w = dY[offset + i] * Weight[i];
+        let norm_x = X[offset + i] * rsqrt; 
+        let dy_w = dY[offset + i] * Weight[i]; 
         dX[offset + i] = rsqrt * (dy_w - (norm_x * sum_grad / f32(config.size)));
     }
 }
