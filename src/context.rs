@@ -14,7 +14,14 @@ impl WgpuContext {
             .expect("Failed to find an appropriate adapter");
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Wilupgu_Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: adapter.limits(),
+                },
+                None,
+            )
             .await
             .expect("Failed to create device");
 
