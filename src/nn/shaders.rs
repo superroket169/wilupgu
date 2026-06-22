@@ -2,6 +2,8 @@ use crate::graph::{ShaderDef, TensorMode};
 
 pub enum BuiltInShader {
     MatMul,
+    MatMulTrp,
+    MatMulWeightBwd,
     Embedding,
     CausalMask,
     RMSNorm,
@@ -15,8 +17,28 @@ impl BuiltInShader {
     pub fn get_def(&self) -> ShaderDef {
         match self {
             Self::MatMul => ShaderDef::new(
-                "MatMul_L1_Tiled",
+                "MatMul",
                 include_str!("../shaders/fwd/matmul.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
+            Self::MatMulTrp => ShaderDef::new(
+                "MatMulTrp",
+                include_str!("../shaders/fwd/matmul_trp.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
+            Self::MatMulWeightBwd => ShaderDef::new(
+                "MatMulWeightBwd",
+                include_str!("../shaders/bwd/matmul_weight_trp.wgsl"),
                 vec![
                     TensorMode::Input,
                     TensorMode::Input,
