@@ -9,7 +9,7 @@ fn test_mixed_transformer_block() {
 
     let matmul_def = ShaderDef::new(
         "MatMul",
-        include_str!("../src/shaders/matmul.wgsl"),
+        include_str!("../src/shaders/fwd/matmul.wgsl"),
         vec![
             TensorMode::Input,
             TensorMode::Input,
@@ -19,7 +19,7 @@ fn test_mixed_transformer_block() {
     );
     let silu_def = ShaderDef::new(
         "SiLU",
-        include_str!("../src/shaders/silu.wgsl"),
+        include_str!("../src/shaders/fwd/silu.wgsl"),
         vec![TensorMode::InOut],
     );
     let add_def = ShaderDef::new(

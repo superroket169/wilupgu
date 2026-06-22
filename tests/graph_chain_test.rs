@@ -9,7 +9,7 @@ fn test_brutal_10_layer_chain() {
 
     let matmul_def = ShaderDef::new(
         "ChainMatMul",
-        include_str!("../src/shaders/matmul.wgsl"),
+        include_str!("../src/shaders/fwd/matmul.wgsl"),
         vec![
             TensorMode::Input,
             TensorMode::Input,
