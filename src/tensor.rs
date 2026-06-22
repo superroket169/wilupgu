@@ -26,21 +26,17 @@ impl Tensor {
         }
     }
 
-    pub fn init_from_cpu<T: Pod>(
-        ctx: Arc<WgpuContext>,
-        data: &[T],
-        usage: wgpu::BufferUsages,
-    ) -> Self {
+    pub fn init_from_cpu<T: Pod>(ctx: Arc<WgpuContext>, data: &[T]) -> Self {
         let size = (data.len() * std::mem::size_of::<T>()) as wgpu::BufferAddress;
-
         let buffer = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Wilupgu_Tensor_Init"),
+                label: Some("Wilupgu_Tensor"),
                 contents: bytemuck::cast_slice(data),
-                usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
             });
-
         Self {
             ctx,
             buffer: Arc::new(buffer),

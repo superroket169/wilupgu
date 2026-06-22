@@ -1,5 +1,5 @@
 use crate::graph::{ShaderDef, TensorMode};
-mod shaders;
+pub mod shaders;
 
 pub fn load_core_shaders() -> Vec<ShaderDef> {
     vec![
