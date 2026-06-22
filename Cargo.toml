@@ -7,3 +7,4 @@ edition = "2021"
 wgpu = "0.19"
 bytemuck = { version = "1.15", features = ["derive"] }
 pollster = "0.3"
+futures-intrusive = "0.5"
