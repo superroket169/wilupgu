@@ -5,7 +5,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TensorMode {
     Input,  // (Read-Only)
-    Output, // (Read-Write)
+    Output, // (Write-Only)
+    InOut,  // (Read-Write)
     Meta,   // (Read-Only)
 }
 
@@ -55,7 +56,7 @@ impl ComputeGraph {
         // ---------------- VALIDATION ------------------
         if bindings.len() != shader.expected_layout.len() {
             panic!(
-                "[ERROR] Layout mismatch error: This shader [{}]: Wants {} tensor, but theres {} tensor",
+                "[ERROR] Shader Binding Mismatch: Shader '{}' expects {} tensors, but {} were provided.",
                 shader.name, shader.expected_layout.len(), bindings.len()
             );
         }
@@ -64,7 +65,7 @@ impl ComputeGraph {
             let expected_mode = shader.expected_layout[bind.binding as usize];
             if bind.mode != expected_mode {
                 panic!(
-                    "[ERROR] Layout mismatch error: This shader [{}] wants this binding {} to this {:?} , but theres {:?}",
+                    "[ERROR] Tensor Mode Mismatch: In shader '{}', binding {} expects {:?}, but {:?} was provided.",
                     shader.name, bind.binding, expected_mode, bind.mode
                 );
             }
@@ -85,7 +86,7 @@ impl ComputeGraph {
         for bind in bindings {
             let read_only = match bind.mode {
                 TensorMode::Input | TensorMode::Meta => true,
-                TensorMode::Output => false,
+                TensorMode::Output | TensorMode::InOut => false,
             };
 
             layout_entries.push(wgpu::BindGroupLayoutEntry {
