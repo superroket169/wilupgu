@@ -5,7 +5,7 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
     vec![
         ShaderDef::new(
             "MatMul",
-            include_str!("../shaders/matmul.wgsl"),
+            include_str!("../shaders/fwd/matmul.wgsl"),
             vec![
                 TensorMode::Input,
                 TensorMode::Input,
@@ -15,7 +15,7 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
         ),
         ShaderDef::new(
             "RMSNorm",
-            include_str!("../shaders/rmsnorm.wgsl"),
+            include_str!("../shaders/fwd/rmsnorm.wgsl"),
             vec![
                 TensorMode::Input,
                 TensorMode::Input,
@@ -25,12 +25,12 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
         ),
         ShaderDef::new(
             "SiLU",
-            include_str!("../shaders/silu.wgsl"),
+            include_str!("../shaders/fwd/silu.wgsl"),
             vec![TensorMode::InOut],
         ),
         ShaderDef::new(
             "RoPE",
-            include_str!("../shaders/rope.wgsl"),
+            include_str!("../shaders/fwd/rope.wgsl"),
             vec![TensorMode::InOut, TensorMode::Meta],
         ),
     ]
