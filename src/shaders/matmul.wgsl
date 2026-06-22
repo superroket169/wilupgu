@@ -9,22 +9,49 @@ struct Meta {
 @group(0) @binding(2) var<storage, read_write> C: array<f32>;
 @group(0) @binding(3) var<storage, read> config: Meta;
 
+const TILE_SIZE: u32 = 16u;
+var<workgroup> tile_A: array<f32, 256>;
+var<workgroup> tile_B: array<f32, 256>;
+
 @compute @workgroup_size(16, 16, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
     let row = global_id.y;
     let col = global_id.x;
 
-    if (row >= config.M || col >= config.N) {
-        return;
-    }
+    let local_row = local_id.y;
+    let local_col = local_id.x;
 
     var sum: f32 = 0.0;
-    for (var k: u32 = 0u; k < config.K; k = k + 1u) {
-        let indexA = row * config.K + k;
-        let indexB = k * config.N + col;
-        sum = sum + A[indexA] * B[indexB];
+    let num_tiles = (config.K + TILE_SIZE - 1u) / TILE_SIZE;
+
+    for (var t: u32 = 0u; t < num_tiles; t = t + 1u) {
+        let a_col = t * TILE_SIZE + local_col;
+        if (row < config.M && a_col < config.K) {
+            tile_A[local_row * TILE_SIZE + local_col] = A[row * config.K + a_col];
+        } else {
+            tile_A[local_row * TILE_SIZE + local_col] = 0.0;
+        }
+
+        let b_row = t * TILE_SIZE + local_row;
+        if (b_row < config.K && col < config.N) {
+            tile_B[local_row * TILE_SIZE + local_col] = B[b_row * config.N + col];
+        } else {
+            tile_B[local_row * TILE_SIZE + local_col] = 0.0;
+        }
+
+        workgroupBarrier();
+
+        for (var k: u32 = 0u; k < TILE_SIZE; k = k + 1u) {
+            sum = sum + tile_A[local_row * TILE_SIZE + k] * tile_B[k * TILE_SIZE + local_col];
+        }
+
+        workgroupBarrier();
     }
 
-    let indexC = row * config.N + col;
-    C[indexC] = sum;
+    if (row < config.M && col < config.N) {
+        C[row * config.N + col] = sum;
+    }
 }
