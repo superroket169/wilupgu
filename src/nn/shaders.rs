@@ -16,7 +16,7 @@ impl BuiltInShader {
         match self {
             Self::MatMul => ShaderDef::new(
                 "MatMul_L1_Tiled",
-                include_str!("../shaders/matmul.wgsl"),
+                include_str!("../shaders/fwd/matmul.wgsl"),
                 vec![
                     TensorMode::Input,
                     TensorMode::Input,
@@ -26,7 +26,7 @@ impl BuiltInShader {
             ),
             Self::Embedding => ShaderDef::new(
                 "Embedding",
-                include_str!("../shaders/embedding.wgsl"),
+                include_str!("../shaders/fwd/embedding.wgsl"),
                 vec![
                     TensorMode::Input,
                     TensorMode::Input,
@@ -41,7 +41,7 @@ impl BuiltInShader {
             ),
             Self::RMSNorm => ShaderDef::new(
                 "RMSNorm",
-                include_str!("../shaders/rmsnorm.wgsl"),
+                include_str!("../shaders/fwd/rmsnorm.wgsl"),
                 vec![
                     TensorMode::Input,
                     TensorMode::Input,
@@ -51,7 +51,7 @@ impl BuiltInShader {
             ),
             Self::SiLU => ShaderDef::new(
                 "SiLU",
-                include_str!("../shaders/silu.wgsl"),
+                include_str!("../shaders/fwd/silu.wgsl"),
                 vec![TensorMode::InOut],
             ),
             Self::ResidualAdd => ShaderDef::new(
@@ -61,12 +61,12 @@ impl BuiltInShader {
             ),
             Self::Softmax => ShaderDef::new(
                 "Softmax",
-                include_str!("../shaders/softmax.wgsl"),
+                include_str!("../shaders/fwd/softmax.wgsl"),
                 vec![TensorMode::InOut, TensorMode::Meta],
             ),
             Self::RoPE => ShaderDef::new(
                 "RoPE",
-                include_str!("../shaders/rope.wgsl"),
+                include_str!("../shaders/fwd/rope.wgsl"),
                 vec![TensorMode::InOut, TensorMode::Meta],
             ),
         }
