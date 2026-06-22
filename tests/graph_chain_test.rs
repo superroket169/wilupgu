@@ -23,17 +23,12 @@ fn test_brutal_10_layer_chain() {
     let weight_data: Vec<f32> = vec![2.0; vec_size];
     let meta_data: Vec<u32> = vec![vec_size as u32, 1, 1];
 
-    let meta_tensor = Tensor::init_from_cpu(ctx.clone(), &meta_data, wgpu::BufferUsages::STORAGE);
-    let weight_tensor =
-        Tensor::init_from_cpu(ctx.clone(), &weight_data, wgpu::BufferUsages::STORAGE);
+    let meta_tensor = Tensor::init_from_cpu(ctx.clone(), &meta_data);
+    let weight_tensor = Tensor::init_from_cpu(ctx.clone(), &weight_data);
 
     let mut chain_tensors: Vec<Tensor> = Vec::new();
 
-    chain_tensors.push(Tensor::init_from_cpu(
-        ctx.clone(),
-        &raw_data,
-        wgpu::BufferUsages::STORAGE,
-    ));
+    chain_tensors.push(Tensor::init_from_cpu(ctx.clone(), &raw_data));
 
     for _ in 0..10 {
         let empty_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {

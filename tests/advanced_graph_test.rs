@@ -34,11 +34,10 @@ fn test_mixed_transformer_block() {
     let residual_data = vec![10.0f32; vec_size]; // Sonradan eklenecek
     let meta_data = vec![vec_size as u32, 1, 1];
 
-    let t_input = Tensor::init_from_cpu(ctx.clone(), &input_data, wgpu::BufferUsages::STORAGE);
-    let t_weight = Tensor::init_from_cpu(ctx.clone(), &weight_data, wgpu::BufferUsages::STORAGE);
-    let t_residual =
-        Tensor::init_from_cpu(ctx.clone(), &residual_data, wgpu::BufferUsages::STORAGE);
-    let t_meta = Tensor::init_from_cpu(ctx.clone(), &meta_data, wgpu::BufferUsages::STORAGE);
+    let t_input = Tensor::init_from_cpu(ctx.clone(), &input_data);
+    let t_weight = Tensor::init_from_cpu(ctx.clone(), &weight_data);
+    let t_residual = Tensor::init_from_cpu(ctx.clone(), &residual_data);
+    let t_meta = Tensor::init_from_cpu(ctx.clone(), &meta_data);
 
     let t_main_output = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Main_Output_Buf"),
@@ -134,7 +133,7 @@ fn test_validation_idiot_proof() {
     let silu_def = ShaderDef::new("SiLU", "...", vec![TensorMode::InOut]); // SiLU InOut bekler!
 
     let dummy_data = vec![1.0f32; 16];
-    let t_dummy = Tensor::init_from_cpu(ctx.clone(), &dummy_data, wgpu::BufferUsages::STORAGE);
+    let t_dummy = Tensor::init_from_cpu(ctx.clone(), &dummy_data);
 
     let mut graph = ComputeGraph::new(ctx.clone());
 
