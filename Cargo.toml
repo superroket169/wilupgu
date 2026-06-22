@@ -1,0 +1,9 @@
+[package]
+name = "wilupgu"
+version = "0.4.0"
+edition = "2021"
+
+[dependencies]
+wgpu = "0.19"
+bytemuck = { version = "1.15", features = ["derive"] }
+pollster = "0.3"
