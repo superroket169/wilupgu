@@ -10,6 +10,7 @@ pub enum BuiltInShader {
     Softmax,
     RMSNorm,
     ResidualAdd,
+    CrossEntropy,
 
     // --- BACKWARD PASS  ---
     MatMulTrp,
@@ -18,6 +19,7 @@ pub enum BuiltInShader {
     RoPEBwd,
     SoftmaxBwd,
     RMSNormBwd,
+    CrossEntropyBwd,
 }
 
 impl BuiltInShader {
@@ -79,6 +81,17 @@ impl BuiltInShader {
                 include_str!("../shaders/add.wgsl"),
                 vec![TensorMode::InOut, TensorMode::Input],
             ),
+            Self::CrossEntropy => ShaderDef::new(
+                "CrossEntropy",
+                include_str!("../shaders/fwd/cross_entropy.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Output,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
 
             // BACKWARD
             Self::MatMulTrp => ShaderDef::new(
@@ -129,6 +142,17 @@ impl BuiltInShader {
                     TensorMode::Input,
                     TensorMode::Input,
                     TensorMode::Output,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
+            Self::CrossEntropyBwd => ShaderDef::new(
+                "CrossEntropyBwd",
+                include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Input,
                     TensorMode::Output,
                     TensorMode::Meta,
                 ],

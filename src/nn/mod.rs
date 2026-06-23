@@ -59,6 +59,17 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
             include_str!("../shaders/fwd/softmax.wgsl"),
             vec![TensorMode::InOut, TensorMode::Meta],
         ),
+        ShaderDef::new(
+            "CrossEntropy",
+            include_str!("../shaders/fwd/cross_entropy.wgsl"),
+            vec![
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Output,
+                TensorMode::Output,
+                TensorMode::Meta,
+            ],
+        ),
         // BWD
         ShaderDef::new(
             "RMSNormBwd",
@@ -92,6 +103,17 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
                 TensorMode::Input,
                 TensorMode::Input,
                 TensorMode::InOut,
+                TensorMode::Meta,
+            ],
+        ),
+        ShaderDef::new(
+            "CrossEntropyBwd",
+            include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
+            vec![
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Output,
                 TensorMode::Meta,
             ],
         ),
