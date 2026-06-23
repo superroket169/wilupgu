@@ -1,6 +1,6 @@
-struct Meta { size: u32, eps: f32, }
+struct Meta { seq_len: u32, size: u32, eps: f32, }
 
-@group(0) @binding(0) var<storage, read> dY: array<f32>; 
+@group(0) @binding(0) var<storage, read> dY: array<f32>;
 @group(0) @binding(1) var<storage, read> X: array<f32>;
 @group(0) @binding(2) var<storage, read> Weight: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dX: array<f32>;
@@ -10,6 +10,9 @@ struct Meta { size: u32, eps: f32, }
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let row = global_id.x;
+    if (row >= config.seq_len) {
+        return;
+    }
     let offset = row * config.size;
 
     var ss: f32 = 0.0;

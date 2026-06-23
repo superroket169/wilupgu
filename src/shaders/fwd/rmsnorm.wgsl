@@ -1,4 +1,5 @@
 struct Meta {
+    seq_len: u32,
     size: u32,
     eps: f32,
 }
@@ -11,6 +12,9 @@ struct Meta {
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let row = global_id.x;
+    if (row >= m.seq_len) {
+        return;
+    }
     let offset = row * m.size;
 
     var ss: f32 = 0.0;

@@ -1,6 +1,7 @@
 struct Meta {
     vocab_size: u32,
     embed_dim: u32,
+    seq_len: u32,
 }
 
 @group(0) @binding(0) var<storage, read> tokens: array<u32>;
@@ -13,7 +14,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let token_idx = global_id.y;
     let dim_idx = global_id.x;
 
-    if (dim_idx >= config.embed_dim) {
+    if (token_idx >= config.seq_len || dim_idx >= config.embed_dim) {
         return;
     }
 
