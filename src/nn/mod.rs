@@ -82,6 +82,17 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
             ],
         ),
         ShaderDef::new(
+            "RMSNormWeightBwd",
+            include_str!("../shaders/bwd/rmsnorm_weight_bwd.wgsl"),
+            vec![
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Output,
+                TensorMode::Meta,
+            ],
+        ),
+        ShaderDef::new(
             "SiLUBwd",
             include_str!("../shaders/bwd/silu_bwd.wgsl"),
             vec![TensorMode::InOut],
@@ -107,6 +118,16 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
             ],
         ),
         ShaderDef::new(
+            "EmbeddingBwd",
+            include_str!("../shaders/bwd/embedding_bwd.wgsl"),
+            vec![
+                TensorMode::Input,
+                TensorMode::Input,
+                TensorMode::Output,
+                TensorMode::Meta,
+            ],
+        ),
+        ShaderDef::new(
             "CrossEntropyBwd",
             include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
             vec![
@@ -114,6 +135,18 @@ pub fn load_core_shaders() -> Vec<ShaderDef> {
                 TensorMode::Input,
                 TensorMode::Input,
                 TensorMode::Output,
+                TensorMode::Meta,
+            ],
+        ),
+        ShaderDef::new(
+            "AdamW",
+            include_str!("../shaders/bwd/adamw.wgsl"),
+            vec![
+                TensorMode::InOut,
+                TensorMode::Input,
+                TensorMode::InOut,
+                TensorMode::InOut,
+                TensorMode::Meta,
                 TensorMode::Meta,
             ],
         ),

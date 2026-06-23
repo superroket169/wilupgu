@@ -19,7 +19,12 @@ pub enum BuiltInShader {
     RoPEBwd,
     SoftmaxBwd,
     RMSNormBwd,
+    RMSNormWeightBwd,
+    EmbeddingBwd,
     CrossEntropyBwd,
+
+    // --- OPTIMIZER ---
+    AdamW,
 }
 
 impl BuiltInShader {
@@ -146,6 +151,27 @@ impl BuiltInShader {
                     TensorMode::Meta,
                 ],
             ),
+            Self::RMSNormWeightBwd => ShaderDef::new(
+                "RMSNormWeightBwd",
+                include_str!("../shaders/bwd/rmsnorm_weight_bwd.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
+            Self::EmbeddingBwd => ShaderDef::new(
+                "EmbeddingBwd",
+                include_str!("../shaders/bwd/embedding_bwd.wgsl"),
+                vec![
+                    TensorMode::Input,
+                    TensorMode::Input,
+                    TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
             Self::CrossEntropyBwd => ShaderDef::new(
                 "CrossEntropyBwd",
                 include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
@@ -154,6 +180,20 @@ impl BuiltInShader {
                     TensorMode::Input,
                     TensorMode::Input,
                     TensorMode::Output,
+                    TensorMode::Meta,
+                ],
+            ),
+
+            // OPTIMIZER
+            Self::AdamW => ShaderDef::new(
+                "AdamW",
+                include_str!("../shaders/bwd/adamw.wgsl"),
+                vec![
+                    TensorMode::InOut,
+                    TensorMode::Input,
+                    TensorMode::InOut,
+                    TensorMode::InOut,
+                    TensorMode::Meta,
                     TensorMode::Meta,
                 ],
             ),

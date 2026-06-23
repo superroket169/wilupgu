@@ -7,7 +7,6 @@ pub struct Tensor {
     pub ctx: Arc<WgpuContext>,
     pub buffer: Arc<wgpu::Buffer>,
     pub size: wgpu::BufferAddress,
-    // TODO: not surely. can add Vec<usize>
 }
 
 impl Tensor {

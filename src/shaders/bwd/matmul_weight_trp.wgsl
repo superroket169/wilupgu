@@ -49,6 +49,7 @@ fn main(
     }
 
     if (row < config.K && col < config.N) {
-        dB[row * config.N + col] = sum;
+        let idx = row * config.N + col;
+        dB[idx] = dB[idx] + sum;
     }
 }
