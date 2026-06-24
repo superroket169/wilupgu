@@ -6,7 +6,7 @@ struct Meta {
 
 @group(0) @binding(0) var<storage, read> tokens: array<u32>;
 @group(0) @binding(1) var<storage, read> grad_output: array<f32>;
-@group(0) @binding(2) var<storage, read_write> grad_table: array<f32>;
+@group(0) @binding(2) var<storage, read_write> grad_table: array<atomic<u32>>;
 @group(0) @binding(3) var<storage, read> config: Meta;
 
 @compute @workgroup_size(256, 1, 1)
@@ -25,5 +25,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let target_idx = token_id * config.embed_dim + dim_idx;
     let grad_val = grad_output[token_idx * config.embed_dim + dim_idx];
-    grad_table[target_idx] = grad_table[target_idx] + grad_val;
+
+    // CAS loop
+    var old_bits = atomicLoad(&grad_table[target_idx]);
+    loop {
+        let new_bits = bitcast<u32>(bitcast<f32>(old_bits) + grad_val);
+        let result = atomicCompareExchangeWeak(&grad_table[target_idx], old_bits, new_bits);
+        if (result.exchanged) {
+            break;
+        }
+        old_bits = result.old_value;
+    }
 }
