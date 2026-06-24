@@ -2,6 +2,9 @@ use crate::context::WgpuContext;
 use crate::tensor::Tensor;
 use std::sync::Arc;
 
+mod fuse;
+pub use fuse::fuse_compute_graphs;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TensorMode {
     Input,  // (Read-Only)
