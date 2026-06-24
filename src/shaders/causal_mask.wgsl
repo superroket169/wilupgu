@@ -1,5 +1,6 @@
 struct Meta {
     seq_len: u32,
+    scale: f32,
 }
 
 @group(0) @binding(0) var<storage, read_write> attention_scores: array<f32>;
@@ -14,8 +15,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    let idx = row * config.seq_len + col;
     if (col > row) {
-        let idx = row * config.seq_len + col;
         attention_scores[idx] = -1000000000.0;
+    } else {
+        attention_scores[idx] = attention_scores[idx] * config.scale;
     }
 }
