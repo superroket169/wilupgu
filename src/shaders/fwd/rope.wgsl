@@ -5,27 +5,27 @@ struct Meta {
 }
 
 @group(0) @binding(0) var<storage, read_write> vec: array<f32>;
-@group(0) @binding(1) var<storage, read> meta: Meta;
+@group(0) @binding(1) var<storage, read> m: Meta;
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let token_idx = global_id.y;
     let dim_idx = global_id.x * 2u;
 
-    if (token_idx >= meta.seq_len || dim_idx >= meta.head_dim) {
+    if (token_idx >= m.seq_len || dim_idx >= m.head_dim) {
         return;
     }
 
-    let num_heads = meta.dim / meta.head_dim;
+    let num_heads = m.dim / m.head_dim;
 
     for (var h: u32 = 0u; h < num_heads; h = h + 1u) {
-        let offset = token_idx * meta.dim + h * meta.head_dim + dim_idx;
+        let offset = token_idx * m.dim + h * m.head_dim + dim_idx;
 
         let x0 = vec[offset];
         let x1 = vec[offset + 1u];
 
         // TODO: will add inv_freq for optimization
-        let freq = 1.0 / pow(10000.0, f32(dim_idx) / f32(meta.head_dim));
+        let freq = 1.0 / pow(10000.0, f32(dim_idx) / f32(m.head_dim));
         let v_angle = f32(token_idx) * freq;
 
         let v_cos = cos(v_angle);
