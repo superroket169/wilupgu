@@ -7,31 +7,63 @@ struct Meta { seq_len: u32, size: u32, eps: f32, }
 @group(0) @binding(4) var<storage, read_write> rsqrt_cache: array<f32>;
 @group(0) @binding(5) var<storage, read> config: Meta;
 
+var<workgroup> partial: array<f32, 256>;
+
+fn reduce(tid: u32) -> f32 {
+    workgroupBarrier();
+    var stride: u32 = 128u;
+    while (stride > 0u) {
+        if (tid < stride) {
+            partial[tid] = partial[tid] + partial[tid + stride];
+        }
+        workgroupBarrier();
+        stride = stride / 2u;
+    }
+    return partial[0];
+}
+
 @compute @workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let row = global_id.x;
+fn main(
+    @builtin(workgroup_id) wg_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+    let row = wg_id.x;
     if (row >= config.seq_len) {
         return;
     }
     let offset = row * config.size;
+    let tid = local_id.x;
 
-    var ss: f32 = 0.0;
-    for (var i: u32 = 0u; i < config.size; i = i + 1u) {
-        ss = ss + (X[offset + i] * X[offset + i]);
+    var local_ss: f32 = 0.0;
+    var i: u32 = tid;
+    while (i < config.size) {
+        local_ss = local_ss + (X[offset + i] * X[offset + i]);
+        i = i + 256u;
     }
-    let rsqrt = 1.0 / sqrt((ss / f32(config.size)) + config.eps);
-    rsqrt_cache[row] = rsqrt;
+    partial[tid] = local_ss;
+    let ss = reduce(tid);
 
-    var sum_grad: f32 = 0.0;
-    for (var i: u32 = 0u; i < config.size; i = i + 1u) {
+    let rsqrt = 1.0 / sqrt((ss / f32(config.size)) + config.eps);
+    if (tid == 0u) {
+        rsqrt_cache[row] = rsqrt;
+    }
+
+    var local_sum_grad: f32 = 0.0;
+    i = tid;
+    while (i < config.size) {
         let norm_x = X[offset + i] * rsqrt;
         let dy_w = dY[offset + i] * Weight[i];
-        sum_grad = sum_grad + (dy_w * norm_x);
+        local_sum_grad = local_sum_grad + (dy_w * norm_x);
+        i = i + 256u;
     }
+    partial[tid] = local_sum_grad;
+    let sum_grad = reduce(tid);
 
-    for (var i: u32 = 0u; i < config.size; i = i + 1u) {
+    i = tid;
+    while (i < config.size) {
         let norm_x = X[offset + i] * rsqrt;
         let dy_w = dY[offset + i] * Weight[i];
         dX[offset + i] = rsqrt * (dy_w - (norm_x * sum_grad / f32(config.size)));
+        i = i + 256u;
     }
 }
