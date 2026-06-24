@@ -22,6 +22,7 @@ pub enum BuiltInShader {
     RMSNormWeightBwd,
     EmbeddingBwd,
     CrossEntropyBwd,
+    BwdAddInplace,
 
     // --- OPTIMIZER ---
     AdamW,
@@ -182,6 +183,11 @@ impl BuiltInShader {
                     TensorMode::Output,
                     TensorMode::Meta,
                 ],
+            ),
+            Self::BwdAddInplace => ShaderDef::new(
+                "BwdAddInplace",
+                include_str!("../shaders/bwd/bwd_add_inplace.wgsl"),
+                vec![TensorMode::InOut, TensorMode::Input],
             ),
 
             // OPTIMIZER
