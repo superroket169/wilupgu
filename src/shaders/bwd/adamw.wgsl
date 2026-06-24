@@ -26,9 +26,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let g = grads[idx];
+    let clamped_grad = clamp(g, -1.0, 1.0);
 
-    let m_new = cfg.beta1 * m[idx] + (1.0 - cfg.beta1) * g;
-    let v_new = cfg.beta2 * v[idx] + (1.0 - cfg.beta2) * g * g;
+    let m_new = cfg.beta1 * m[idx] + (1.0 - cfg.beta1) * clamped_grad;
+    let v_new = cfg.beta2 * v[idx] + (1.0 - cfg.beta2) * clamped_grad * clamped_grad;
     m[idx] = m_new;
     v[idx] = v_new;
 
