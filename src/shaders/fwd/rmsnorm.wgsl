@@ -9,23 +9,44 @@ struct Meta {
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 @group(0) @binding(3) var<storage, read> m: Meta;
 
+var<workgroup> partial: array<f32, 256>;
+
 @compute @workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let row = global_id.x;
+fn main(
+    @builtin(workgroup_id) wg_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+    let row = wg_id.x;
     if (row >= m.seq_len) {
         return;
     }
     let offset = row * m.size;
+    let tid = local_id.x;
 
-    var ss: f32 = 0.0;
-    for (var i: u32 = 0u; i < m.size; i = i + 1u) {
+    var local_ss: f32 = 0.0;
+    var i: u32 = tid;
+    while (i < m.size) {
         let val = x[offset + i];
-        ss = ss + (val * val);
+        local_ss = local_ss + (val * val);
+        i = i + 256u;
     }
-    
-    let rsqrt = 1.0 / sqrt((ss / f32(m.size)) + m.eps);
+    partial[tid] = local_ss;
+    workgroupBarrier();
 
-    for (var i: u32 = 0u; i < m.size; i = i + 1u) {
+    var stride: u32 = 128u;
+    while (stride > 0u) {
+        if (tid < stride) {
+            partial[tid] = partial[tid] + partial[tid + stride];
+        }
+        workgroupBarrier();
+        stride = stride / 2u;
+    }
+
+    let rsqrt = 1.0 / sqrt((partial[0] / f32(m.size)) + m.eps);
+
+    i = tid;
+    while (i < m.size) {
         output[offset + i] = x[offset + i] * rsqrt * weight[i];
+        i = i + 256u;
     }
 }
