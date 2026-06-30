@@ -8,3 +8,9 @@ wgpu = "0.19"
 bytemuck = { version = "1.15", features = ["derive"] }
 pollster = "0.3"
 futures-intrusive = "0.5"
+cudarc = { version = "0.19", optional = true, features = ["cublas", "nvrtc", "cuda-version-from-build-system"] }
+
+[features]
+default = []
+vulkan = []
+cuda = ["cudarc"]
