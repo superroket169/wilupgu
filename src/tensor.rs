@@ -1,88 +1,38 @@
-use crate::context::WgpuContext;
-use bytemuck::Pod;
+use crate::backend::Backend;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
-pub struct Tensor {
-    pub ctx: Arc<WgpuContext>,
-    pub buffer: Arc<wgpu::Buffer>,
-    pub size: wgpu::BufferAddress,
+pub struct Tensor<B: Backend> {
+    pub ctx: Arc<B>,
+    pub buffer: B::Buffer,
+    pub size: u64,
 }
 
-impl Tensor {
-    pub fn new(ctx: Arc<WgpuContext>, size_bytes: u64, usage: wgpu::BufferUsages) -> Self {
-        let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Wilupgu_Tensor"),
-            size: size_bytes,
-            usage,
-            mapped_at_creation: false,
-        });
-
+impl<B: Backend> Tensor<B> {
+    pub fn new(ctx: Arc<B>, size_bytes: u64) -> Self {
+        let buffer = ctx.alloc(size_bytes);
         Self {
             ctx,
-            buffer: Arc::new(buffer),
+            buffer,
             size: size_bytes,
         }
     }
 
-    pub fn init_from_cpu<T: Pod>(ctx: Arc<WgpuContext>, data: &[T]) -> Self {
-        let size = (data.len() * std::mem::size_of::<T>()) as wgpu::BufferAddress;
-        let buffer = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Wilupgu_Tensor"),
-                contents: bytemuck::cast_slice(data),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-            });
-        Self {
-            ctx,
-            buffer: Arc::new(buffer),
-            size,
-        }
+    pub fn init_from_cpu<T: bytemuck::Pod>(ctx: Arc<B>, data: &[T]) -> Self {
+        let size = (data.len() * std::mem::size_of::<T>()) as u64;
+        let buffer = ctx.alloc_from_cpu(data);
+        Self { ctx, buffer, size }
     }
 
-    pub fn copy_from_cpu<T: Pod>(&self, data: &[T]) {
-        self.ctx
-            .queue
-            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
+    pub fn copy_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) {
+        self.ctx.copy_from_cpu(&self.buffer, data);
     }
 
-    pub fn to_cpu<T: Pod + Default + Clone>(&self) -> Vec<T> {
-        let device = &self.ctx.device;
-        let queue = &self.ctx.queue;
-
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging_Buffer"),
-            size: self.size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        encoder.copy_buffer_to_buffer(&self.buffer, 0, &staging_buffer, 0, self.size);
-        queue.submit(Some(encoder.finish()));
-
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        device.poll(wgpu::Maintain::Wait);
-        pollster::block_on(async { receiver.receive().await.unwrap().unwrap() });
-
-        let data = buffer_slice.get_mapped_range();
-        let result: Vec<T> = bytemuck::cast_slice(&data).to_vec();
-
-        drop(data);
-        staging_buffer.unmap();
-
-        result
+    pub fn to_cpu<T: bytemuck::Pod + Default + Clone>(&self) -> Vec<T> {
+        self.ctx.copy_to_cpu(&self.buffer)
     }
 
     pub fn free(self) {
-        self.buffer.destroy();
+        let Self { ctx, buffer, .. } = self;
+        ctx.free_buffer(buffer);
     }
 }
