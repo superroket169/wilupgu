@@ -1,5 +1,6 @@
 struct Meta {
     size: u32,
+    groups_x: u32,
 }
 
 struct StepConfig {
@@ -18,9 +19,17 @@ struct StepConfig {
 @group(0) @binding(4) var<storage, read> param_meta: Meta;
 @group(0) @binding(5) var<storage, read> cfg: StepConfig;
 
+// Vulkan caps each dispatch dimension at 65535 workgroups; large tensors
+// (e.g. the 50257x768 embedding/lm_head, ~150772 workgroups of 256 threads)
+// exceed that in a 1D dispatch, which a real driver doesn't reliably reject
+// cleanly (manifests as "Parent device is lost" instead of a validation
+// error). Dispatch a 2D grid instead and reconstruct the flat index here.
 @compute @workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn main(
+    @builtin(workgroup_id) wg_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+    let idx = (wg_id.y * param_meta.groups_x + wg_id.x) * 256u + local_id.x;
     if (idx >= param_meta.size) {
         return;
     }
