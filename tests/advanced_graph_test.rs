@@ -1,118 +1,70 @@
 use std::sync::Arc;
-use wilupgu::context::WgpuContext;
-use wilupgu::graph::{ComputeGraph, ShaderDef, TensorBind, TensorMode};
-use wilupgu::tensor::Tensor;
+use wilupgu::{Backend, Binding, ComputeGraph, Tensor, TensorMode, WgpuBackend};
 
-#[test]
-fn test_mixed_transformer_block() {
-    let ctx = Arc::new(pollster::block_on(WgpuContext::new()));
+fn wgpu() -> Arc<WgpuBackend> {
+    Arc::new(pollster::block_on(WgpuBackend::new()))
+}
 
-    let matmul_def = ShaderDef::new(
-        "MatMul",
-        include_str!("../src/shaders/fwd/matmul.wgsl"),
-        vec![
-            TensorMode::Input,
-            TensorMode::Input,
-            TensorMode::Output,
-            TensorMode::Meta,
-        ],
-    );
-    let silu_def = ShaderDef::new(
-        "SiLU",
-        include_str!("../src/shaders/fwd/silu.wgsl"),
-        vec![TensorMode::InOut],
-    );
-    let add_def = ShaderDef::new(
-        "ResidualAdd",
-        include_str!("../src/shaders/add.wgsl"),
-        vec![TensorMode::InOut, TensorMode::Input],
-    );
+fn run_mixed_transformer_block<B: Backend>(
+    ctx: Arc<B>,
+    input_data: &[f32],
+    weight_data: &[f32],
+    residual_data: &[f32],
+    vec_size: u32,
+) -> Vec<f32> {
+    let meta_data = vec![vec_size, 1, 1];
 
-    let vec_size = 16;
-    let input_data = vec![1.0f32; vec_size];
-    let weight_data = vec![2.0f32; vec_size]; // Çarpınca hepsi 2.0 olacak
-    let residual_data = vec![10.0f32; vec_size]; // Sonradan eklenecek
-    let meta_data = vec![vec_size as u32, 1, 1];
-
-    let t_input = Tensor::init_from_cpu(ctx.clone(), &input_data);
-    let t_weight = Tensor::init_from_cpu(ctx.clone(), &weight_data);
-    let t_residual = Tensor::init_from_cpu(ctx.clone(), &residual_data);
+    let t_input = Tensor::init_from_cpu(ctx.clone(), input_data);
+    let t_weight = Tensor::init_from_cpu(ctx.clone(), weight_data);
+    let t_residual = Tensor::init_from_cpu(ctx.clone(), residual_data);
     let t_meta = Tensor::init_from_cpu(ctx.clone(), &meta_data);
-
-    let t_main_output = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Main_Output_Buf"),
-        size: (vec_size * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let t_out = Tensor {
-        ctx: ctx.clone(),
-        buffer: t_main_output.into(),
-        size: (vec_size * 4) as u64,
-    };
+    let t_out = Tensor::new(ctx.clone(), (vec_size * 4) as u64);
 
     let mut graph = ComputeGraph::new(ctx.clone());
 
     // (1.0 * 2.0 = 2.0)
     graph.add_node(
-        &matmul_def,
+        "MatMul",
         &[
-            TensorBind {
-                binding: 0,
-                tensor: &t_input,
-                mode: TensorMode::Input,
-            },
-            TensorBind {
-                binding: 1,
-                tensor: &t_weight,
-                mode: TensorMode::Input,
-            },
-            TensorBind {
-                binding: 2,
-                tensor: &t_out,
-                mode: TensorMode::Output,
-            },
-            TensorBind {
-                binding: 3,
-                tensor: &t_meta,
-                mode: TensorMode::Meta,
-            },
+            Binding::new(0, &t_input.buffer, TensorMode::Input),
+            Binding::new(1, &t_weight.buffer, TensorMode::Input),
+            Binding::new(2, &t_out.buffer, TensorMode::Output),
+            Binding::new(3, &t_meta.buffer, TensorMode::Meta),
         ],
         [16, 1, 1],
     );
 
     // 2.0 * sigmoid(2.0) ~ 1.761
     graph.add_node(
-        &silu_def,
-        &[TensorBind {
-            binding: 0,
-            tensor: &t_out,
-            mode: TensorMode::InOut,
-        }],
+        "SiLU",
+        &[Binding::new(0, &t_out.buffer, TensorMode::InOut)],
         [16, 1, 1],
     );
 
     // 1.761 + 10.0 ≈ 11.761
     graph.add_node(
-        &add_def,
+        "ResidualAdd",
         &[
-            TensorBind {
-                binding: 0,
-                tensor: &t_out,
-                mode: TensorMode::InOut,
-            },
-            TensorBind {
-                binding: 1,
-                tensor: &t_residual,
-                mode: TensorMode::Input,
-            },
+            Binding::new(0, &t_out.buffer, TensorMode::InOut),
+            Binding::new(1, &t_residual.buffer, TensorMode::Input),
         ],
         [16, 1, 1],
     );
 
     graph.execute();
+    ctx.synchronize();
+    t_out.to_cpu()
+}
 
-    let result: Vec<f32> = t_out.to_cpu();
+#[test]
+fn test_mixed_transformer_block() {
+    let vec_size = 16u32;
+    let input_data = vec![1.0f32; vec_size as usize];
+    let weight_data = vec![2.0f32; vec_size as usize];
+    let residual_data = vec![10.0f32; vec_size as usize];
+
+    let result =
+        run_mixed_transformer_block(wgpu(), &input_data, &weight_data, &residual_data, vec_size);
     println!("--> Block Result: {:?}", &result[0..4]);
 
     // 11.7 ile 11.8 arası
@@ -125,26 +77,22 @@ fn test_mixed_transformer_block() {
 
 //  TEST: İDİOT-PROOF TEST
 // burası çökmeli ve panic atmalı. aşağıdaki kod panic atar ise başarılı.
+
 #[test]
 #[should_panic(expected = "Tensor Mode Mismatch")]
 fn test_validation_idiot_proof() {
-    let ctx = Arc::new(pollster::block_on(WgpuContext::new()));
-
-    let silu_def = ShaderDef::new("SiLU", "...", vec![TensorMode::InOut]); // SiLU InOut bekler!
+    let ctx = Arc::new(pollster::block_on(WgpuBackend::new()));
 
     let dummy_data = vec![1.0f32; 16];
     let t_dummy = Tensor::init_from_cpu(ctx.clone(), &dummy_data);
 
     let mut graph = ComputeGraph::new(ctx.clone());
 
-    // yanlış TensorMode
+    // yanlış TensorMode -- SiLU InOut bekler, Input verilirse
+    // `ComputeGraph::add_node` panic atmalı.
     graph.add_node(
-        &silu_def,
-        &[TensorBind {
-            binding: 0,
-            tensor: &t_dummy,
-            mode: TensorMode::Input,
-        }],
+        "SiLU",
+        &[Binding::new(0, &t_dummy.buffer, TensorMode::Input)],
         [16, 1, 1],
     );
 }
