@@ -1,5 +1,6 @@
 use crate::backend::{Backend, Binding, TensorMode};
 use crate::nn::cuda_kernels as k; // <- moves to shaders/cuda.rs later
+use crate::pool::BufferPool;
 use cudarc::cublas::sys::cublasOperation_t;
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
@@ -35,6 +36,7 @@ pub struct CudaBackend {
     pub stream: Arc<CudaStream>,
     blas: CudaBlas,
     kernel_cache: Mutex<HashMap<String, CudaFunction>>,
+    pool: BufferPool<CudaBuffer>,
 }
 
 impl CudaBackend {
@@ -50,6 +52,7 @@ impl CudaBackend {
             stream,
             blas,
             kernel_cache: Mutex::new(HashMap::new()),
+            pool: BufferPool::new(),
         })
     }
 
@@ -523,6 +526,9 @@ impl Backend for CudaBackend {
     }
 
     fn alloc(&self, size_bytes: u64) -> CudaBuffer {
+        if let Some(buf) = self.pool.take(size_bytes) {
+            return buf;
+        }
         let n = (size_bytes as usize) / std::mem::size_of::<f32>();
         let slice = self
             .stream
@@ -533,6 +539,15 @@ impl Backend for CudaBackend {
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> CudaBuffer {
         let f32s: &[f32] = bytemuck::cast_slice(data);
+        let size_bytes = (f32s.len() * std::mem::size_of::<f32>()) as u64;
+        if let Some(buf) = self.pool.take(size_bytes) {
+            let mut g = buf.lock().unwrap();
+            self.stream
+                .memcpy_htod(f32s, &mut *g)
+                .expect("[cuda] htod copy (recycled) failed");
+            drop(g);
+            return buf;
+        }
         let slice = self.stream.clone_htod(f32s).expect("[cuda] htod failed");
         Arc::new(Mutex::new(slice))
     }
@@ -553,6 +568,10 @@ impl Backend for CudaBackend {
 
     fn free_buffer(&self, _buf: CudaBuffer) {
         // CudaSlice frees device memory on Drop — nothing to do explicitly
+    }
+
+    fn recycle(&self, size_bytes: u64, buf: CudaBuffer) {
+        self.pool.recycle(size_bytes, buf);
     }
 
     fn build_node(

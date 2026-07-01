@@ -30,9 +30,10 @@ impl<B: Backend> Tensor<B> {
     pub fn to_cpu<T: bytemuck::Pod + Default + Clone>(&self) -> Vec<T> {
         self.ctx.copy_to_cpu(&self.buffer)
     }
+}
 
-    pub fn free(self) {
-        let Self { ctx, buffer, .. } = self;
-        ctx.free_buffer(buffer);
+impl<B: Backend> Drop for Tensor<B> {
+    fn drop(&mut self) {
+        self.ctx.recycle(self.size, self.buffer.clone());
     }
 }
