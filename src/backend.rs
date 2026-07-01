@@ -35,6 +35,9 @@ pub fn kernel_layout(name: &str) -> &'static [TensorMode] {
         "HeadGather" => &[Input, Output, Meta],
         "HeadScatter" => &[Input, Output, Meta],
         "ZeroTensor" => &[Output, Meta],
+        "SoftmaxRect" => &[InOut, Meta],
+        "CacheWrite" => &[Input, InOut, Meta],
+        "RoPEOffset" => &[InOut, Meta],
 
         // ========= Backward =========
         "MatMulTrp" => &[Input, Input, Output, Meta],
