@@ -19,6 +19,42 @@ impl<'a, Buf> Binding<'a, Buf> {
     }
 }
 
+pub fn kernel_layout(name: &str) -> &'static [TensorMode] {
+    use TensorMode::*;
+    match name {
+        // =========== Forward ===========
+        "MatMul" => &[Input, Input, Output, Meta],
+        "Embedding" => &[Input, Input, Output, Meta],
+        "CausalMask" => &[InOut, Meta],
+        "SiLU" => &[InOut],
+        "RoPE" => &[InOut, Meta],
+        "Softmax" => &[InOut, Meta],
+        "RMSNorm" => &[Input, Input, Output, Meta],
+        "ResidualAdd" => &[InOut, Input],
+        "CrossEntropy" => &[Input, Input, Output, Output, Meta],
+        "HeadGather" => &[Input, Output, Meta],
+        "HeadScatter" => &[Input, Output, Meta],
+        "ZeroTensor" => &[Output, Meta],
+
+        // ========= Backward =========
+        "MatMulTrp" => &[Input, Input, Output, Meta],
+        "MatMulWeightBwd" => &[Input, Input, Output, Meta],
+        "SiLUBwd" => &[Input, Input, Output],
+        "RoPEBwd" => &[InOut, Meta],
+        "SoftmaxBwd" => &[Input, Input, Output, Meta],
+        "RMSNormBwd" => &[Input, Input, Input, Output, Output, Meta],
+        "RMSNormWeightBwd" => &[Input, Input, Input, Output, Meta],
+        "EmbeddingBwd" => &[Input, Input, Output, Meta],
+        "CrossEntropyBwd" => &[Input, Input, Input, Output, Meta],
+        "BwdAddInplace" => &[InOut, Input],
+
+        // ============ Optimizer ===========
+        "AdamW" => &[InOut, Input, InOut, InOut, Meta, Meta],
+
+        _ => panic!("[backend] unknown kernel: {name}"),
+    }
+}
+
 pub trait Backend: Send + Sync + 'static {
     type Buffer: Clone + Send + Sync + 'static;
     type Node: Clone + Send + Sync + 'static;
