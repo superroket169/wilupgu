@@ -360,6 +360,71 @@ extern "C" __global__ void cross_entropy_bwd_kernel(
 }
 "#;
 
+pub const SOFTMAX_RECT: &str = r#"
+extern "C" __global__ void softmax_rect_kernel(float* x, unsigned int num_rows, unsigned int width, float scale) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= num_rows) return;
+    unsigned int offset = row * width;
+
+    float max_val = -1000000.0f;
+    for (unsigned int i = 0; i < width; i++) {
+        float val = x[offset + i] * scale;
+        if (val > max_val) max_val = val;
+    }
+
+    float sum_exp = 0.0f;
+    for (unsigned int i = 0; i < width; i++) {
+        float e = expf(x[offset + i] * scale - max_val);
+        x[offset + i] = e;
+        sum_exp += e;
+    }
+
+    for (unsigned int i = 0; i < width; i++) {
+        x[offset + i] = x[offset + i] / sum_exp;
+    }
+}
+"#;
+
+pub const CACHE_WRITE: &str = r#"
+extern "C" __global__ void cache_write_kernel(
+    const float* src, float* dst,
+    unsigned int row_count, unsigned int width, unsigned int dst_row_offset
+) {
+    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row >= row_count || col >= width) return;
+    unsigned int src_idx = row * width + col;
+    unsigned int dst_idx = (dst_row_offset + row) * width + col;
+    dst[dst_idx] = src[src_idx];
+}
+"#;
+
+pub const ROPE_OFFSET: &str = r#"
+extern "C" __global__ void rope_offset_kernel(
+    float* vec, unsigned int seq_len, unsigned int dim, unsigned int head_dim, unsigned int pos_offset
+) {
+    unsigned int dim_idx = (blockIdx.x * blockDim.x + threadIdx.x) * 2u;
+    unsigned int token_idx = blockIdx.y * blockDim.y + threadIdx.y;
+    if (token_idx >= seq_len || dim_idx >= head_dim) return;
+
+    unsigned int num_heads = dim / head_dim;
+    unsigned int abs_pos = token_idx + pos_offset;
+    for (unsigned int h = 0; h < num_heads; h++) {
+        unsigned int offset = token_idx * dim + h * head_dim + dim_idx;
+        float x0 = vec[offset];
+        float x1 = vec[offset + 1u];
+
+        float freq = 1.0f / powf(10000.0f, (float)dim_idx / (float)head_dim);
+        float v_angle = (float)abs_pos * freq;
+        float v_cos = cosf(v_angle);
+        float v_sin = sinf(v_angle);
+
+        vec[offset]      = x0 * v_cos - x1 * v_sin;
+        vec[offset + 1u] = x0 * v_sin + x1 * v_cos;
+    }
+}
+"#;
+
 pub const ADAMW: &str = r#"
 extern "C" __global__ void adamw_kernel(
     float* weights, const float* grads, float* m, float* v,

@@ -60,6 +60,9 @@ fn kernel_src(name: &str) -> &'static str {
         "HeadGather" => include_str!("../shaders/head_gather.wgsl"),
         "HeadScatter" => include_str!("../shaders/head_scatter.wgsl"),
         "ZeroTensor" => include_str!("../shaders/zero_tensor.wgsl"),
+        "SoftmaxRect" => include_str!("../shaders/fwd/softmax_rect.wgsl"),
+        "CacheWrite" => include_str!("../shaders/cache_write.wgsl"),
+        "RoPEOffset" => include_str!("../shaders/fwd/rope_offset.wgsl"),
 
         // ========= Backward =========
         "MatMulTrp" => include_str!("../shaders/fwd/matmul_trp.wgsl"),

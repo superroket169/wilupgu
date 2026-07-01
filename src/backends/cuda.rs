@@ -438,6 +438,47 @@ impl CudaBackend {
         );
     }
 
+    fn launch_softmax_rect(&self, bindings: &[CudaBinding]) {
+        let bytes = meta_bytes(find(bindings, 1));
+        let num_rows = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let width = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let scale = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+        let f = self.compile("softmax_rect", k::SOFTMAX_RECT, "softmax_rect_kernel");
+        let mut g = find(bindings, 0).slice.lock().unwrap();
+        launch!(self, f, cfg_1d(num_rows), &mut *g, &num_rows, &width, &scale);
+    }
+
+    fn launch_cache_write(&self, bindings: &[CudaBinding]) {
+        let dims = meta_u32(find(bindings, 2));
+        let (row_count, width, dst_row_offset) = (dims[0], dims[1], dims[2]);
+        let f = self.compile("cache_write", k::CACHE_WRITE, "cache_write_kernel");
+        let sg = find(bindings, 0).slice.lock().unwrap();
+        let mut dg = find(bindings, 1).slice.lock().unwrap();
+        let grid_x = ((width + 15) / 16).max(1);
+        let grid_y = ((row_count + 15) / 16).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (grid_x, grid_y, 1),
+            block_dim: (16, 16, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(self, f, cfg, &*sg, &mut *dg, &row_count, &width, &dst_row_offset);
+    }
+
+    fn launch_rope_offset(&self, bindings: &[CudaBinding]) {
+        let dims = meta_u32(find(bindings, 1));
+        let (seq, dim, head_dim, pos_offset) = (dims[0], dims[1], dims[2], dims[3]);
+        let f = self.compile("rope_offset", k::ROPE_OFFSET, "rope_offset_kernel");
+        let mut g = find(bindings, 0).slice.lock().unwrap();
+        let gx = ((head_dim / 2 + 15) / 16).max(1);
+        let gy = ((seq + 15) / 16).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (gx, gy, 1),
+            block_dim: (16, 16, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(self, f, cfg, &mut *g, &seq, &dim, &head_dim, &pos_offset);
+    }
+
     fn launch_adamw(&self, bindings: &[CudaBinding]) {
         let size = meta_u32(find(bindings, 4))[0];
         // AdamW cfg changes every step — must read live, not from cached_meta
@@ -569,6 +610,9 @@ impl Backend for CudaBackend {
                     self.launch_head_move(b, "head_scatter", k::HEAD_SCATTER, "head_scatter_kernel")
                 }
                 "ZeroTensor" => self.launch_zero_tensor(b),
+                "SoftmaxRect" => self.launch_softmax_rect(b),
+                "CacheWrite" => self.launch_cache_write(b),
+                "RoPEOffset" => self.launch_rope_offset(b),
                 "SiLU" => self.launch_inout_1(b, "silu", k::SILU, "silu_kernel"),
                 "RoPE" => self.launch_rope(b, "rope", k::ROPE, "rope_kernel"),
                 "Softmax" => self.launch_softmax(b, "softmax", k::SOFTMAX, "softmax_kernel"),
