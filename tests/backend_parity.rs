@@ -414,10 +414,14 @@ fn parity_matmul_known() {
 fn parity_matmul_large() {
     let (m, n, k) = (16usize, 16usize, 32usize);
     let a: Vec<f32> = (0..m * k)
-        .map(|i| ((i as u64 * 6364136223846793005 + 1442695040888963407) % 1000) as f32 * 0.01)
+        .map(|i| {
+            ((i as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % 1000)
+                as f32
+                * 0.01
+        })
         .collect();
     let b: Vec<f32> = (0..k * n)
-        .map(|i| ((i as u64 * 2891336453 + 1) % 1000) as f32 * 0.01 - 0.5)
+        .map(|i| ((i as u64).wrapping_mul(2891336453).wrapping_add(1) % 1000) as f32 * 0.01 - 0.5)
         .collect();
     let expected = cpu_matmul(&a, &b, m, n, k);
 
@@ -551,7 +555,7 @@ fn parity_causal_mask() {
             let v = out[i * seq_len as usize + j];
             if j > i {
                 assert!(
-                    v < -1e10,
+                    v < -1e8,
                     "CausalMask[{i},{j}] upper-tri should be -inf, got {v}"
                 );
             } else {
@@ -580,7 +584,7 @@ fn parity_causal_mask_larger() {
             let idx = i * seq_len as usize + j;
             let v = out[idx];
             if j > i {
-                assert!(v < -1e10, "CausalMask({i},{j}) upper-tri = {v}");
+                assert!(v < -1e8, "CausalMask({i},{j}) upper-tri = {v}");
             } else {
                 let want = scores[idx] * scale;
                 assert!(

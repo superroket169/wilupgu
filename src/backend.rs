@@ -67,6 +67,7 @@ pub trait Backend: Send + Sync + 'static {
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &Self::Buffer, data: &[T]);
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &Self::Buffer) -> Vec<T>;
     fn free_buffer(&self, buf: Self::Buffer);
+    fn recycle(&self, size_bytes: u64, buf: Self::Buffer);
     fn build_node(
         &self,
         kernel: &str,

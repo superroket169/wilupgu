@@ -1,4 +1,5 @@
 use crate::backend::{kernel_layout, Backend, Binding, TensorMode};
+use crate::pool::BufferPool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,7 @@ pub struct WgpuBackend {
     pipeline_cache:
         Mutex<HashMap<String, (Arc<wgpu::BindGroupLayout>, Arc<wgpu::ComputePipeline>)>>,
     submit_count: AtomicU64,
+    pool: BufferPool<WgpuBuffer>,
 }
 
 impl WgpuBackend {
@@ -41,6 +43,7 @@ impl WgpuBackend {
             queue: Arc::new(queue),
             pipeline_cache: Mutex::new(HashMap::new()),
             submit_count: AtomicU64::new(0),
+            pool: BufferPool::new(),
         }
     }
 }
@@ -92,6 +95,9 @@ impl Backend for WgpuBackend {
     }
 
     fn alloc(&self, size_bytes: u64) -> WgpuBuffer {
+        if let Some(buf) = self.pool.take(size_bytes) {
+            return buf;
+        }
         Arc::new(self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: size_bytes,
@@ -103,11 +109,16 @@ impl Backend for WgpuBackend {
     }
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> WgpuBuffer {
+        let bytes = bytemuck::cast_slice(data);
+        if let Some(buf) = self.pool.take(bytes.len() as u64) {
+            self.queue.write_buffer(&buf, 0, bytes);
+            return buf;
+        }
         Arc::new(
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
-                    contents: bytemuck::cast_slice(data),
+                    contents: bytes,
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_DST
                         | wgpu::BufferUsages::COPY_SRC,
@@ -147,6 +158,10 @@ impl Backend for WgpuBackend {
 
     fn free_buffer(&self, buf: WgpuBuffer) {
         buf.destroy();
+    }
+
+    fn recycle(&self, size_bytes: u64, buf: WgpuBuffer) {
+        self.pool.recycle(size_bytes, buf);
     }
 
     fn build_node(

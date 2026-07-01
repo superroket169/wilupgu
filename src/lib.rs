@@ -2,6 +2,7 @@ pub mod backend;
 pub mod backends;
 pub mod graph;
 pub mod nn;
+pub(crate) mod pool;
 pub mod tensor;
 
 pub use backend::{Backend, Binding, TensorMode};
