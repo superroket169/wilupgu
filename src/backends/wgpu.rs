@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Binding, TensorMode};
+use crate::backend::{kernel_layout, Backend, Binding, TensorMode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,85 +45,36 @@ impl WgpuBackend {
     }
 }
 
-fn kernel_def(name: &str) -> (&'static str, &'static [TensorMode]) {
-    use TensorMode::*;
+fn kernel_src(name: &str) -> &'static str {
     match name {
         // =========== Forward ===========
-        "MatMul" => (
-            include_str!("../shaders/fwd/matmul.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "Embedding" => (
-            include_str!("../shaders/fwd/embedding.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "CausalMask" => (include_str!("../shaders/causal_mask.wgsl"), &[InOut, Meta]),
-        "SiLU" => (include_str!("../shaders/fwd/silu.wgsl"), &[InOut]),
-        "RoPE" => (include_str!("../shaders/fwd/rope.wgsl"), &[InOut, Meta]),
-        "Softmax" => (include_str!("../shaders/fwd/softmax.wgsl"), &[InOut, Meta]),
-        "RMSNorm" => (
-            include_str!("../shaders/fwd/rmsnorm.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "ResidualAdd" => (include_str!("../shaders/add.wgsl"), &[InOut, Input]),
-        "CrossEntropy" => (
-            include_str!("../shaders/fwd/cross_entropy.wgsl"),
-            &[Input, Input, Output, Output, Meta],
-        ),
-        "HeadGather" => (
-            include_str!("../shaders/head_gather.wgsl"),
-            &[Input, Output, Meta],
-        ),
-        "HeadScatter" => (
-            include_str!("../shaders/head_scatter.wgsl"),
-            &[Input, Output, Meta],
-        ),
-        "ZeroTensor" => (include_str!("../shaders/zero_tensor.wgsl"), &[Output, Meta]),
+        "MatMul" => include_str!("../shaders/fwd/matmul.wgsl"),
+        "Embedding" => include_str!("../shaders/fwd/embedding.wgsl"),
+        "CausalMask" => include_str!("../shaders/causal_mask.wgsl"),
+        "SiLU" => include_str!("../shaders/fwd/silu.wgsl"),
+        "RoPE" => include_str!("../shaders/fwd/rope.wgsl"),
+        "Softmax" => include_str!("../shaders/fwd/softmax.wgsl"),
+        "RMSNorm" => include_str!("../shaders/fwd/rmsnorm.wgsl"),
+        "ResidualAdd" => include_str!("../shaders/add.wgsl"),
+        "CrossEntropy" => include_str!("../shaders/fwd/cross_entropy.wgsl"),
+        "HeadGather" => include_str!("../shaders/head_gather.wgsl"),
+        "HeadScatter" => include_str!("../shaders/head_scatter.wgsl"),
+        "ZeroTensor" => include_str!("../shaders/zero_tensor.wgsl"),
 
         // ========= Backward =========
-        "MatMulTrp" => (
-            include_str!("../shaders/fwd/matmul_trp.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "MatMulWeightBwd" => (
-            include_str!("../shaders/bwd/matmul_weight_trp.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "SiLUBwd" => (
-            include_str!("../shaders/bwd/silu_bwd.wgsl"),
-            &[Input, Input, Output],
-        ),
-        "RoPEBwd" => (include_str!("../shaders/bwd/rope_bwd.wgsl"), &[InOut, Meta]),
-        "SoftmaxBwd" => (
-            include_str!("../shaders/bwd/softmax_bwd.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "RMSNormBwd" => (
-            include_str!("../shaders/bwd/rmsnorm_bwd.wgsl"),
-            &[Input, Input, Input, Output, Output, Meta],
-        ),
-        "RMSNormWeightBwd" => (
-            include_str!("../shaders/bwd/rmsnorm_weight_bwd.wgsl"),
-            &[Input, Input, Input, Output, Meta],
-        ),
-        "EmbeddingBwd" => (
-            include_str!("../shaders/bwd/embedding_bwd.wgsl"),
-            &[Input, Input, Output, Meta],
-        ),
-        "CrossEntropyBwd" => (
-            include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
-            &[Input, Input, Input, Output, Meta],
-        ),
-        "BwdAddInplace" => (
-            include_str!("../shaders/bwd/bwd_add_inplace.wgsl"),
-            &[InOut, Input],
-        ),
+        "MatMulTrp" => include_str!("../shaders/fwd/matmul_trp.wgsl"),
+        "MatMulWeightBwd" => include_str!("../shaders/bwd/matmul_weight_trp.wgsl"),
+        "SiLUBwd" => include_str!("../shaders/bwd/silu_bwd.wgsl"),
+        "RoPEBwd" => include_str!("../shaders/bwd/rope_bwd.wgsl"),
+        "SoftmaxBwd" => include_str!("../shaders/bwd/softmax_bwd.wgsl"),
+        "RMSNormBwd" => include_str!("../shaders/bwd/rmsnorm_bwd.wgsl"),
+        "RMSNormWeightBwd" => include_str!("../shaders/bwd/rmsnorm_weight_bwd.wgsl"),
+        "EmbeddingBwd" => include_str!("../shaders/bwd/embedding_bwd.wgsl"),
+        "CrossEntropyBwd" => include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
+        "BwdAddInplace" => include_str!("../shaders/bwd/bwd_add_inplace.wgsl"),
 
         // ============ Optimizer ===========
-        "AdamW" => (
-            include_str!("../shaders/bwd/adamw.wgsl"),
-            &[InOut, Input, InOut, InOut, Meta, Meta],
-        ),
+        "AdamW" => include_str!("../shaders/bwd/adamw.wgsl"),
 
         _ => panic!("[wgpu] unknown kernel: {name}"),
     }
@@ -201,7 +152,8 @@ impl Backend for WgpuBackend {
         bindings: &[Binding<WgpuBuffer>],
         workgroups: [u32; 3],
     ) -> WgpuNode {
-        let (src, layout) = kernel_def(kernel);
+        let src = kernel_src(kernel);
+        let layout = kernel_layout(kernel);
 
         let (bgl, pipeline) = {
             let mut cache = self.pipeline_cache.lock().unwrap();
