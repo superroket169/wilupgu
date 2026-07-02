@@ -14,3 +14,4 @@ cudarc = { version = "0.19", optional = true, features = ["cublas", "nvrtc", "cu
 default = []
 vulkan = []
 cuda = ["cudarc"]
+cpu = []
