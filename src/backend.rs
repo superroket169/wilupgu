@@ -70,6 +70,7 @@ pub trait Backend: Send + Sync + 'static {
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &Self::Buffer) -> Vec<T>;
     fn free_buffer(&self, buf: Self::Buffer);
     fn recycle(&self, size_bytes: u64, buf: Self::Buffer);
+    fn is_sole_owner(buf: &Self::Buffer) -> bool;
     fn build_node(
         &self,
         kernel: &str,

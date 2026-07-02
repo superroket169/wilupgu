@@ -34,6 +34,8 @@ impl<B: Backend> Tensor<B> {
 
 impl<B: Backend> Drop for Tensor<B> {
     fn drop(&mut self) {
-        self.ctx.recycle(self.size, self.buffer.clone());
+        if B::is_sole_owner(&self.buffer) {
+            self.ctx.recycle(self.size, self.buffer.clone());
+        }
     }
 }
