@@ -385,6 +385,32 @@ extern "C" __global__ void softmax_rect_kernel(float* x, unsigned int num_rows, 
 }
 "#;
 
+pub const CAUSAL_SOFTMAX: &str = r#"
+extern "C" __global__ void causal_softmax_kernel(float* x, unsigned int seq_len, float scale) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= seq_len) return;
+    unsigned int offset = row * seq_len;
+
+    float max_val = -1000000.0f;
+    for (unsigned int i = 0; i < seq_len; i++) {
+        float val = (i > row) ? -1000000000.0f : x[offset + i] * scale;
+        if (val > max_val) max_val = val;
+    }
+
+    float sum_exp = 0.0f;
+    for (unsigned int i = 0; i < seq_len; i++) {
+        float val = (i > row) ? -1000000000.0f : x[offset + i] * scale;
+        float e = expf(val - max_val);
+        x[offset + i] = e;
+        sum_exp += e;
+    }
+
+    for (unsigned int i = 0; i < seq_len; i++) {
+        x[offset + i] = x[offset + i] / sum_exp;
+    }
+}
+"#;
+
 pub const CACHE_WRITE: &str = r#"
 extern "C" __global__ void cache_write_kernel(
     const float* src, float* dst,

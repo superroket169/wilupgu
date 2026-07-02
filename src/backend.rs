@@ -38,6 +38,8 @@ pub fn kernel_layout(name: &str) -> &'static [TensorMode] {
         "SoftmaxRect" => &[InOut, Meta],
         "CacheWrite" => &[Input, InOut, Meta],
         "RoPEOffset" => &[InOut, Meta],
+        "CausalSoftmax" => &[InOut, Meta],
+        "MatMulAdd" => &[Input, Input, InOut, Meta],
 
         // ========= Backward =========
         "MatMulTrp" => &[Input, Input, Output, Meta],
