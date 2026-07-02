@@ -5,3 +5,8 @@ pub use wgpu::WgpuBackend;
 pub mod cuda;
 #[cfg(feature = "cuda")]
 pub use cuda::CudaBackend;
+
+#[cfg(feature = "cpu")]
+pub mod cpu;
+#[cfg(feature = "cpu")]
+pub use cpu::CpuBackend;
