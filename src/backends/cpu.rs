@@ -71,7 +71,7 @@ fn matmul(bindings: &[CpuBinding]) {
     let meta = read_u32(find(bindings, 3));
     let (m, n, k) = (meta[0] as usize, meta[1] as usize, meta[2] as usize);
 
-    let mut c = vec![0.0f32; m * n];
+    let mut c = read_f32(find(bindings, 2));
     for row in 0..m {
         for col in 0..n {
             let mut sum = 0.0f32;
@@ -91,7 +91,7 @@ fn matmul_trp(bindings: &[CpuBinding]) {
     let meta = read_u32(find(bindings, 3));
     let (m, n, k) = (meta[0] as usize, meta[1] as usize, meta[2] as usize);
 
-    let mut c = vec![0.0f32; m * n];
+    let mut c = read_f32(find(bindings, 2));
     for row in 0..m {
         for col in 0..n {
             let mut sum = 0.0f32;
@@ -99,6 +99,26 @@ fn matmul_trp(bindings: &[CpuBinding]) {
                 sum += a[row * k + kk] * b[col * k + kk];
             }
             c[row * n + col] = sum;
+        }
+    }
+    write_f32(find(bindings, 2), &c);
+}
+
+// C[row, col] += sum_k A[row, k] * B[k, col]   (accumulating matmul)
+fn matmul_add(bindings: &[CpuBinding]) {
+    let a = read_f32(find(bindings, 0));
+    let b = read_f32(find(bindings, 1));
+    let mut c = read_f32(find(bindings, 2));
+    let meta = read_u32(find(bindings, 3));
+    let (m, n, k) = (meta[0] as usize, meta[1] as usize, meta[2] as usize);
+
+    for row in 0..m {
+        for col in 0..n {
+            let mut sum = 0.0f32;
+            for kk in 0..k {
+                sum += a[row * k + kk] * b[kk * n + col];
+            }
+            c[row * n + col] += sum;
         }
     }
     write_f32(find(bindings, 2), &c);
@@ -176,6 +196,39 @@ fn rope(bindings: &[CpuBinding]) {
     write_f32(find(bindings, 0), &vec_);
 }
 
+fn rope_offset(bindings: &[CpuBinding]) {
+    let mut vec_ = read_f32(find(bindings, 0));
+    let meta = read_u32(find(bindings, 1));
+    let (seq_len, dim, head_dim, pos_offset) = (
+        meta[0] as usize,
+        meta[1] as usize,
+        meta[2] as usize,
+        meta[3] as usize,
+    );
+    let num_heads = dim / head_dim;
+
+    for token_idx in 0..seq_len {
+        let abs_pos = token_idx + pos_offset;
+        let mut dim_idx = 0usize;
+        while dim_idx < head_dim {
+            for h in 0..num_heads {
+                let offset = token_idx * dim + h * head_dim + dim_idx;
+                let x0 = vec_[offset];
+                let x1 = vec_[offset + 1];
+
+                let freq = 1.0 / 10000f32.powf(dim_idx as f32 / head_dim as f32);
+                let angle = abs_pos as f32 * freq;
+                let (v_sin, v_cos) = angle.sin_cos();
+
+                vec_[offset] = x0 * v_cos - x1 * v_sin;
+                vec_[offset + 1] = x0 * v_sin + x1 * v_cos;
+            }
+            dim_idx += 2;
+        }
+    }
+    write_f32(find(bindings, 0), &vec_);
+}
+
 fn softmax(bindings: &[CpuBinding]) {
     let mut x = read_f32(find(bindings, 0));
     let meta = read_u32(find(bindings, 1));
@@ -194,6 +247,63 @@ fn softmax(bindings: &[CpuBinding]) {
             sum_exp += e;
         }
         for i in 0..seq_len {
+            x[off + i] /= sum_exp;
+        }
+    }
+    write_f32(find(bindings, 0), &x);
+}
+
+fn causal_softmax(bindings: &[CpuBinding]) {
+    let mut x = read_f32(find(bindings, 0));
+    let meta = read_u32(find(bindings, 1));
+    let seq_len = meta[0] as usize;
+    let scale = f32::from_bits(meta[1]);
+
+    fn masked(x: &[f32], off: usize, row: usize, i: usize, scale: f32) -> f32 {
+        if i > row {
+            -1_000_000_000.0
+        } else {
+            x[off + i] * scale
+        }
+    }
+
+    for row in 0..seq_len {
+        let off = row * seq_len;
+        let max_val = (0..seq_len)
+            .map(|i| masked(&x, off, row, i, scale))
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut sum_exp = 0.0f32;
+        for i in 0..seq_len {
+            let e = (masked(&x, off, row, i, scale) - max_val).exp();
+            x[off + i] = e;
+            sum_exp += e;
+        }
+        for i in 0..seq_len {
+            x[off + i] /= sum_exp;
+        }
+    }
+    write_f32(find(bindings, 0), &x);
+}
+
+fn softmax_rect(bindings: &[CpuBinding]) {
+    let mut x = read_f32(find(bindings, 0));
+    let meta = read_u32(find(bindings, 1));
+    let (num_rows, width) = (meta[0] as usize, meta[1] as usize);
+    let scale = f32::from_bits(meta[2]);
+
+    for row in 0..num_rows {
+        let off = row * width;
+        let max_val = x[off..off + width]
+            .iter()
+            .map(|v| v * scale)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut sum_exp = 0.0f32;
+        for i in 0..width {
+            let e = (x[off + i] * scale - max_val).exp();
+            x[off + i] = e;
+            sum_exp += e;
+        }
+        for i in 0..width {
             x[off + i] /= sum_exp;
         }
     }
@@ -228,6 +338,20 @@ fn residual_add(bindings: &[CpuBinding]) {
     write_f32(find(bindings, 0), &x);
 }
 
+fn cache_write(bindings: &[CpuBinding]) {
+    let src = read_f32(find(bindings, 0));
+    let mut dst = read_f32(find(bindings, 1));
+    let meta = read_u32(find(bindings, 2));
+    let (row_count, width, dst_row_offset) = (meta[0] as usize, meta[1] as usize, meta[2] as usize);
+
+    for row in 0..row_count {
+        let src_off = row * width;
+        let dst_off = (dst_row_offset + row) * width;
+        dst[dst_off..dst_off + width].copy_from_slice(&src[src_off..src_off + width]);
+    }
+    write_f32(find(bindings, 1), &dst);
+}
+
 fn head_gather(bindings: &[CpuBinding]) {
     let src = read_f32(find(bindings, 0));
     let meta = read_u32(find(bindings, 2));
@@ -238,7 +362,7 @@ fn head_gather(bindings: &[CpuBinding]) {
         meta[3] as usize,
     );
 
-    let mut dst = vec![0.0f32; seq_len * head_dim];
+    let mut dst = read_f32(find(bindings, 1));
     for row in 0..seq_len {
         let src_off = row * full_dim + head_offset;
         let dst_off = row * head_dim;
@@ -371,16 +495,21 @@ impl Backend for CpuBackend {
             match node.name.as_str() {
                 "MatMul" => matmul(b),
                 "MatMulTrp" => matmul_trp(b),
+                "MatMulAdd" => matmul_add(b),
                 "Embedding" => embedding(b),
                 "CausalMask" => causal_mask(b),
                 "SiLU" => silu(b),
                 "RoPE" => rope(b),
+                "RoPEOffset" => rope_offset(b),
                 "Softmax" => softmax(b),
+                "SoftmaxRect" => softmax_rect(b),
+                "CausalSoftmax" => causal_softmax(b),
                 "RMSNorm" => rmsnorm(b),
                 "ResidualAdd" => residual_add(b),
                 "HeadGather" => head_gather(b),
                 "HeadScatter" => head_scatter(b),
                 "CrossEntropy" => cross_entropy(b),
+                "CacheWrite" => cache_write(b),
                 other => panic!("[cpu] unsupported kernel: {other}"),
             }
         }

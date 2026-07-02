@@ -11,6 +11,8 @@ pub type WgpuBuffer = Arc<wgpu::Buffer>;
 pub struct WgpuNode {
     pipeline: Arc<wgpu::ComputePipeline>,
     bind_group: Arc<wgpu::BindGroup>,
+    #[allow(dead_code)]
+    buffers: Vec<WgpuBuffer>,
     workgroups: [u32; 3],
 }
 
@@ -262,6 +264,7 @@ impl Backend for WgpuBackend {
         WgpuNode {
             pipeline,
             bind_group,
+            buffers: bindings.iter().map(|b| b.buffer.clone()).collect(),
             workgroups,
         }
     }
