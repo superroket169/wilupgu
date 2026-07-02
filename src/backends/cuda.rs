@@ -587,6 +587,10 @@ impl Backend for CudaBackend {
         self.pool.recycle(size_bytes, buf);
     }
 
+    fn is_sole_owner(buf: &CudaBuffer) -> bool {
+        Arc::strong_count(buf) == 1
+    }
+
     fn build_node(
         &self,
         kernel: &str,
