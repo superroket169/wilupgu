@@ -35,7 +35,13 @@ impl WgpuBackend {
             .await
             .expect("[wgpu] no adapter");
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_limits: adapter.limits(),
+                    ..Default::default()
+                },
+                None,
+            )
             .await
             .expect("[wgpu] device creation failed");
         Self {
