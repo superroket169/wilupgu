@@ -131,7 +131,7 @@ fn cfg_1d(n: u32) -> LaunchConfig {
 }
 
 impl CudaBackend {
-    fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool) {
+    fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
         let a = find(bindings, 0);
         let b = find(bindings, 1);
         let c = find(bindings, 2);
@@ -156,7 +156,7 @@ impl CudaBackend {
             alpha: 1.0,
             lda: ldb as i32,
             ldb: ki as i32,
-            beta: 0.0,
+            beta,
             ldc: n as i32,
         };
 
@@ -266,6 +266,19 @@ impl CudaBackend {
             shared_mem_bytes: 0,
         };
         launch!(self, f, cfg, &mut *g, &seq_len, &scale);
+    }
+
+    fn launch_causal_softmax(&self, bindings: &[CudaBinding]) {
+        let bytes = meta_bytes(find(bindings, 1));
+        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let f = self.compile(
+            "causal_softmax",
+            k::CAUSAL_SOFTMAX,
+            "causal_softmax_kernel",
+        );
+        let mut g = find(bindings, 0).slice.lock().unwrap();
+        launch!(self, f, cfg_1d(seq_len), &mut *g, &seq_len, &scale);
     }
 
     fn launch_head_move(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
@@ -616,8 +629,9 @@ impl Backend for CudaBackend {
             let wg = node.workgroups;
             match node.name.as_str() {
                 // =========== Forward =============
-                "MatMul" => self.gemm_matmul(b, false),
-                "MatMulTrp" => self.gemm_matmul(b, true),
+                "MatMul" => self.gemm_matmul(b, false, 0.0),
+                "MatMulTrp" => self.gemm_matmul(b, true, 0.0),
+                "MatMulAdd" => self.gemm_matmul(b, false, 1.0),
                 "Embedding" => {
                     self.launch_embedding(b, "embedding", k::EMBEDDING, "embedding_kernel", wg)
                 }
@@ -632,6 +646,7 @@ impl Backend for CudaBackend {
                 "SoftmaxRect" => self.launch_softmax_rect(b),
                 "CacheWrite" => self.launch_cache_write(b),
                 "RoPEOffset" => self.launch_rope_offset(b),
+                "CausalSoftmax" => self.launch_causal_softmax(b),
                 "SiLU" => self.launch_inout_1(b, "silu", k::SILU, "silu_kernel"),
                 "RoPE" => self.launch_rope(b, "rope", k::ROPE, "rope_kernel"),
                 "Softmax" => self.launch_softmax(b, "softmax", k::SOFTMAX, "softmax_kernel"),

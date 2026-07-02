@@ -66,6 +66,8 @@ fn kernel_src(name: &str) -> &'static str {
         "SoftmaxRect" => include_str!("../shaders/fwd/softmax_rect.wgsl"),
         "CacheWrite" => include_str!("../shaders/cache_write.wgsl"),
         "RoPEOffset" => include_str!("../shaders/fwd/rope_offset.wgsl"),
+        "CausalSoftmax" => include_str!("../shaders/fwd/causal_softmax.wgsl"),
+        "MatMulAdd" => include_str!("../shaders/fwd/matmul_add.wgsl"),
 
         // ========= Backward =========
         "MatMulTrp" => include_str!("../shaders/fwd/matmul_trp.wgsl"),
