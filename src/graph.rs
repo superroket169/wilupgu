@@ -1,4 +1,5 @@
-use crate::backend::{kernel_layout, Backend, Binding};
+use crate::backend::{Backend, Binding};
+use crate::shader::Shader;
 use std::sync::Arc;
 
 pub struct ComputeGraph<B: Backend> {
@@ -16,27 +17,28 @@ impl<B: Backend> ComputeGraph<B> {
 
     pub fn add_node(
         &mut self,
-        kernel: &str,
+        shader: &'static Shader,
         bindings: &[Binding<B::Buffer>],
         workgroups: [u32; 3],
     ) {
-        let layout = kernel_layout(kernel);
+        let layout = shader.layout;
+        let name = shader.name;
         for b in bindings {
             let expected = layout.get(b.slot as usize).unwrap_or_else(|| {
                 panic!(
-                    "Tensor Mode Mismatch: kernel `{kernel}` binding slot {} out of range (kernel expects {} bindings)",
+                    "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects {} bindings)",
                     b.slot,
                     layout.len()
                 )
             });
             assert_eq!(
                 *expected, b.mode,
-                "Tensor Mode Mismatch: kernel `{kernel}` slot {} expects {:?}, got {:?}",
+                "Tensor Mode Mismatch: kernel `{name}` slot {} expects {:?}, got {:?}",
                 b.slot, expected, b.mode
             );
         }
 
-        let node = self.ctx.build_node(kernel, bindings, workgroups);
+        let node = self.ctx.build_node(shader, bindings, workgroups);
         self.nodes.push(node);
     }
 

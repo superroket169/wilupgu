@@ -1,5 +1,6 @@
-use crate::backend::{kernel_layout, Backend, Binding, TensorMode};
+use crate::backend::{Backend, Binding, TensorMode};
 use crate::pool::BufferPool;
+use crate::shader::Shader;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,8 +24,7 @@ pub struct WgpuNode {
 pub struct WgpuBackend {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    pipeline_cache:
-        Mutex<HashMap<String, (Arc<wgpu::BindGroupLayout>, Arc<wgpu::ComputePipeline>)>>,
+    pipeline_cache: Mutex<HashMap<usize, (Arc<wgpu::BindGroupLayout>, Arc<wgpu::ComputePipeline>)>>,
     submit_count: AtomicU64,
     pool: BufferPool<WgpuBuffer>,
 }
@@ -53,46 +53,6 @@ impl WgpuBackend {
             submit_count: AtomicU64::new(0),
             pool: BufferPool::new(),
         }
-    }
-}
-
-fn kernel_src(name: &str) -> &'static str {
-    match name {
-        // =========== Forward ===========
-        "MatMul" => include_str!("../shaders/fwd/matmul.wgsl"),
-        "Embedding" => include_str!("../shaders/fwd/embedding.wgsl"),
-        "CausalMask" => include_str!("../shaders/causal_mask.wgsl"),
-        "SiLU" => include_str!("../shaders/fwd/silu.wgsl"),
-        "RoPE" => include_str!("../shaders/fwd/rope.wgsl"),
-        "Softmax" => include_str!("../shaders/fwd/softmax.wgsl"),
-        "RMSNorm" => include_str!("../shaders/fwd/rmsnorm.wgsl"),
-        "ResidualAdd" => include_str!("../shaders/add.wgsl"),
-        "CrossEntropy" => include_str!("../shaders/fwd/cross_entropy.wgsl"),
-        "HeadGather" => include_str!("../shaders/head_gather.wgsl"),
-        "HeadScatter" => include_str!("../shaders/head_scatter.wgsl"),
-        "ZeroTensor" => include_str!("../shaders/zero_tensor.wgsl"),
-        "SoftmaxRect" => include_str!("../shaders/fwd/softmax_rect.wgsl"),
-        "CacheWrite" => include_str!("../shaders/cache_write.wgsl"),
-        "RoPEOffset" => include_str!("../shaders/fwd/rope_offset.wgsl"),
-        "CausalSoftmax" => include_str!("../shaders/fwd/causal_softmax.wgsl"),
-        "MatMulAdd" => include_str!("../shaders/fwd/matmul_add.wgsl"),
-
-        // ========= Backward =========
-        "MatMulTrp" => include_str!("../shaders/fwd/matmul_trp.wgsl"),
-        "MatMulWeightBwd" => include_str!("../shaders/bwd/matmul_weight_trp.wgsl"),
-        "SiLUBwd" => include_str!("../shaders/bwd/silu_bwd.wgsl"),
-        "RoPEBwd" => include_str!("../shaders/bwd/rope_bwd.wgsl"),
-        "SoftmaxBwd" => include_str!("../shaders/bwd/softmax_bwd.wgsl"),
-        "RMSNormBwd" => include_str!("../shaders/bwd/rmsnorm_bwd.wgsl"),
-        "RMSNormWeightBwd" => include_str!("../shaders/bwd/rmsnorm_weight_bwd.wgsl"),
-        "EmbeddingBwd" => include_str!("../shaders/bwd/embedding_bwd.wgsl"),
-        "CrossEntropyBwd" => include_str!("../shaders/bwd/cross_entropy_bwd.wgsl"),
-        "BwdAddInplace" => include_str!("../shaders/bwd/bwd_add_inplace.wgsl"),
-
-        // ============ Optimizer ===========
-        "AdamW" => include_str!("../shaders/bwd/adamw.wgsl"),
-
-        _ => panic!("[wgpu] unknown kernel: {name}"),
     }
 }
 
@@ -180,24 +140,26 @@ impl Backend for WgpuBackend {
 
     fn build_node(
         &self,
-        kernel: &str,
+        shader: &'static Shader,
         bindings: &[Binding<WgpuBuffer>],
         workgroups: [u32; 3],
     ) -> WgpuNode {
-        let src = kernel_src(kernel);
-        let layout = kernel_layout(kernel);
+        let src = shader
+            .wgpu
+            .unwrap_or_else(|| panic!("[wgpu] shader `{}` has no wgpu impl", shader.name));
+        let layout = shader.layout;
+        let key = shader as *const Shader as usize;
 
         let (bgl, pipeline) = {
             let mut cache = self.pipeline_cache.lock().unwrap();
 
-            if let Some((l, p)) = cache.get(kernel) {
+            if let Some((l, p)) = cache.get(&key) {
                 (l.clone(), p.clone())
             } else {
-                let key = kernel.to_string();
                 let module = self
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(kernel),
+                        label: Some(shader.name),
                         source: wgpu::ShaderSource::Wgsl(src.into()),
                     });
 
@@ -235,7 +197,7 @@ impl Backend for WgpuBackend {
 
                 let pipeline = Arc::new(self.device.create_compute_pipeline(
                     &wgpu::ComputePipelineDescriptor {
-                        label: Some(kernel),
+                        label: Some(shader.name),
                         layout: Some(&pl),
                         module: &module,
                         entry_point: "main",

@@ -1,6 +1,7 @@
 use crate::backend::{Backend, Binding, TensorMode};
-use crate::nn::cuda_kernels as k; // <- moves to shaders/cuda.rs later
+use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
+use crate::shader::{CudaShape, Shader};
 use cudarc::cublas::sys::cublasOperation_t;
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
@@ -13,16 +14,16 @@ use std::sync::{Arc, Mutex};
 pub type CudaBuffer = Arc<Mutex<cudarc::driver::CudaSlice<f32>>>;
 
 #[derive(Clone)]
-struct CudaBinding {
-    slot: u32,
-    slice: CudaBuffer,
-    mode: TensorMode,
-    cached_meta: Option<Vec<u8>>,
+pub struct CudaBinding {
+    pub slot: u32,
+    pub slice: CudaBuffer,
+    pub mode: TensorMode,
+    pub cached_meta: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
 pub struct CudaNode {
-    name: String,
+    shader: &'static Shader,
     bindings: Vec<CudaBinding>,
     workgroups: [u32; 3],
 }
@@ -35,7 +36,7 @@ pub struct CudaBackend {
     device: Arc<CuDevice>,
     pub stream: Arc<CudaStream>,
     blas: CudaBlas,
-    kernel_cache: Mutex<HashMap<String, CudaFunction>>,
+    kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer>,
 }
 
@@ -56,27 +57,24 @@ impl CudaBackend {
         })
     }
 
-    fn compile(&self, key: &str, src: &str, func: &str) -> CudaFunction {
+    pub(crate) fn compile(&self, key: usize, src: &str, func: &str) -> CudaFunction {
         {
             let cache = self.kernel_cache.lock().unwrap();
-            if let Some(f) = cache.get(key) {
+            if let Some(f) = cache.get(&key) {
                 return f.clone();
             }
         }
         let ptx = cudarc::nvrtc::compile_ptx(src)
-            .unwrap_or_else(|e| panic!("[cuda] NVRTC failed '{key}': {e:?}"));
+            .unwrap_or_else(|e| panic!("[cuda] NVRTC failed for '{func}': {e:?}"));
         let module = self
             .device
             .load_module(ptx)
-            .unwrap_or_else(|e| panic!("[cuda] load PTX '{key}': {e:?}"));
+            .unwrap_or_else(|e| panic!("[cuda] load PTX for '{func}': {e:?}"));
         let func = module
             .load_function(func)
-            .unwrap_or_else(|e| panic!("[cuda] fn '{func}' not in '{key}': {e:?}"));
+            .unwrap_or_else(|e| panic!("[cuda] fn '{func}' not found: {e:?}"));
 
-        self.kernel_cache
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), func.clone());
+        self.kernel_cache.lock().unwrap().insert(key, func.clone());
 
         func
     }
@@ -199,7 +197,7 @@ impl CudaBackend {
 
     // -------- Elementwise --------
 
-    fn launch_inout_1(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_inout_1(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let x = find(bindings, 0);
         let n = n_elems(x);
         let f = self.compile(key, src, func);
@@ -207,7 +205,7 @@ impl CudaBackend {
         launch!(self, f, cfg_1d(n), &mut *g, &n);
     }
 
-    fn launch_in2_out1(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_in2_out1(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let x = find(bindings, 0);
         let dy = find(bindings, 1);
         let dx = find(bindings, 2);
@@ -219,7 +217,7 @@ impl CudaBackend {
         launch!(self, f, cfg_1d(n), &*xg, &*dyg, &mut *dxg, &n);
     }
 
-    fn launch_add(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_add(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let x = find(bindings, 0);
         let r = find(bindings, 1);
         let n = n_elems(x);
@@ -231,10 +229,10 @@ impl CudaBackend {
 
     // -------- Structured ----------
 
-    fn launch_embedding(
+    pub fn launch_embedding(
         &self,
         bindings: &[CudaBinding],
-        key: &str,
+        key: usize,
         src: &str,
         func: &str,
         wg: [u32; 3],
@@ -253,11 +251,11 @@ impl CudaBackend {
         launch!(self, f, cfg, &*g0, &*g1, &mut *g2, &vocab, &embed, &seq);
     }
 
-    fn launch_causal_mask(&self, bindings: &[CudaBinding]) {
+    fn launch_causal_mask(&self, bindings: &[CudaBinding], key: usize) {
         let bytes = meta_bytes(find(bindings, 1));
         let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile("causal_mask", k::CAUSAL_MASK, "causal_mask_kernel");
+        let f = self.compile(key, k::CAUSAL_MASK, "causal_mask_kernel");
         let mut g = find(bindings, 0).slice.lock().unwrap();
         let grid = (seq_len + 15) / 16;
         let cfg = LaunchConfig {
@@ -268,20 +266,22 @@ impl CudaBackend {
         launch!(self, f, cfg, &mut *g, &seq_len, &scale);
     }
 
-    fn launch_causal_softmax(&self, bindings: &[CudaBinding]) {
+    pub fn launch_causal_softmax(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
         let bytes = meta_bytes(find(bindings, 1));
         let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile(
-            "causal_softmax",
-            k::CAUSAL_SOFTMAX,
-            "causal_softmax_kernel",
-        );
+        let f = self.compile(key, src, func);
         let mut g = find(bindings, 0).slice.lock().unwrap();
         launch!(self, f, cfg_1d(seq_len), &mut *g, &seq_len, &scale);
     }
 
-    fn launch_head_move(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_head_move(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let dims = meta_u32(find(bindings, 2));
         let (seq, full_dim, head_dim, offset) = (dims[0], dims[1], dims[2], dims[3]);
         let f = self.compile(key, src, func);
@@ -297,15 +297,7 @@ impl CudaBackend {
         launch!(self, f, cfg, &*fg, &mut *tg, &seq, &full_dim, &head_dim, &offset);
     }
 
-    fn launch_zero_tensor(&self, bindings: &[CudaBinding]) {
-        let x = find(bindings, 0);
-        let n = n_elems(x);
-        let f = self.compile("zero_tensor", k::ZERO_TENSOR, "zero_tensor_kernel");
-        let mut g = x.slice.lock().unwrap();
-        launch!(self, f, cfg_1d(n), &mut *g, &n);
-    }
-
-    fn launch_rope(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_rope(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let dims = meta_u32(find(bindings, 1));
         let (seq, dim, head_dim) = (dims[0], dims[1], dims[2]);
         let f = self.compile(key, src, func);
@@ -320,18 +312,18 @@ impl CudaBackend {
         launch!(self, f, cfg, &mut *g, &seq, &dim, &head_dim);
     }
 
-    fn launch_softmax(&self, bindings: &[CudaBinding], key: &str, src: &str, func: &str) {
+    pub fn launch_softmax(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let seq = meta_u32(find(bindings, 1))[0];
         let f = self.compile(key, src, func);
         let mut g = find(bindings, 0).slice.lock().unwrap();
         launch!(self, f, cfg_1d(seq), &mut *g, &seq);
     }
 
-    fn launch_softmax_bwd(&self, bindings: &[CudaBinding]) {
+    pub fn launch_softmax_bwd(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let bytes = meta_bytes(find(bindings, 3));
         let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile("softmax_bwd", k::SOFTMAX_BWD, "softmax_bwd_kernel");
+        let f = self.compile(key, src, func);
         let yg = find(bindings, 0).slice.lock().unwrap();
         let dyg = find(bindings, 1).slice.lock().unwrap();
         let mut dxg = find(bindings, 2).slice.lock().unwrap();
@@ -347,12 +339,12 @@ impl CudaBackend {
         );
     }
 
-    fn launch_rmsnorm(&self, bindings: &[CudaBinding]) {
+    pub fn launch_rmsnorm(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let bytes = meta_bytes(find(bindings, 3));
         let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let size = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
         let eps = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile("rmsnorm", k::RMSNORM, "rmsnorm_kernel");
+        let f = self.compile(key, src, func);
         let xg = find(bindings, 0).slice.lock().unwrap();
         let wg = find(bindings, 1).slice.lock().unwrap();
         let mut og = find(bindings, 2).slice.lock().unwrap();
@@ -364,12 +356,12 @@ impl CudaBackend {
         launch!(self, f, cfg, &*xg, &*wg, &mut *og, &seq_len, &size, &eps);
     }
 
-    fn launch_rmsnorm_bwd(&self, bindings: &[CudaBinding]) {
+    pub fn launch_rmsnorm_bwd(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let bytes = meta_bytes(find(bindings, 5));
         let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let size = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
         let eps = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile("rmsnorm_bwd", k::RMSNORM_BWD, "rmsnorm_bwd_kernel");
+        let f = self.compile(key, src, func);
         let dyg = find(bindings, 0).slice.lock().unwrap();
         let xg = find(bindings, 1).slice.lock().unwrap();
         let wg = find(bindings, 2).slice.lock().unwrap();
@@ -383,14 +375,16 @@ impl CudaBackend {
         launch!(self, f, cfg, &*dyg, &*xg, &*wg, &mut *dxg, &mut *rsg, &seq_len, &size, &eps);
     }
 
-    fn launch_rmsnorm_weight_bwd(&self, bindings: &[CudaBinding]) {
+    pub fn launch_rmsnorm_weight_bwd(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
         let dims = meta_u32(find(bindings, 4));
         let (seq, size) = (dims[0], dims[1]);
-        let f = self.compile(
-            "rmsnorm_weight_bwd",
-            k::RMSNORM_WEIGHT_BWD,
-            "rmsnorm_weight_bwd_kernel",
-        );
+        let f = self.compile(key, src, func);
         let dyg = find(bindings, 0).slice.lock().unwrap();
         let xg = find(bindings, 1).slice.lock().unwrap();
         let rsg = find(bindings, 2).slice.lock().unwrap();
@@ -408,10 +402,16 @@ impl CudaBackend {
         );
     }
 
-    fn launch_cross_entropy(&self, bindings: &[CudaBinding]) {
+    pub fn launch_cross_entropy(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
         let dims = meta_u32(find(bindings, 4));
         let (vocab, rows) = (dims[0], dims[1]);
-        let f = self.compile("cross_entropy", k::CROSS_ENTROPY, "cross_entropy_kernel");
+        let f = self.compile(key, src, func);
         let lg = find(bindings, 0).slice.lock().unwrap();
         let tg = find(bindings, 1).slice.lock().unwrap();
         let mut pg = find(bindings, 2).slice.lock().unwrap();
@@ -429,14 +429,16 @@ impl CudaBackend {
         );
     }
 
-    fn launch_cross_entropy_bwd(&self, bindings: &[CudaBinding]) {
+    pub fn launch_cross_entropy_bwd(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
         let dims = meta_u32(find(bindings, 4));
         let (vocab, rows) = (dims[0], dims[1]);
-        let f = self.compile(
-            "cross_entropy_bwd",
-            k::CROSS_ENTROPY_BWD,
-            "cross_entropy_bwd_kernel",
-        );
+        let f = self.compile(key, src, func);
         let pg = find(bindings, 0).slice.lock().unwrap();
         let tg = find(bindings, 1).slice.lock().unwrap();
         let dlg = find(bindings, 2).slice.lock().unwrap();
@@ -454,20 +456,28 @@ impl CudaBackend {
         );
     }
 
-    fn launch_softmax_rect(&self, bindings: &[CudaBinding]) {
+    pub fn launch_softmax_rect(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let bytes = meta_bytes(find(bindings, 1));
         let num_rows = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
         let width = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
         let scale = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile("softmax_rect", k::SOFTMAX_RECT, "softmax_rect_kernel");
+        let f = self.compile(key, src, func);
         let mut g = find(bindings, 0).slice.lock().unwrap();
-        launch!(self, f, cfg_1d(num_rows), &mut *g, &num_rows, &width, &scale);
+        launch!(
+            self,
+            f,
+            cfg_1d(num_rows),
+            &mut *g,
+            &num_rows,
+            &width,
+            &scale
+        );
     }
 
-    fn launch_cache_write(&self, bindings: &[CudaBinding]) {
+    pub fn launch_cache_write(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let dims = meta_u32(find(bindings, 2));
         let (row_count, width, dst_row_offset) = (dims[0], dims[1], dims[2]);
-        let f = self.compile("cache_write", k::CACHE_WRITE, "cache_write_kernel");
+        let f = self.compile(key, src, func);
         let sg = find(bindings, 0).slice.lock().unwrap();
         let mut dg = find(bindings, 1).slice.lock().unwrap();
         let grid_x = ((width + 15) / 16).max(1);
@@ -477,13 +487,22 @@ impl CudaBackend {
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
         };
-        launch!(self, f, cfg, &*sg, &mut *dg, &row_count, &width, &dst_row_offset);
+        launch!(
+            self,
+            f,
+            cfg,
+            &*sg,
+            &mut *dg,
+            &row_count,
+            &width,
+            &dst_row_offset
+        );
     }
 
-    fn launch_rope_offset(&self, bindings: &[CudaBinding]) {
+    pub fn launch_rope_offset(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
         let dims = meta_u32(find(bindings, 1));
         let (seq, dim, head_dim, pos_offset) = (dims[0], dims[1], dims[2], dims[3]);
-        let f = self.compile("rope_offset", k::ROPE_OFFSET, "rope_offset_kernel");
+        let f = self.compile(key, src, func);
         let mut g = find(bindings, 0).slice.lock().unwrap();
         let gx = ((head_dim / 2 + 15) / 16).max(1);
         let gy = ((seq + 15) / 16).max(1);
@@ -495,7 +514,7 @@ impl CudaBackend {
         launch!(self, f, cfg, &mut *g, &seq, &dim, &head_dim, &pos_offset);
     }
 
-    fn launch_adamw(&self, bindings: &[CudaBinding]) {
+    fn launch_adamw(&self, bindings: &[CudaBinding], key: usize) {
         let size = meta_u32(find(bindings, 4))[0];
         // AdamW cfg changes every step — must read live, not from cached_meta
         let bytes = live_meta_bytes(find(bindings, 5), self);
@@ -506,7 +525,7 @@ impl CudaBackend {
         let eps = f32::from_ne_bytes(bytes[16..20].try_into().unwrap());
         let wd = f32::from_ne_bytes(bytes[20..24].try_into().unwrap());
 
-        let f = self.compile("adamw", k::ADAMW, "adamw_kernel");
+        let f = self.compile(key, k::ADAMW, "adamw_kernel");
         let mut wg = find(bindings, 0).slice.lock().unwrap();
         let gg = find(bindings, 1).slice.lock().unwrap();
         let mut mg = find(bindings, 2).slice.lock().unwrap();
@@ -528,6 +547,65 @@ impl CudaBackend {
             &wd
         );
     }
+}
+
+fn shader_key(shader: &'static Shader) -> usize {
+    shader as *const Shader as usize
+}
+
+// ==========================================================================
+//                          Custom-shape dispatches
+// ==========================================================================
+
+fn custom_matmul(_s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _wg: [u32; 3]) {
+    b.gemm_matmul(bindings, false, 0.0)
+}
+
+fn custom_matmul_trp(
+    _s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
+    b.gemm_matmul(bindings, true, 0.0)
+}
+
+fn custom_matmul_add(
+    _s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
+    b.gemm_matmul(bindings, false, 1.0)
+}
+
+fn custom_matmul_weight_bwd(
+    _s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
+    b.gemm_weight_bwd(bindings)
+}
+
+fn custom_causal_mask(
+    s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
+    b.launch_causal_mask(bindings, shader_key(s))
+}
+
+fn custom_adamw(s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _wg: [u32; 3]) {
+    b.launch_adamw(bindings, shader_key(s))
+}
+
+pub(crate) mod dispatch {
+    pub(crate) use super::{
+        custom_adamw, custom_causal_mask, custom_matmul, custom_matmul_add, custom_matmul_trp,
+        custom_matmul_weight_bwd,
+    };
 }
 
 impl Backend for CudaBackend {
@@ -593,14 +671,15 @@ impl Backend for CudaBackend {
 
     fn build_node(
         &self,
-        kernel: &str,
+        shader: &'static Shader,
         bindings: &[Binding<CudaBuffer>],
         workgroups: [u32; 3],
     ) -> CudaNode {
+        let is_adamw = std::ptr::eq(shader, &crate::builtin::ADAMW);
         let cuda_bindings = bindings
             .iter()
             .map(|b| {
-                let is_live = kernel == "AdamW" && b.slot == 5;
+                let is_live = is_adamw && b.slot == 5;
                 let cached_meta = if b.mode == TensorMode::Meta && !is_live {
                     let g = b.buffer.lock().unwrap();
                     let data = self
@@ -621,7 +700,7 @@ impl Backend for CudaBackend {
             .collect();
 
         CudaNode {
-            name: kernel.to_string(),
+            shader,
             bindings: cuda_bindings,
             workgroups,
         }
@@ -631,57 +710,16 @@ impl Backend for CudaBackend {
         for node in nodes {
             let b = &node.bindings;
             let wg = node.workgroups;
-            match node.name.as_str() {
-                // =========== Forward =============
-                "MatMul" => self.gemm_matmul(b, false, 0.0),
-                "MatMulTrp" => self.gemm_matmul(b, true, 0.0),
-                "MatMulAdd" => self.gemm_matmul(b, false, 1.0),
-                "Embedding" => {
-                    self.launch_embedding(b, "embedding", k::EMBEDDING, "embedding_kernel", wg)
-                }
-                "CausalMask" => self.launch_causal_mask(b),
-                "HeadGather" => {
-                    self.launch_head_move(b, "head_gather", k::HEAD_GATHER, "head_gather_kernel")
-                }
-                "HeadScatter" => {
-                    self.launch_head_move(b, "head_scatter", k::HEAD_SCATTER, "head_scatter_kernel")
-                }
-                "ZeroTensor" => self.launch_zero_tensor(b),
-                "SoftmaxRect" => self.launch_softmax_rect(b),
-                "CacheWrite" => self.launch_cache_write(b),
-                "RoPEOffset" => self.launch_rope_offset(b),
-                "CausalSoftmax" => self.launch_causal_softmax(b),
-                "SiLU" => self.launch_inout_1(b, "silu", k::SILU, "silu_kernel"),
-                "RoPE" => self.launch_rope(b, "rope", k::ROPE, "rope_kernel"),
-                "Softmax" => self.launch_softmax(b, "softmax", k::SOFTMAX, "softmax_kernel"),
-                "RMSNorm" => self.launch_rmsnorm(b),
-                "ResidualAdd" => self.launch_add(b, "add", k::ADD, "add_kernel"),
-                "CrossEntropy" => self.launch_cross_entropy(b),
-                // ============= Backward =============
-                "MatMulWeightBwd" => self.gemm_weight_bwd(b),
-                "SiLUBwd" => self.launch_in2_out1(b, "silu_bwd", k::SILU_BWD, "silu_bwd_kernel"),
-                "RoPEBwd" => self.launch_rope(b, "rope_bwd", k::ROPE_BWD, "rope_bwd_kernel"),
-                "SoftmaxBwd" => self.launch_softmax_bwd(b),
-                "RMSNormBwd" => self.launch_rmsnorm_bwd(b),
-                "RMSNormWeightBwd" => self.launch_rmsnorm_weight_bwd(b),
-                "EmbeddingBwd" => self.launch_embedding(
-                    b,
-                    "embedding_bwd",
-                    k::EMBEDDING_BWD,
-                    "embedding_bwd_kernel",
-                    wg,
-                ),
-                "CrossEntropyBwd" => self.launch_cross_entropy_bwd(b),
-                "BwdAddInplace" => self.launch_add(
-                    b,
-                    "bwd_add_inplace",
-                    k::BWD_ADD_INPLACE,
-                    "bwd_add_inplace_kernel",
-                ),
-                // ========== Optimizer ===========
-                "AdamW" => self.launch_adamw(b),
-
-                other => panic!("[cuda] no kernel for: {other}"),
+            let spec =
+                node.shader.cuda.as_ref().unwrap_or_else(|| {
+                    panic!("[cuda] shader `{}` has no cuda impl", node.shader.name)
+                });
+            let key = shader_key(node.shader);
+            match &spec.shape {
+                CudaShape::InOut1 => self.launch_inout_1(b, key, spec.src, spec.entry),
+                CudaShape::In2Out1 => self.launch_in2_out1(b, key, spec.src, spec.entry),
+                CudaShape::Add => self.launch_add(b, key, spec.src, spec.entry),
+                CudaShape::Custom(f) => f(node.shader, self, b, wg),
             }
         }
     }

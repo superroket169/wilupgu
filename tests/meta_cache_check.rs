@@ -3,20 +3,13 @@
 #![cfg(feature = "cuda")]
 
 use std::sync::Arc;
+use wilupgu::builtin;
 use wilupgu::{Binding, ComputeGraph, CudaBackend, Tensor, TensorMode};
 
 fn cuda_ctx() -> Arc<CudaBackend> {
     Arc::new(
         CudaBackend::new(0).expect("CUDA backend unavailable -- this check requires a CUDA GPU"),
     )
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RmsMeta {
-    seq_len: u32,
-    size: u32,
-    eps: f32,
 }
 
 #[repr(C)]
@@ -42,33 +35,25 @@ fn meta_cache_check() {
 
     // ---------------------------------------------------------------
 
-    let seq_len: u32 = 2;
-    let size: u32 = 4;
-    let x_data: [f32; 8] = [1.0, 2.0, 3.0, 4.0, -1.0, 0.5, 2.0, -2.0];
-    let w_data: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+    let (m, n, k) = (2u32, 2u32, 2u32);
+    let a_data: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+    let b_data: [f32; 4] = [1.0, 0.0, 0.0, 1.0]; // identity -- C should equal A
 
-    let x = Tensor::init_from_cpu(ctx.clone(), &x_data);
-    let w = Tensor::init_from_cpu(ctx.clone(), &w_data);
-    let out = Tensor::init_from_cpu(ctx.clone(), &vec![0.0f32; 8]);
-    let meta = Tensor::init_from_cpu(
-        ctx.clone(),
-        &[RmsMeta {
-            seq_len,
-            size,
-            eps: 1e-5,
-        }],
-    );
+    let a = Tensor::init_from_cpu(ctx.clone(), &a_data);
+    let b = Tensor::init_from_cpu(ctx.clone(), &b_data);
+    let out = Tensor::init_from_cpu(ctx.clone(), &vec![0.0f32; 4]);
+    let meta = Tensor::init_from_cpu(ctx.clone(), &[m, n, k]);
 
     let mut graph = ComputeGraph::new(ctx.clone());
     graph.add_node(
-        "RMSNorm",
+        &builtin::MATMUL,
         &[
-            Binding::new(0, &x.buffer, TensorMode::Input),
-            Binding::new(1, &w.buffer, TensorMode::Input),
+            Binding::new(0, &a.buffer, TensorMode::Input),
+            Binding::new(1, &b.buffer, TensorMode::Input),
             Binding::new(2, &out.buffer, TensorMode::Output),
             Binding::new(3, &meta.buffer, TensorMode::Meta),
         ],
-        [seq_len, 1, 1],
+        [(n + 15) / 16, (m + 15) / 16, 1],
     );
 
     graph.execute();
@@ -81,26 +66,17 @@ fn meta_cache_check() {
 
     assert_eq!(
         run1, run2,
-        "RMSNorm output differed between two consecutive execute() calls!"
+        "MatMul output differed between two consecutive execute() calls!"
     );
 
-    let expected: Vec<f32> = x_data
-        .chunks(size as usize)
-        .flat_map(|row| {
-            let mean_sq: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
-            let scale = 1.0 / (mean_sq + 1e-5).sqrt();
-            row.iter().map(move |v| v * scale).collect::<Vec<_>>()
-        })
-        .collect();
-
-    for (a, b) in run1.iter().zip(expected.iter()) {
+    for (a, b) in run1.iter().zip(a_data.iter()) {
         assert!(
             (a - b).abs() < 1e-3,
-            "RMSNorm result {a} differs from expected {b}"
+            "MatMul result {a} differs from expected {b}"
         );
     }
 
-    println!("[check 1] RMSNorm: two consecutive execute() calls -> identical, correct output. OK");
+    println!("[check 1] MatMul: two consecutive execute() calls -> identical, correct output. OK");
     println!("  run1 = {:?}", run1);
     println!("  run2 = {:?}", run2);
 
@@ -126,7 +102,7 @@ fn meta_cache_check() {
 
     let mut adamw_graph = ComputeGraph::new(ctx.clone());
     adamw_graph.add_node(
-        "AdamW",
+        &builtin::ADAMW,
         &[
             Binding::new(0, &weight.buffer, TensorMode::InOut),
             Binding::new(1, &grad.buffer, TensorMode::Input),

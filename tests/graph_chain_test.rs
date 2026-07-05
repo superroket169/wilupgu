@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wilupgu::builtin;
 use wilupgu::{Backend, Binding, ComputeGraph, Tensor, TensorMode, WgpuBackend};
 
 fn wgpu() -> Arc<WgpuBackend> {
@@ -28,7 +29,7 @@ fn run_brutal_10_layer_chain<B: Backend>(ctx: Arc<B>, vec_size: u32) -> Vec<f32>
         let output_t = &right_slice[0];
 
         graph.add_node(
-            "MatMul",
+            &builtin::MATMUL,
             &[
                 Binding::new(0, &input_t.buffer, TensorMode::Input),
                 Binding::new(1, &weight_tensor.buffer, TensorMode::Input),
