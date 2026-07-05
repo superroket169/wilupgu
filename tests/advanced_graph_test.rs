@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wilupgu::builtin;
 use wilupgu::{Backend, Binding, ComputeGraph, Tensor, TensorMode, WgpuBackend};
 
 fn wgpu() -> Arc<WgpuBackend> {
@@ -24,7 +25,7 @@ fn run_mixed_transformer_block<B: Backend>(
 
     // (1.0 * 2.0 = 2.0)
     graph.add_node(
-        "MatMul",
+        &builtin::MATMUL,
         &[
             Binding::new(0, &t_input.buffer, TensorMode::Input),
             Binding::new(1, &t_weight.buffer, TensorMode::Input),
@@ -34,16 +35,9 @@ fn run_mixed_transformer_block<B: Backend>(
         [16, 1, 1],
     );
 
-    // 2.0 * sigmoid(2.0) ~ 1.761
+    // 2.0 + 10.0 = 12.0
     graph.add_node(
-        "SiLU",
-        &[Binding::new(0, &t_out.buffer, TensorMode::InOut)],
-        [16, 1, 1],
-    );
-
-    // 1.761 + 10.0 ≈ 11.761
-    graph.add_node(
-        "ResidualAdd",
+        &builtin::RESIDUAL_ADD,
         &[
             Binding::new(0, &t_out.buffer, TensorMode::InOut),
             Binding::new(1, &t_residual.buffer, TensorMode::Input),
@@ -67,9 +61,8 @@ fn test_mixed_transformer_block() {
         run_mixed_transformer_block(wgpu(), &input_data, &weight_data, &residual_data, vec_size);
     println!("--> Block Result: {:?}", &result[0..4]);
 
-    // 11.7 ile 11.8 arası
     assert!(
-        result[0] > 11.7 && result[0] < 11.8,
+        (result[0] - 12.0).abs() < 1e-4,
         "Crashed: Gelen değer: {}",
         result[0]
     );
@@ -88,11 +81,12 @@ fn test_validation_idiot_proof() {
 
     let mut graph = ComputeGraph::new(ctx.clone());
 
-    // yanlış TensorMode -- SiLU InOut bekler, Input verilirse
-    // `ComputeGraph::add_node` panic atmalı.
     graph.add_node(
-        "SiLU",
-        &[Binding::new(0, &t_dummy.buffer, TensorMode::Input)],
+        &builtin::RESIDUAL_ADD,
+        &[
+            Binding::new(0, &t_dummy.buffer, TensorMode::Input),
+            Binding::new(1, &t_dummy.buffer, TensorMode::Input),
+        ],
         [16, 1, 1],
     );
 }
