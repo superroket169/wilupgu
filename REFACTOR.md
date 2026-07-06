@@ -334,6 +334,43 @@ mimari değişiklik gerektirmiyor, ileride sadece yeni WGSL shader + f16
 Akasha-core'un kendi shader'larını (hepsi `array<f32>`) f16'ya geçirmek
 ayrı, ileride ele alınacak bir iş -- bugünkü kapsam sadece wilupgu.
 
+## İlk gerçek CUDA derlemesi (arkadaşın makinesi, 2026-07-06 20:18) -- 16 hata, hepsi bugünkü dtype işiyle ilgisiz
+
+`tester_script.bat`'ın 1. adımı (`cargo check --features cuda`) 16 hatayla
+patladı. Önemli: **hiçbiri bugünkü Dtype/CudaBuffer-enum/f16-GEMM işinden
+kaynaklanmıyor** -- ikisi de bu oturumun DAHA ÖNCEKİ (compact öncesi)
+FlashAttention/CUDA-Graphs/AdamW-B çalışmasından kalma, o zaman hiç CUDA'da
+derlenmediği için hiç yakalanmamış, gerçek buglar:
+
+1. **E0364/E0603 (7+7=14 hata)** -- `custom_matmul`/`custom_matmul_trp`/
+   `custom_matmul_add`/`custom_matmul_weight_bwd`/`custom_causal_mask`/
+   `custom_adamw`/`custom_adamw_schedule` fonksiyonları düz `fn` (tamamen
+   private) olarak tanımlıydı, ama `pub(crate) mod dispatch { pub(crate)
+   use super::{...}; }` bunları re-export etmeye çalışıyordu -- Rust'ta
+   düz private bir öğeyi `use` ile re-export edemezsin (derleyicinin kendi
+   önerisi: "consider marking as `pub`"). **Düzeltme:** yedisi de
+   `pub(crate) fn` yapıldı.
+2. **E0277 (2 hata)** -- `CudaGraph` (cudarc) `Send`/`Sync` değil,
+   `graph_cache: Mutex<HashMap<usize, CudaGraph>>` alanı yüzünden
+   `CudaBackend` `Backend: Send + Sync` şartını sağlayamıyordu. cudarc'ın
+   kendi kaynağını okudum: `CudaGraph`'ın doc'u AÇIKÇA "NOT thread safe...
+   must be serialized externally" diyor, ve cudarc `CudaContext`/
+   `CudaStream`/`CudaFunction`'a bilinçli `unsafe impl Send/Sync` veriyor
+   ama `CudaGraph`'a vermiyor -- tam da "dışarıdan serileştirme" şartı
+   yüzünden. Benim `Mutex` kullanımım zaten bunu sağlıyor (her erişim
+   `.lock()` üzerinden). **Düzeltme:** `struct GraphCell(CudaGraph);
+   unsafe impl Send for GraphCell {} unsafe impl Sync for GraphCell {}`
+   -- tahmin değil, cudarc'ın kendi dokümantasyonuna dayanan, gerekçesi
+   kod içinde yazılı bir `unsafe impl`.
+
+Bu turun script'i tam olarak tasarlandığı gibi çalıştı: adım 1'de temiz
+durdu, net logladı, 5 adımın geri kalanına hiç geçmedi (log dosyası bunu
+doğruluyor). Yani script'in kendisi sorunsuz -- sorun her zaman söylediğim
+gibi wilupgu'nun CUDA tarafının bu makinede hiç derlenmemiş olmasıydı.
+
+Yukarıdaki 16 hata düzeltildi ama yine bu makinede derlenip
+doğrulanamıyor -- ikinci bir round-trip test gerekiyor.
+
 ## Notlar / hatırlatmalar
 
 - `backend_parity` testindeki segfault, `git stash`/`git stash pop` ile pristine (değişikliklerden önceki) kodda da aynı şekilde reprodüklendiği için **wilupgu'nun yeni eklemelerinden kaynaklanmadığı kanıtlandı** — muhtemelen bu sandbox ortamında GPU adapter eksikliği/uyumsuzluğu. Kullanıcının gerçek makinesinde (CUDA'lı) muhtemelen sorun çıkarmaz.
