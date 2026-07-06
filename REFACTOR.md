@@ -177,6 +177,21 @@ davranış birebir aynı kaldı (akasha-core'daki çağıranlar dokunulmadı).
 -- bunların tek çağıranı aynı dosyadaki `custom_causal_mask`/
 `custom_adamw_schedule`, onlar da güncellendi.
 
+**Sonradan taşındı:** `launch!`/`read_meta!`/`define_launch!` üçü de
+`backends/cuda_launch_macros.rs`'e taşındı (`cuda.rs`'i okunur tutmak için,
+kullanıcının isteğiyle). `pub(crate) use` (path-based 2018 macro import) ile
+dışa açılıyorlar, `cuda.rs` `use super::cuda_launch_macros::{define_launch,
+launch, read_meta};` ile içeri alıyor. Burada gerçek, önemsiz olmayan bir
+hijyen detayı var ve tahminle geçmedim: `define_launch!` kendi içinde HEM
+`read_meta!` HEM `launch!` çağırıyor (kendi kendine özyineleme değil, iki
+AYRI makro) -- path-import edilen makrolarda bu durumda çağıran dosyanın
+İKİSİNİ DE import etmesi zorunlu, sadece `define_launch`'ı import etmek
+YETMİYOR. Bunu izole bir scratch projede gerçekten test ederek doğruladım
+(önce sadece "dıştaki" makroyu import edip derleme hatası aldım: "cannot
+find macro `helper_macro` in this scope", sonra ikisini de import edip
+düzelttim) -- bu olmasaydı `read_meta`'nın "kullanılmayan import" olduğunu
+düşünüp silebilirdim, ki bu derlemeyi kırardı.
+
 ### 2. [DONE] `Dtype` enum + `Backend` trait'e zorunlu dtype-parametreli metodlar
 
 ```rust

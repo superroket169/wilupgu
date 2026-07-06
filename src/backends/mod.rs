@@ -2,6 +2,8 @@ pub mod wgpu;
 pub use wgpu::WgpuBackend;
 
 #[cfg(feature = "cuda")]
+mod cuda_launch_macros;
+#[cfg(feature = "cuda")]
 pub mod cuda;
 #[cfg(feature = "cuda")]
 pub use cuda::CudaBackend;
