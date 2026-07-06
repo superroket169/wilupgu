@@ -515,14 +515,14 @@ impl CudaBackend {
 
     define_launch!(
         launch_rope_qk,
-        meta_slot: 2, meta: [seq: u32, dim: u32, head_dim: u32],
+        meta_slot: 2, meta: [seq: u32, dim: u32, head_dim: u32, row_offset: u32],
         buffers: [mut qg: 0, mut kg: 1],
         grid: LaunchConfig {
             grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
         },
-        launch: [&mut *qg, &mut *kg, &seq, &dim, &head_dim]
+        launch: [&mut *qg, &mut *kg, &seq, &dim, &head_dim, &row_offset]
     );
 
     define_launch!(
@@ -551,38 +551,38 @@ impl CudaBackend {
 
     define_launch!(
         launch_flash_attention,
-        meta_slot: 5, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        meta_slot: 5, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
         buffers: [ro qg: 0, ro kg: 1, ro vg: 2, mut og: 3, mut lg: 4],
         grid: LaunchConfig {
             grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
         },
-        launch: [&*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale]
+        launch: [&*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale, &row_offset]
     );
 
     define_launch!(
         launch_flash_attention_bwd_dq,
-        meta_slot: 7, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        meta_slot: 7, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
         buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dqg: 6],
         grid: LaunchConfig {
             grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
         },
-        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim, &head_dim, &scale]
+        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim, &head_dim, &scale, &row_offset]
     );
 
     define_launch!(
         launch_flash_attention_bwd_dkdv,
-        meta_slot: 8, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        meta_slot: 8, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
         buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dkg: 6, mut dvg: 7],
         grid: LaunchConfig {
             grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
         },
-        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len, &dim, &head_dim, &scale]
+        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len, &dim, &head_dim, &scale, &row_offset]
     );
 
     fn dispatch_node(&self, node: &CudaNode) {
