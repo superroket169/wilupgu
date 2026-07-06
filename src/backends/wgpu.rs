@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Binding, TensorMode};
+use crate::backend::{Backend, Binding, Dtype, TensorMode};
 use crate::pool::BufferPool;
 use crate::shader::Shader;
 use std::collections::HashMap;
@@ -124,6 +124,34 @@ impl Backend for WgpuBackend {
         drop(mapped);
         staging.unmap();
         result
+    }
+
+    // TODO: f16 and other types supportations
+    fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> WgpuBuffer {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[wgpu] backend only supports F32 today, got {dtype:?}"
+        );
+        self.alloc((elem_count * dtype.elem_size()) as u64)
+    }
+
+    fn upload_as(&self, buf: &WgpuBuffer, data: &[f32], dtype: Dtype) {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[wgpu] backend only supports F32 today, got {dtype:?}"
+        );
+        self.copy_from_cpu(buf, data);
+    }
+
+    fn download_as(&self, buf: &WgpuBuffer, dtype: Dtype) -> Vec<f32> {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[wgpu] backend only supports F32 today, got {dtype:?}"
+        );
+        self.copy_to_cpu(buf)
     }
 
     fn free_buffer(&self, buf: WgpuBuffer) {
