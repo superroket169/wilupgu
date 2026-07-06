@@ -1,30 +1,31 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::Mutex;
 
-pub(crate) struct BufferPool<Buf> {
-    free_blocks: Mutex<HashMap<u64, Vec<Buf>>>,
+pub(crate) struct BufferPool<Buf, K: Eq + Hash + Copy = u64> {
+    free_blocks: Mutex<HashMap<K, Vec<Buf>>>,
 }
 
-impl<Buf> BufferPool<Buf> {
+impl<Buf, K: Eq + Hash + Copy> BufferPool<Buf, K> {
     pub(crate) fn new() -> Self {
         Self {
             free_blocks: Mutex::new(HashMap::new()),
         }
     }
 
-    pub(crate) fn take(&self, size_bytes: u64) -> Option<Buf> {
+    pub(crate) fn take(&self, key: K) -> Option<Buf> {
         self.free_blocks
             .lock()
             .unwrap()
-            .get_mut(&size_bytes)
+            .get_mut(&key)
             .and_then(|bucket| bucket.pop())
     }
 
-    pub(crate) fn recycle(&self, size_bytes: u64, buf: Buf) {
+    pub(crate) fn recycle(&self, key: K, buf: Buf) {
         self.free_blocks
             .lock()
             .unwrap()
-            .entry(size_bytes)
+            .entry(key)
             .or_default()
             .push(buf);
     }

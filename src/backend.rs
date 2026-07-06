@@ -8,6 +8,22 @@ pub enum TensorMode {
     Meta,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dtype {
+    F32,
+    F16,
+    Bf16,
+}
+
+impl Dtype {
+    pub fn elem_size(self) -> usize {
+        match self {
+            Dtype::F32 => 4,
+            Dtype::F16 | Dtype::Bf16 => 2,
+        }
+    }
+}
+
 pub struct Binding<'a, Buf> {
     pub slot: u32,
     pub buffer: &'a Buf,
@@ -29,6 +45,12 @@ pub trait Backend: Send + Sync + 'static {
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> Self::Buffer;
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &Self::Buffer, data: &[T]);
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &Self::Buffer) -> Vec<T>;
+
+    // dynamic type quantization like somethings
+    fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> Self::Buffer;
+    fn upload_as(&self, buf: &Self::Buffer, data: &[f32], dtype: Dtype);
+    fn download_as(&self, buf: &Self::Buffer, dtype: Dtype) -> Vec<f32>;
+
     fn free_buffer(&self, buf: Self::Buffer);
     fn recycle(&self, size_bytes: u64, buf: Self::Buffer);
     fn is_sole_owner(buf: &Self::Buffer) -> bool;
