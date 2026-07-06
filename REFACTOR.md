@@ -371,6 +371,36 @@ gibi wilupgu'nun CUDA tarafının bu makinede hiç derlenmemiş olmasıydı.
 Yukarıdaki 16 hata düzeltildi ama yine bu makinede derlenip
 doğrulanamıyor -- ikinci bir round-trip test gerekiyor.
 
+## İkinci round (2026-07-06 20:37) -- adım 1 GEÇTİ, adım 2'de yeni hata
+
+`cargo check --features cuda` bu sefer **temiz geçti** (32s, sıfır hata) --
+yukarıdaki 16 hatalık düzeltme doğru çıktı. `cargo test --features cuda`
+ise `tests/meta_cache_check.rs`'te 3 hata verdi:
+
+1. **`ctx.synchronize()` bulunamadı** -- `Backend` trait import edilmemişti
+   bu dosyada (diğer üç test dosyası zaten import ediyordu, sadece bu
+   dosya unutulmuş -- eski, bu oturumdan önceki bir eksiklik).
+2. **Daha önemlisi:** bu test hâlâ AdamW B rewrite'ından ÖNCEKİ eski
+   6-slot `ADAMW` binding layout'unu kullanıyordu (tek `StepConfig{step,
+   lr, beta1, beta2, eps, weight_decay}` Meta struct'ı, slot 5). Bugünkü
+   `ADAMW` shader'ı 7-slot (`param_meta` Meta @4, `schedule_state` **Input**
+   @5, `const_cfg` Meta @6) -- import hatası düzeltilse bile bu test farklı
+   şekilde patlayacaktı (yanlış binding sayısı/sırası).
+
+**Düzeltme:** `use wilupgu::Backend;` eklendi; AdamW bölümü yeni layout'a
+göre yeniden yazıldı -- `ScheduleState{step:u32,lr:f32}` (Input, slot 5,
+`ADAMW_SCHEDULE` kernel'i atlanıp elle `copy_from_cpu` ile yazılıyor, çünkü
+bu test sadece `ADAMW` kernel'inin kendi binding davranışını izole test
+ediyor) + `ConstCfg{beta1,beta2,eps,weight_decay}` (Meta, slot 6, döngü
+dışında bir kere yükleniyor). Field sırası `src/builtin/cuda_kernels.rs`'teki
+`ADAMW`/`ADAMW_SCHEDULE` kernel imzalarından birebir alındı (tahmin değil).
+
+Diğer test dosyaları kontrol edildi: `backend_parity.rs`'nin de
+`#[cfg(feature = "cuda")]` bölümleri var ama generic `run_*<B: Backend>`
+fonksiyonları kullanıyor, `ADAMW`'a hiç dokunmuyor, `Backend` zaten import
+edilmiş -- sorun beklenmiyor. `advanced_graph_test.rs`/`graph_chain_test.rs`
+hiç CUDA-specific kod içermiyor.
+
 ## Notlar / hatırlatmalar
 
 - `backend_parity` testindeki segfault, `git stash`/`git stash pop` ile pristine (değişikliklerden önceki) kodda da aynı şekilde reprodüklendiği için **wilupgu'nun yeni eklemelerinden kaynaklanmadığı kanıtlandı** — muhtemelen bu sandbox ortamında GPU adapter eksikliği/uyumsuzluğu. Kullanıcının gerçek makinesinde (CUDA'lı) muhtemelen sorun çıkarmaz.

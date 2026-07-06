@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use wilupgu::builtin;
-use wilupgu::{Binding, ComputeGraph, CudaBackend, Tensor, TensorMode};
+use wilupgu::{Backend, Binding, ComputeGraph, CudaBackend, Tensor, TensorMode};
 
 fn cuda_ctx() -> Arc<CudaBackend> {
     Arc::new(
@@ -20,9 +20,14 @@ struct ParamMeta {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct StepConfig {
+struct ScheduleState {
     step: u32,
     lr: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ConstCfg {
     beta1: f32,
     beta2: f32,
     eps: f32,
@@ -88,11 +93,10 @@ fn meta_cache_check() {
     let m = Tensor::init_from_cpu(ctx.clone(), &[0.0f32; 4]);
     let v = Tensor::init_from_cpu(ctx.clone(), &[0.0f32; 4]);
     let param_meta = Tensor::init_from_cpu(ctx.clone(), &[ParamMeta { size: n }]);
-    let cfg = Tensor::init_from_cpu(
+    let schedule_state = Tensor::init_from_cpu(ctx.clone(), &[ScheduleState { step: 0, lr: 0.0 }]);
+    let const_cfg = Tensor::init_from_cpu(
         ctx.clone(),
-        &[StepConfig {
-            step: 0,
-            lr: 0.0,
+        &[ConstCfg {
             beta1: 0.9,
             beta2: 0.999,
             eps: 1e-8,
@@ -109,7 +113,8 @@ fn meta_cache_check() {
             Binding::new(2, &m.buffer, TensorMode::InOut),
             Binding::new(3, &v.buffer, TensorMode::InOut),
             Binding::new(4, &param_meta.buffer, TensorMode::Meta),
-            Binding::new(5, &cfg.buffer, TensorMode::Meta),
+            Binding::new(5, &schedule_state.buffer, TensorMode::Input),
+            Binding::new(6, &const_cfg.buffer, TensorMode::Meta),
         ],
         [(n + 255) / 256, 1, 1],
     );
@@ -117,13 +122,9 @@ fn meta_cache_check() {
     let lrs = [0.1f32, 0.01, 0.001];
     let mut weight_snapshots = Vec::new();
     for (i, &lr) in lrs.iter().enumerate() {
-        cfg.copy_from_cpu(&[StepConfig {
+        schedule_state.copy_from_cpu(&[ScheduleState {
             step: (i + 1) as u32,
             lr,
-            beta1: 0.9,
-            beta2: 0.999,
-            eps: 1e-8,
-            weight_decay: 0.0,
         }]);
         adamw_graph.execute();
         ctx.synchronize();
@@ -147,15 +148,15 @@ fn meta_cache_check() {
 
     assert!(
         d1 > d2 * 3.0,
-        "step1->2 delta did not shrink as expected when lr dropped 10x (cfg may be stale/cached)"
+        "step1->2 delta did not shrink as expected when lr dropped 10x (schedule_state may be stale/cached)"
     );
     assert!(
         d2 > d3 * 3.0,
-        "step2->3 delta did not shrink as expected when lr dropped 10x (cfg may be stale/cached)"
+        "step2->3 delta did not shrink as expected when lr dropped 10x (schedule_state may be stale/cached)"
     );
 
     println!(
-        "[check 2] AdamW: per-step deltas shrink in line with falling lr -> cfg_meta is read LIVE each dispatch, not cached. OK"
+        "[check 2] AdamW: per-step deltas shrink in line with falling lr -> schedule_state is read LIVE each dispatch, not cached. OK"
     );
 
     println!("\nAll checks passed.");
