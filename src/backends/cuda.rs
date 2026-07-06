@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Binding, TensorMode};
+use crate::backend::{Backend, Binding, Dtype, TensorMode};
 use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
 use crate::shader::{CudaShape, Shader};
@@ -7,12 +7,49 @@ use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
 use cudarc::driver::sys::{CUgraphInstantiate_flags, CUstreamCaptureMode};
 use cudarc::driver::{
-    CudaContext as CuDevice, CudaFunction, CudaGraph, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as CuDevice, CudaFunction, CudaGraph, CudaSlice, CudaStream, LaunchConfig,
+    PushKernelArg,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-pub type CudaBuffer = Arc<Mutex<cudarc::driver::CudaSlice<f32>>>;
+#[derive(Clone)]
+pub enum CudaBuffer {
+    F32(Arc<Mutex<CudaSlice<f32>>>),
+    F16(Arc<Mutex<CudaSlice<half::f16>>>),
+    Bf16(Arc<Mutex<CudaSlice<half::bf16>>>),
+}
+
+impl CudaBuffer {
+    pub fn dtype(&self) -> Dtype {
+        match self {
+            CudaBuffer::F32(_) => Dtype::F32,
+            CudaBuffer::F16(_) => Dtype::F16,
+            CudaBuffer::Bf16(_) => Dtype::Bf16,
+        }
+    }
+
+    pub fn as_f32(&self) -> &Arc<Mutex<CudaSlice<f32>>> {
+        match self {
+            CudaBuffer::F32(s) => s,
+            other => panic!("[cuda] expected F32 buffer, got {:?}", other.dtype()),
+        }
+    }
+
+    pub fn as_f16(&self) -> &Arc<Mutex<CudaSlice<half::f16>>> {
+        match self {
+            CudaBuffer::F16(s) => s,
+            other => panic!("[cuda] expected F16 buffer, got {:?}", other.dtype()),
+        }
+    }
+
+    pub fn as_bf16(&self) -> &Arc<Mutex<CudaSlice<half::bf16>>> {
+        match self {
+            CudaBuffer::Bf16(s) => s,
+            other => panic!("[cuda] expected Bf16 buffer, got {:?}", other.dtype()),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct CudaBinding {
@@ -38,7 +75,7 @@ pub struct CudaBackend {
     pub stream: Arc<CudaStream>,
     blas: CudaBlas,
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
-    pool: BufferPool<CudaBuffer>,
+    pool: BufferPool<CudaBuffer, (u64, Dtype)>,
     graph_cache: Mutex<HashMap<usize, CudaGraph>>,
 }
 
@@ -141,11 +178,24 @@ macro_rules! define_launch {
         }
     };
     (@lock mut $name:ident, $bindings:ident, $slot:expr) => {
-        let mut $name = find($bindings, $slot).slice.lock().unwrap();
+        let mut $name = find($bindings, $slot).slice.as_f32().lock().unwrap();
     };
     (@lock ro $name:ident, $bindings:ident, $slot:expr) => {
-        let $name = find($bindings, $slot).slice.lock().unwrap();
+        let $name = find($bindings, $slot).slice.as_f32().lock().unwrap();
     };
+}
+
+#[allow(dead_code)]
+fn lock_f32(bindings: &[CudaBinding], slot: u32) -> std::sync::MutexGuard<'_, CudaSlice<f32>> {
+    find(bindings, slot).slice.as_f32().lock().unwrap()
+}
+
+#[allow(dead_code)]
+fn lock_f16(
+    bindings: &[CudaBinding],
+    slot: u32,
+) -> std::sync::MutexGuard<'_, CudaSlice<half::f16>> {
+    find(bindings, slot).slice.as_f16().lock().unwrap()
 }
 
 fn find(bindings: &[CudaBinding], slot: u32) -> &CudaBinding {
@@ -179,9 +229,9 @@ impl CudaBackend {
         let dims = meta_u32(find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
-        let ag = a.slice.lock().unwrap();
-        let bg = b.slice.lock().unwrap();
-        let mut cg = c.slice.lock().unwrap();
+        let ag = a.slice.as_f32().lock().unwrap();
+        let bg = b.slice.as_f32().lock().unwrap();
+        let mut cg = c.slice.as_f32().lock().unwrap();
 
         let (op_b, ldb) = if transpose_b {
             (cublasOperation_t::CUBLAS_OP_T, ki)
@@ -215,9 +265,9 @@ impl CudaBackend {
         let dims = meta_u32(find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
-        let ag = a.slice.lock().unwrap();
-        let dcg = dc.slice.lock().unwrap();
-        let mut dbg = db.slice.lock().unwrap();
+        let ag = a.slice.as_f32().lock().unwrap();
+        let dcg = dc.slice.as_f32().lock().unwrap();
+        let mut dbg = db.slice.as_f32().lock().unwrap();
 
         let cfg = GemmConfig {
             transa: cublasOperation_t::CUBLAS_OP_N,
@@ -277,9 +327,11 @@ impl CudaBackend {
         let dims = meta_u32(find(bindings, 3));
         let (vocab, embed, seq) = (dims[0], dims[1], dims[2]);
         let f = self.compile(key, src, func);
-        let g0 = find(bindings, 0).slice.lock().unwrap();
-        let g1 = find(bindings, 1).slice.lock().unwrap();
-        let mut g2 = find(bindings, 2).slice.lock().unwrap();
+
+        let g0 = find(bindings, 0).slice.as_f32().lock().unwrap();
+        let g1 = find(bindings, 1).slice.as_f32().lock().unwrap();
+        let mut g2 = find(bindings, 2).slice.as_f32().lock().unwrap();
+
         let cfg = LaunchConfig {
             grid_dim: (wg[0].max(1), seq.max(1), 1),
             block_dim: (256, 1, 1),
@@ -427,11 +479,11 @@ impl CudaBackend {
         let wd = f32::from_ne_bytes(const_bytes[12..16].try_into().unwrap());
 
         let f = self.compile(key, k::ADAMW, "adamw_kernel");
-        let mut wg = find(bindings, 0).slice.lock().unwrap();
-        let gg = find(bindings, 1).slice.lock().unwrap();
-        let mut mg = find(bindings, 2).slice.lock().unwrap();
-        let mut vg = find(bindings, 3).slice.lock().unwrap();
-        let schedule_g = find(bindings, 5).slice.lock().unwrap();
+        let mut wg = find(bindings, 0).slice.as_f32().lock().unwrap();
+        let gg = find(bindings, 1).slice.as_f32().lock().unwrap();
+        let mut mg = find(bindings, 2).slice.as_f32().lock().unwrap();
+        let mut vg = find(bindings, 3).slice.as_f32().lock().unwrap();
+        let schedule_g = find(bindings, 5).slice.as_f32().lock().unwrap();
         launch!(
             self,
             f,
@@ -636,7 +688,7 @@ impl Backend for CudaBackend {
     }
 
     fn alloc(&self, size_bytes: u64) -> CudaBuffer {
-        if let Some(buf) = self.pool.take(size_bytes) {
+        if let Some(buf) = self.pool.take((size_bytes, Dtype::F32)) {
             return buf;
         }
         let n = (size_bytes as usize) / std::mem::size_of::<f32>();
@@ -644,14 +696,14 @@ impl Backend for CudaBackend {
             .stream
             .alloc_zeros::<f32>(n)
             .expect("[cuda] alloc failed");
-        Arc::new(Mutex::new(slice))
+        CudaBuffer::F32(Arc::new(Mutex::new(slice)))
     }
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> CudaBuffer {
         let f32s: &[f32] = bytemuck::cast_slice(data);
         let size_bytes = (f32s.len() * std::mem::size_of::<f32>()) as u64;
-        if let Some(buf) = self.pool.take(size_bytes) {
-            let mut g = buf.lock().unwrap();
+        if let Some(buf) = self.pool.take((size_bytes, Dtype::F32)) {
+            let mut g = buf.as_f32().lock().unwrap();
             self.stream
                 .memcpy_htod(f32s, &mut *g)
                 .expect("[cuda] htod copy (recycled) failed");
@@ -659,21 +711,105 @@ impl Backend for CudaBackend {
             return buf;
         }
         let slice = self.stream.clone_htod(f32s).expect("[cuda] htod failed");
-        Arc::new(Mutex::new(slice))
+        CudaBuffer::F32(Arc::new(Mutex::new(slice)))
     }
 
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &CudaBuffer, data: &[T]) {
         let f32s: &[f32] = bytemuck::cast_slice(data);
-        let mut g = buf.lock().unwrap();
+        let mut g = buf.as_f32().lock().unwrap();
         self.stream
             .memcpy_htod(f32s, &mut *g)
             .expect("[cuda] htod copy failed");
     }
 
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &CudaBuffer) -> Vec<T> {
-        let g = buf.lock().unwrap();
+        let g = buf.as_f32().lock().unwrap();
         let f32s = self.stream.clone_dtoh(&*g).expect("[cuda] dtoh failed");
         bytemuck::cast_slice::<f32, T>(&f32s).to_vec()
+    }
+
+    fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> CudaBuffer {
+        let size_bytes = (elem_count * dtype.elem_size()) as u64;
+        if let Some(buf) = self.pool.take((size_bytes, dtype)) {
+            return buf;
+        }
+        match dtype {
+            Dtype::F32 => {
+                let slice = self
+                    .stream
+                    .alloc_zeros::<f32>(elem_count)
+                    .expect("[cuda] alloc (f32) failed");
+                CudaBuffer::F32(Arc::new(Mutex::new(slice)))
+            }
+            Dtype::F16 => {
+                let slice = self
+                    .stream
+                    .alloc_zeros::<half::f16>(elem_count)
+                    .expect("[cuda] alloc (f16) failed");
+                CudaBuffer::F16(Arc::new(Mutex::new(slice)))
+            }
+            Dtype::Bf16 => {
+                let slice = self
+                    .stream
+                    .alloc_zeros::<half::bf16>(elem_count)
+                    .expect("[cuda] alloc (bf16) failed");
+                CudaBuffer::Bf16(Arc::new(Mutex::new(slice)))
+            }
+        }
+    }
+
+    fn upload_as(&self, buf: &CudaBuffer, data: &[f32], dtype: Dtype) {
+        match dtype {
+            Dtype::F32 => {
+                let mut g = buf.as_f32().lock().unwrap();
+                self.stream
+                    .memcpy_htod(data, &mut *g)
+                    .expect("[cuda] htod (f32) failed");
+            }
+            Dtype::F16 => {
+                let converted: Vec<half::f16> =
+                    data.iter().map(|&x| half::f16::from_f32(x)).collect();
+                let mut g = buf.as_f16().lock().unwrap();
+                self.stream
+                    .memcpy_htod(&converted, &mut *g)
+                    .expect("[cuda] htod (f16) failed");
+            }
+            Dtype::Bf16 => {
+                let converted: Vec<half::bf16> =
+                    data.iter().map(|&x| half::bf16::from_f32(x)).collect();
+                let mut g = buf.as_bf16().lock().unwrap();
+                self.stream
+                    .memcpy_htod(&converted, &mut *g)
+                    .expect("[cuda] htod (bf16) failed");
+            }
+        }
+    }
+
+    fn download_as(&self, buf: &CudaBuffer, dtype: Dtype) -> Vec<f32> {
+        match dtype {
+            Dtype::F32 => {
+                let g = buf.as_f32().lock().unwrap();
+                self.stream
+                    .clone_dtoh(&*g)
+                    .expect("[cuda] dtoh (f32) failed")
+            }
+            Dtype::F16 => {
+                let g = buf.as_f16().lock().unwrap();
+                let raw = self
+                    .stream
+                    .clone_dtoh(&*g)
+                    .expect("[cuda] dtoh (f16) failed");
+                raw.iter().map(|v| v.to_f32()).collect()
+            }
+            Dtype::Bf16 => {
+                let g = buf.as_bf16().lock().unwrap();
+                let raw = self
+                    .stream
+                    .clone_dtoh(&*g)
+                    .expect("[cuda] dtoh (bf16) failed");
+                raw.iter().map(|v| v.to_f32()).collect()
+            }
+        }
     }
 
     fn free_buffer(&self, _buf: CudaBuffer) {
@@ -681,11 +817,16 @@ impl Backend for CudaBackend {
     }
 
     fn recycle(&self, size_bytes: u64, buf: CudaBuffer) {
-        self.pool.recycle(size_bytes, buf);
+        let dtype = buf.dtype();
+        self.pool.recycle((size_bytes, dtype), buf);
     }
 
     fn is_sole_owner(buf: &CudaBuffer) -> bool {
-        Arc::strong_count(buf) == 1
+        match buf {
+            CudaBuffer::F32(a) => Arc::strong_count(a) == 1,
+            CudaBuffer::F16(a) => Arc::strong_count(a) == 1,
+            CudaBuffer::Bf16(a) => Arc::strong_count(a) == 1,
+        }
     }
 
     fn build_node(
@@ -698,7 +839,7 @@ impl Backend for CudaBackend {
             .iter()
             .map(|b| {
                 let cached_meta = if b.mode == TensorMode::Meta {
-                    let g = b.buffer.lock().unwrap();
+                    let g = b.buffer.as_f32().lock().unwrap();
                     let data = self
                         .stream
                         .clone_dtoh(&*g)
