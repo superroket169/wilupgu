@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Binding};
+use crate::backend::{Backend, Binding, Dtype};
 use crate::pool::BufferPool;
 use crate::shader::{CpuBinding, CpuBuffer, Shader};
 use std::sync::{Arc, Mutex};
@@ -60,6 +60,33 @@ impl Backend for CpuBackend {
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &CpuBuffer) -> Vec<T> {
         let g = buf.lock().unwrap();
         bytemuck::cast_slice::<u8, T>(&g).to_vec()
+    }
+
+    fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> CpuBuffer {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[cpu] backend only supports F32, got {dtype:?}"
+        );
+        self.alloc((elem_count * dtype.elem_size()) as u64)
+    }
+
+    fn upload_as(&self, buf: &CpuBuffer, data: &[f32], dtype: Dtype) {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[cpu] backend only supports F32, got {dtype:?}"
+        );
+        self.copy_from_cpu(buf, data);
+    }
+
+    fn download_as(&self, buf: &CpuBuffer, dtype: Dtype) -> Vec<f32> {
+        assert_eq!(
+            dtype,
+            Dtype::F32,
+            "[cpu] backend only supports F32, got {dtype:?}"
+        );
+        self.copy_to_cpu(buf)
     }
 
     fn free_buffer(&self, _buf: CpuBuffer) {}
