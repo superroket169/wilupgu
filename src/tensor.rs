@@ -1,4 +1,4 @@
-use crate::backend::Backend;
+use crate::backend::{Backend, Dtype};
 use std::sync::Arc;
 
 pub struct Tensor<B: Backend> {
@@ -29,6 +29,23 @@ impl<B: Backend> Tensor<B> {
 
     pub fn to_cpu<T: bytemuck::Pod + Default + Clone>(&self) -> Vec<T> {
         self.ctx.copy_to_cpu(&self.buffer)
+    }
+
+    pub fn new_dtype(ctx: Arc<B>, elem_count: usize, dtype: Dtype) -> Self {
+        let buffer = ctx.alloc_dtype(elem_count, dtype);
+        let size = (elem_count * dtype.elem_size()) as u64;
+        Self { ctx, buffer, size }
+    }
+
+    pub fn init_from_cpu_dtype(ctx: Arc<B>, data: &[f32], dtype: Dtype) -> Self {
+        let buffer = ctx.alloc_dtype(data.len(), dtype);
+        ctx.upload_as(&buffer, data, dtype);
+        let size = (data.len() * dtype.elem_size()) as u64;
+        Self { ctx, buffer, size }
+    }
+
+    pub fn to_cpu_as(&self, dtype: Dtype) -> Vec<f32> {
+        self.ctx.download_as(&self.buffer, dtype)
     }
 }
 
