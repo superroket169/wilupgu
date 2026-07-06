@@ -177,7 +177,7 @@ davranış birebir aynı kaldı (akasha-core'daki çağıranlar dokunulmadı).
 -- bunların tek çağıranı aynı dosyadaki `custom_causal_mask`/
 `custom_adamw_schedule`, onlar da güncellendi.
 
-### 2. [PLANNED] `Dtype` enum + `Backend` trait'e zorunlu dtype-parametreli metodlar
+### 2. [DONE] `Dtype` enum + `Backend` trait'e zorunlu dtype-parametreli metodlar
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,7 +197,13 @@ karar -- sessiz miras alınan default değil). CUDA gerçek f16/bf16
 dönüşümünü (`half::f16::from_f32`/`to_f32`, bit-reinterpret değil, gerçek
 yuvarlama) implement eder.
 
-### 3. [PLANNED] `CudaBuffer` -> enum
+**Doğrulandı:** `cargo check --features cpu` (wgpu+cpu backend'lerini
+kapsıyor, cuda hiç dokunmuyor) temiz geçti -- yeni trait metodları her iki
+backend'de de gerçekten derlendi. akasha-core `cargo check --lib --features
+vulkan` de temiz (3 önceden bilinen dead-code uyarısı dışında, onlar bu
+değişiklikle ilgisiz).
+
+### 3. [DONE] `CudaBuffer` -> enum
 
 ```rust
 #[derive(Clone)]
@@ -212,15 +218,29 @@ Simetrik, eşit ağırlıklı erişim: `lock_f32(bindings, slot)` /
 diğeri "özel durum" -- ikisi de `find`/`meta_bytes` gibi kardeş yardımcılar).
 Mevcut ~23 `define_launch!` çağrısı `buffers: [mut g: 0]` gibi yazıldığı
 için, `@lock` kolunun içindeki `.slice.lock().unwrap()` -> `.slice.as_f32().lock().unwrap()`
-değişimi TEK YERDE (makronun `@lock` kolunda) yapılacak -- çağıran ~23
-satırın hiçbiri değişmeyecek. Bu, makronun bu enum geçişini bile
+değişimi TEK YERDE (makronun `@lock` kolunda) yapıldı -- çağıran ~23
+satırın hiçbiri değişmedi. Bu, makronun bu enum geçişini bile
 kolaylaştırdığının kanıtı.
 
-**Gerçek bug riski (yakalandı, unutulmasın):** `BufferPool<Buf>` şu an
-sadece `size_bytes: u64` ile anahtarlanıyor. F16 alloc'u aynı byte
-sayısında bir F32 buffer'ı geri alabilir -- pool anahtarı CUDA tarafında
-`(u64, Dtype)` olmalı (`BufferPool<Buf, K=u64>` generic key parametresi,
-wgpu tarafı `K=u64` default'uyla değişmeden kalır).
+**Gerçek bug riski (yakalanmış VE düzeltilmiş):** `BufferPool<Buf>` sadece
+`size_bytes: u64` ile anahtarlanıyordu -- F16 alloc'u aynı byte sayısında
+bir F32 buffer'ı geri alabilirdi. `pool.rs`'te `BufferPool<Buf, K=u64>`
+generic key parametresi eklendi, CUDA tarafı `BufferPool<CudaBuffer,
+(u64, Dtype)>` kullanıyor artık; wgpu/cpu tarafı `K=u64` default'uyla hiç
+değişmeden kaldı (`cargo check --features cpu` ile doğrulandı).
+
+`CudaBackend::alloc_dtype`/`upload_as`/`download_as` de yazıldı (gerçek
+`half::f16::from_f32`/`to_f32` dönüşümüyle, bit-reinterpret değil).
+`alloc`/`alloc_from_cpu`/`copy_from_cpu`/`copy_to_cpu` (eski, F32-sabit
+API) ve `gemm_matmul`/`gemm_weight_bwd`/`launch_adamw`/`launch_embedding`/
+`build_node`'daki tüm doğrudan `.slice.lock()` çağrıları `.as_f32()`
+üzerinden geçecek şekilde güncellendi -- bu makine CUDA'sız olduğu için
+`cargo check --features cuda` çalışmıyor (build.rs nvcc arıyor, öncekiyle
+aynı, yeni bir hata değil), asıl derleme testi yine arkadaşının makinesinde
+olacak. `half`/`cudarc "f16"` feature'ları Cargo.toml'a eklendi; cudarc'ın
+vendored kaynağından `DeviceRepr`/`ValidAsZeroBits` impl'lerinin `half::f16`/
+`half::bf16` için `#[cfg(feature="f16")]` arkasında gerçekten var olduğu
+doğrulandı (tahmin değil, kaynağı okudum).
 
 ### 4. [PLANNED] GEMM generic-over-T (gerçek Rust generic, makro değil)
 
