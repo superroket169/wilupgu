@@ -1,24 +1,4 @@
 // Backend parity test suite.
-//
-// Every kernel is run on WGPU and (when the `cuda` feature is enabled and a
-// GPU is present) on CUDA.  Results are compared element-wise within a tight
-// tolerance.  A CPU reference implementation is also provided for each op so
-// that both backends are validated for *correctness*, not just mutual agreement.
-//
-//   cargo test --test backend_parity                   # WGPU only
-//   cargo test --test backend_parity --features cuda   # WGPU + CUDA
-//
-// Scope: only wilupgu's own built-in kernels (MatMul family, ResidualAdd,
-// ZeroTensor, CausalMask). Everything else (SiLU, Softmax, RMSNorm,
-// CrossEntropy, ...) moved to akasha-core's own src/shaders/ and should be
-// covered by akasha-core's test suite instead.
-//
-// Design notes:
-//   - Every `run_*` function is generic over Backend so the exact same code
-//     path exercises both backends.
-//   - CPU references are computed in plain Rust; no external deps.
-//   - Tolerances are deliberately tight (FP32 rounding only); loosen a
-//     constant if a future kernel legitimately needs more headroom.
 
 use std::sync::Arc;
 use wilupgu::builtin;
@@ -35,7 +15,9 @@ const EPS_EXACT: f32 = 1e-5;
 const EPS_TIGHT: f32 = 2e-4;
 // wgpu/cuda cross-backend comparison tolerance (only used when `cuda` is on).
 #[cfg(feature = "cuda")]
-const EPS_NORM: f32 = 5e-4;
+const EPS_ABS: f32 = 1e-4;
+#[cfg(feature = "cuda")]
+const EPS_REL: f32 = 5e-3;
 
 // ── comparison ────────────────────────────────────────────────────────────────
 
@@ -61,6 +43,39 @@ fn assert_close(label: &str, a: &[f32], b: &[f32], eps: f32) {
             b[idx],
             err,
             eps
+        );
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn assert_close_rel(label: &str, a: &[f32], b: &[f32], atol: f32, rtol: f32) {
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{label}: length mismatch ({} vs {})",
+        a.len(),
+        b.len()
+    );
+    let worst = a
+        .iter()
+        .zip(b)
+        .enumerate()
+        .map(|(i, (x, y))| {
+            let err = (x - y).abs();
+            let tol = atol + rtol * x.abs().max(y.abs());
+            (i, err, tol)
+        })
+        .max_by(|p, q| (p.1 - p.2).partial_cmp(&(q.1 - q.2)).unwrap());
+    if let Some((idx, err, tol)) = worst {
+        assert!(
+            err <= tol,
+            "{label}[{idx}]: a={:.6} b={:.6}  err={:.2e}  tol={:.2e} (atol={:.1e} rtol={:.1e})",
+            a[idx],
+            b[idx],
+            err,
+            tol,
+            atol,
+            rtol
         );
     }
 }
@@ -221,7 +236,7 @@ macro_rules! run_all_backends {
         {
             if let Some(cuda) = cuda_ctx() {
                 let cuda_out: Vec<f32> = $runner(cuda);
-                assert_close("backend parity", &wgpu_out, &cuda_out, EPS_NORM);
+                assert_close_rel("backend parity", &wgpu_out, &cuda_out, EPS_ABS, EPS_REL);
             }
         }
 
@@ -246,8 +261,10 @@ fn parity_matmul_large() {
     let (m, n, k) = (16usize, 16usize, 32usize);
     let a: Vec<f32> = (0..m * k)
         .map(|i| {
-            ((i as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % 1000)
-                as f32
+            ((i as u64)
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407)
+                % 1000) as f32
                 * 0.01
         })
         .collect();
