@@ -110,7 +110,7 @@ pub static ZERO_TENSOR: Shader = Shader {
 
 pub static ADAMW: Shader = Shader {
     name: "AdamW",
-    layout: &[InOut, Input, InOut, InOut, Meta, Meta],
+    layout: &[InOut, Input, InOut, InOut, Meta, Input, Meta],
     wgpu: Some(include_str!("../shaders/bwd/adamw.wgsl")),
     cpu: Some(cpu::adamw),
     #[cfg(feature = "cuda")]
@@ -118,6 +118,21 @@ pub static ADAMW: Shader = Shader {
         src: "",
         entry: "",
         shape: CudaShape::Custom(cd::custom_adamw),
+    }),
+    #[cfg(not(feature = "cuda"))]
+    cuda: None,
+};
+
+pub static ADAMW_SCHEDULE: Shader = Shader {
+    name: "AdamWSchedule",
+    layout: &[InOut, Meta],
+    wgpu: Some(include_str!("../shaders/bwd/adamw_schedule.wgsl")),
+    cpu: Some(cpu::adamw_schedule),
+    #[cfg(feature = "cuda")]
+    cuda: Some(CudaSpec {
+        src: "",
+        entry: "",
+        shape: CudaShape::Custom(cd::custom_adamw_schedule),
     }),
     #[cfg(not(feature = "cuda"))]
     cuda: None,
