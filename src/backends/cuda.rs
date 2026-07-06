@@ -121,15 +121,6 @@ fn meta_u32(b: &CudaBinding) -> Vec<u32> {
     bytemuck::cast_slice::<u8, u32>(&meta_bytes(b)).to_vec()
 }
 
-fn live_meta_bytes(b: &CudaBinding, backend: &CudaBackend) -> Vec<u8> {
-    let g = b.slice.lock().unwrap();
-    let data = backend
-        .stream
-        .clone_dtoh(&*g)
-        .expect("live meta dtoh failed");
-    bytemuck::cast_slice::<f32, u8>(&data).to_vec()
-}
-
 fn n_elems(b: &CudaBinding) -> u32 {
     b.slice.lock().unwrap().len() as u32
 }
@@ -532,20 +523,19 @@ impl CudaBackend {
 
     fn launch_adamw(&self, bindings: &[CudaBinding], key: usize) {
         let size = meta_u32(find(bindings, 4))[0];
-        // AdamW cfg changes every step — must read live, not from cached_meta
-        let bytes = live_meta_bytes(find(bindings, 5), self);
-        let step = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let lr = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let beta1 = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let beta2 = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
-        let eps = f32::from_ne_bytes(bytes[16..20].try_into().unwrap());
-        let wd = f32::from_ne_bytes(bytes[20..24].try_into().unwrap());
+
+        let const_bytes = meta_bytes(find(bindings, 6));
+        let beta1 = f32::from_ne_bytes(const_bytes[0..4].try_into().unwrap());
+        let beta2 = f32::from_ne_bytes(const_bytes[4..8].try_into().unwrap());
+        let eps = f32::from_ne_bytes(const_bytes[8..12].try_into().unwrap());
+        let wd = f32::from_ne_bytes(const_bytes[12..16].try_into().unwrap());
 
         let f = self.compile(key, k::ADAMW, "adamw_kernel");
         let mut wg = find(bindings, 0).slice.lock().unwrap();
         let gg = find(bindings, 1).slice.lock().unwrap();
         let mut mg = find(bindings, 2).slice.lock().unwrap();
         let mut vg = find(bindings, 3).slice.lock().unwrap();
+        let schedule_g = find(bindings, 5).slice.lock().unwrap();
         launch!(
             self,
             f,
@@ -555,12 +545,37 @@ impl CudaBackend {
             &mut *mg,
             &mut *vg,
             &size,
-            &step,
-            &lr,
+            &*schedule_g,
             &beta1,
             &beta2,
             &eps,
             &wd
+        );
+    }
+
+    fn launch_adamw_schedule(&self, bindings: &[CudaBinding], key: usize) {
+        let bytes = meta_bytes(find(bindings, 1));
+        let lr_max = f32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let lr_min = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let warmup_steps = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+        let max_steps = u32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+
+        let f = self.compile(key, k::ADAMW_SCHEDULE, "adamw_schedule_kernel");
+        let mut state_g = find(bindings, 0).slice.lock().unwrap();
+        let cfg = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self,
+            f,
+            cfg,
+            &mut *state_g,
+            &lr_max,
+            &lr_min,
+            &warmup_steps,
+            &max_steps
         );
     }
 
@@ -806,10 +821,19 @@ fn custom_adamw(s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _
     b.launch_adamw(bindings, shader_key(s))
 }
 
+fn custom_adamw_schedule(
+    s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
+    b.launch_adamw_schedule(bindings, shader_key(s))
+}
+
 pub(crate) mod dispatch {
     pub(crate) use super::{
-        custom_adamw, custom_causal_mask, custom_matmul, custom_matmul_add, custom_matmul_trp,
-        custom_matmul_weight_bwd,
+        custom_adamw, custom_adamw_schedule, custom_causal_mask, custom_matmul, custom_matmul_add,
+        custom_matmul_trp, custom_matmul_weight_bwd,
     };
 }
 
@@ -880,12 +904,10 @@ impl Backend for CudaBackend {
         bindings: &[Binding<CudaBuffer>],
         workgroups: [u32; 3],
     ) -> CudaNode {
-        let is_adamw = std::ptr::eq(shader, &crate::builtin::ADAMW);
         let cuda_bindings = bindings
             .iter()
             .map(|b| {
-                let is_live = is_adamw && b.slot == 5;
-                let cached_meta = if b.mode == TensorMode::Meta && !is_live {
+                let cached_meta = if b.mode == TensorMode::Meta {
                     let g = b.buffer.lock().unwrap();
                     let data = self
                         .stream
