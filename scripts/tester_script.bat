@@ -31,9 +31,9 @@ cargo test --features cpu -- --test-threads=1 >> "%LOGFILE%" 2>&1
 if errorlevel 1 (set S4=FAILED& set ANY_FAILED=1& echo FAILED) else (set S4=OK& echo OK)
 
 echo.
-echo === [5/5] f16 GEMM check (isolated re-run, real GPU math) ===
+echo === [5/5] f16/bf16 GEMM check (isolated re-run, real GPU math) ===
 echo (already part of step 2 -- re-run alone with output visible for a quick look)
-cargo test --features cuda f16_matmul_matches_f32_matmul -- --test-threads=1 --nocapture >> "%LOGFILE%" 2>&1
+cargo test --features cuda gemm_dtype_validation -- --test-threads=1 --nocapture >> "%LOGFILE%" 2>&1
 if errorlevel 1 (set S5=FAILED& set ANY_FAILED=1& echo FAILED) else (set S5=OK& echo OK)
 
 echo.
@@ -43,7 +43,7 @@ echo   [1/5] cargo check --features cuda ........ !S1!
 echo   [2/5] cargo test  --features cuda ........ !S2!
 echo   [3/5] cargo check --features cpu  ........ !S3!
 echo   [4/5] cargo test  --features cpu  ........ !S4!
-echo   [5/5] f16 GEMM isolated re-run ............ !S5!
+echo   [5/5] f16/bf16 GEMM isolated re-run ........ !S5!
 echo ============================================
 
 if "!ANY_FAILED!"=="1" (

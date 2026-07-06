@@ -920,7 +920,7 @@ impl Backend for CudaBackend {
 
 /// cargo test --features cuda -- --test-threads=1
 #[cfg(test)]
-mod f16_gemm_validation {
+mod gemm_dtype_validation {
     use super::CudaBackend;
     use crate::{builtin, Backend, Binding, ComputeGraph, Dtype, Tensor, TensorMode};
     use std::sync::Arc;
@@ -974,6 +974,20 @@ mod f16_gemm_validation {
             assert!(
                 (got - want).abs() < 1e-2,
                 "f16 path diverged from expected: got {got}, want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn bf16_matmul_matches_f32_matmul() {
+        let ctx = cuda();
+        let expected = [19.0f32, 22.0, 43.0, 50.0];
+
+        let bf16_result = run_matmul(ctx, Dtype::Bf16);
+        for (got, want) in bf16_result.iter().zip(expected.iter()) {
+            assert!(
+                (got - want).abs() < 3e-1,
+                "bf16 path diverged from expected: got {got}, want {want}"
             );
         }
     }
