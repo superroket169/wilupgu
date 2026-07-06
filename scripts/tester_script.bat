@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0.."
 
 set PATH=%PATH%;%USERPROFILE%\.cargo\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64
@@ -7,83 +7,54 @@ set PATH=%PATH%;%USERPROFILE%\.cargo\bin;C:\Program Files\NVIDIA GPU Computing T
 set LOGFILE=test_results.log
 echo [%date% %time%] wilupgu test run > "%LOGFILE%"
 
+set ANY_FAILED=0
+
 echo.
 echo === [1/5] cargo check --features cuda ===
 cargo check --features cuda >> "%LOGFILE%" 2>&1
-if errorlevel 1 goto :fail_check_cuda
-echo OK
+if errorlevel 1 (set S1=FAILED& set ANY_FAILED=1& echo FAILED) else (set S1=OK& echo OK)
 
 echo.
 echo === [2/5] cargo test --features cuda -- --test-threads=1 ===
 echo (single-threaded on purpose -- multiple GPU contexts in parallel segfault)
 cargo test --features cuda -- --test-threads=1 >> "%LOGFILE%" 2>&1
-if errorlevel 1 goto :fail_test_cuda
-echo OK
+if errorlevel 1 (set S2=FAILED& set ANY_FAILED=1& echo FAILED) else (set S2=OK& echo OK)
 
 echo.
 echo === [3/5] cargo check --features cpu ===
 cargo check --features cpu >> "%LOGFILE%" 2>&1
-if errorlevel 1 goto :fail_check_cpu
-echo OK
+if errorlevel 1 (set S3=FAILED& set ANY_FAILED=1& echo FAILED) else (set S3=OK& echo OK)
 
 echo.
 echo === [4/5] cargo test --features cpu -- --test-threads=1 ===
 cargo test --features cpu -- --test-threads=1 >> "%LOGFILE%" 2>&1
-if errorlevel 1 goto :fail_test_cpu
-echo OK
+if errorlevel 1 (set S4=FAILED& set ANY_FAILED=1& echo FAILED) else (set S4=OK& echo OK)
 
 echo.
 echo === [5/5] f16 GEMM check (isolated re-run, real GPU math) ===
 echo (already part of step 2 -- re-run alone with output visible for a quick look)
 cargo test --features cuda f16_matmul_matches_f32_matmul -- --test-threads=1 --nocapture >> "%LOGFILE%" 2>&1
-if errorlevel 1 goto :fail_f16
-echo OK
+if errorlevel 1 (set S5=FAILED& set ANY_FAILED=1& echo FAILED) else (set S5=OK& echo OK)
 
 echo.
 echo ============================================
+echo SUMMARY
+echo   [1/5] cargo check --features cuda ........ !S1!
+echo   [2/5] cargo test  --features cuda ........ !S2!
+echo   [3/5] cargo check --features cpu  ........ !S3!
+echo   [4/5] cargo test  --features cpu  ........ !S4!
+echo   [5/5] f16 GEMM isolated re-run ............ !S5!
+echo ============================================
+
+if "!ANY_FAILED!"=="1" (
+    echo ONE OR MORE STEPS FAILED. Full log: %LOGFILE%
+    echo Send the whole log back -- each step's own output is still in there
+    echo even though the script kept going past the failure.
+    pause
+    exit /b 1
+)
+
 echo ALL WILUPGU TESTS PASSED.
 echo Full log: %LOGFILE%
-echo ============================================
 pause
 exit /b 0
-
-:fail_check_cuda
-echo.
-echo FAILED at step 1: cargo check --features cuda
-echo This is the CUDA backend compiling for the very first time ever --
-echo Dtype/CudaBuffer enum, the define_launch! macro move, gemm dtype
-echo dispatch. Open %LOGFILE% and look at the last ~50 lines for the error.
-pause
-exit /b 1
-
-:fail_test_cuda
-echo.
-echo FAILED at step 2: cargo test --features cuda
-echo Open %LOGFILE% and look at the last ~80 lines.
-pause
-exit /b 1
-
-:fail_check_cpu
-echo.
-echo FAILED at step 3: cargo check --features cpu
-echo This one is surprising -- it already passed on the dev machine. Open
-echo %LOGFILE% and check whether it's actually a cpu-feature issue or
-echo something environmental (missing toolchain component, etc).
-pause
-exit /b 1
-
-:fail_test_cpu
-echo.
-echo FAILED at step 4: cargo test --features cpu
-echo Open %LOGFILE% and look at the last ~80 lines.
-pause
-exit /b 1
-
-:fail_f16
-echo.
-echo FAILED at step 5: f16 GEMM test specifically.
-echo This is the newest, riskiest piece -- real half::f16 conversion plus
-echo cuBLAS f16 GEMM through the new dtype-dispatching gemm_matmul. Open
-echo %LOGFILE% and look at the last ~40 lines.
-pause
-exit /b 1
