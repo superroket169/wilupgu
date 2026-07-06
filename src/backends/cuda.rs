@@ -128,6 +128,8 @@ fn cfg_1d(n: u32) -> LaunchConfig {
     }
 }
 
+// NOTE: cuda bakcend so boilded with launch function. looking for an idea for refactoring these
+// but now i have no any idea. oh nooo
 impl CudaBackend {
     fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
         let a = find(bindings, 0);
@@ -545,6 +547,176 @@ impl CudaBackend {
             &beta2,
             &eps,
             &wd
+        );
+    }
+
+    pub fn launch_rope_qk(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
+        let dims = meta_u32(find(bindings, 2));
+        let (seq, dim, head_dim) = (dims[0], dims[1], dims[2]);
+        let f = self.compile(key, src, func);
+        let mut qg = find(bindings, 0).slice.lock().unwrap();
+        let mut kg = find(bindings, 1).slice.lock().unwrap();
+        let gx = ((head_dim / 2 + 15) / 16).max(1);
+        let gy = ((seq + 15) / 16).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (gx, gy, 1),
+            block_dim: (16, 16, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(self, f, cfg, &mut *qg, &mut *kg, &seq, &dim, &head_dim);
+    }
+
+    pub fn launch_qkv_split(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
+        let dims = meta_u32(find(bindings, 4));
+        let (seq, full_dim, head_dim, head_offset) = (dims[0], dims[1], dims[2], dims[3]);
+        let f = self.compile(key, src, func);
+        let sg = find(bindings, 0).slice.lock().unwrap();
+        let mut qg = find(bindings, 1).slice.lock().unwrap();
+        let mut kg = find(bindings, 2).slice.lock().unwrap();
+        let mut vg = find(bindings, 3).slice.lock().unwrap();
+        let grid_x = ((head_dim + 15) / 16).max(1);
+        let grid_y = ((seq + 15) / 16).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (grid_x, grid_y, 1),
+            block_dim: (16, 16, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self,
+            f,
+            cfg,
+            &*sg,
+            &mut *qg,
+            &mut *kg,
+            &mut *vg,
+            &seq,
+            &full_dim,
+            &head_dim,
+            &head_offset
+        );
+    }
+
+    pub fn launch_qkv_scatter(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
+        let dims = meta_u32(find(bindings, 4));
+        let (seq, full_dim, head_dim, head_offset) = (dims[0], dims[1], dims[2], dims[3]);
+        let f = self.compile(key, src, func);
+        let qg = find(bindings, 0).slice.lock().unwrap();
+        let kg = find(bindings, 1).slice.lock().unwrap();
+        let vg = find(bindings, 2).slice.lock().unwrap();
+        let mut dg = find(bindings, 3).slice.lock().unwrap();
+        let grid_x = ((head_dim + 15) / 16).max(1);
+        let grid_y = ((seq + 15) / 16).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (grid_x, grid_y, 1),
+            block_dim: (16, 16, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self,
+            f,
+            cfg,
+            &*qg,
+            &*kg,
+            &*vg,
+            &mut *dg,
+            &seq,
+            &full_dim,
+            &head_dim,
+            &head_offset
+        );
+    }
+
+    pub fn launch_flash_attention(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
+        let bytes = meta_bytes(find(bindings, 5));
+        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+        let f = self.compile(key, src, func);
+        let qg = find(bindings, 0).slice.lock().unwrap();
+        let kg = find(bindings, 1).slice.lock().unwrap();
+        let vg = find(bindings, 2).slice.lock().unwrap();
+        let mut og = find(bindings, 3).slice.lock().unwrap();
+        let mut lg = find(bindings, 4).slice.lock().unwrap();
+        let num_heads = (dim / head_dim).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+            block_dim: (64, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self, f, cfg, &*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale
+        );
+    }
+
+    pub fn launch_flash_attention_bwd_dq(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
+        let bytes = meta_bytes(find(bindings, 7));
+        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+        let f = self.compile(key, src, func);
+        let qg = find(bindings, 0).slice.lock().unwrap();
+        let kg = find(bindings, 1).slice.lock().unwrap();
+        let vg = find(bindings, 2).slice.lock().unwrap();
+        let og = find(bindings, 3).slice.lock().unwrap();
+        let dog = find(bindings, 4).slice.lock().unwrap();
+        let lg = find(bindings, 5).slice.lock().unwrap();
+        let mut dqg = find(bindings, 6).slice.lock().unwrap();
+        let num_heads = (dim / head_dim).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+            block_dim: (64, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self, f, cfg, &*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim,
+            &head_dim, &scale
+        );
+    }
+
+    pub fn launch_flash_attention_bwd_dkdv(
+        &self,
+        bindings: &[CudaBinding],
+        key: usize,
+        src: &str,
+        func: &str,
+    ) {
+        let bytes = meta_bytes(find(bindings, 8));
+        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+        let f = self.compile(key, src, func);
+        let qg = find(bindings, 0).slice.lock().unwrap();
+        let kg = find(bindings, 1).slice.lock().unwrap();
+        let vg = find(bindings, 2).slice.lock().unwrap();
+        let og = find(bindings, 3).slice.lock().unwrap();
+        let dog = find(bindings, 4).slice.lock().unwrap();
+        let lg = find(bindings, 5).slice.lock().unwrap();
+        let mut dkg = find(bindings, 6).slice.lock().unwrap();
+        let mut dvg = find(bindings, 7).slice.lock().unwrap();
+        let num_heads = (dim / head_dim).max(1);
+        let cfg = LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+            block_dim: (64, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        launch!(
+            self, f, cfg, &*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len,
+            &dim, &head_dim, &scale
         );
     }
 }
