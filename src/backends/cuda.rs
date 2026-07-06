@@ -2,11 +2,12 @@ use crate::backend::{Backend, Binding, TensorMode};
 use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
 use crate::shader::{CudaShape, Shader};
-use cudarc::cublas::sys::cublasOperation_t;
+use cudarc::cublas::sys::{cublasMath_t, cublasOperation_t, cublasSetMathMode, cublasStatus_t};
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
+use cudarc::driver::sys::{CUgraphInstantiate_flags, CUstreamCaptureMode};
 use cudarc::driver::{
-    CudaContext as CuDevice, CudaFunction, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as CuDevice, CudaFunction, CudaGraph, CudaStream, LaunchConfig, PushKernelArg,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,7 @@ pub struct CudaBackend {
     blas: CudaBlas,
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer>,
+    graph_cache: Mutex<HashMap<usize, CudaGraph>>,
 }
 
 impl CudaBackend {
@@ -48,12 +50,24 @@ impl CudaBackend {
             eprintln!("[cuda] cuBLAS init failed: {e:?}");
             DriverError(cudarc::driver::sys::CUresult::CUDA_ERROR_UNKNOWN)
         })?;
+
+        unsafe {
+            let status =
+                cublasSetMathMode(*blas.handle(), cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH);
+            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
+                eprintln!(
+                    "[cuda] cublasSetMathMode(TF32) failed: {status:?} -- matmuls stay full FP32"
+                );
+            }
+        }
+
         Ok(Self {
             device,
             stream,
             blas,
             kernel_cache: Mutex::new(HashMap::new()),
             pool: BufferPool::new(),
+            graph_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -719,6 +733,25 @@ impl CudaBackend {
             &dim, &head_dim, &scale
         );
     }
+
+    fn dispatch_node(&self, node: &CudaNode) {
+        let b = &node.bindings;
+        let wg = node.workgroups;
+
+        let spec = node
+            .shader
+            .cuda
+            .as_ref()
+            .unwrap_or_else(|| panic!("[cuda] shader `{}` has no cuda impl", node.shader.name));
+        let key = shader_key(node.shader);
+
+        match &spec.shape {
+            CudaShape::InOut1 => self.launch_inout_1(b, key, spec.src, spec.entry),
+            CudaShape::In2Out1 => self.launch_in2_out1(b, key, spec.src, spec.entry),
+            CudaShape::Add => self.launch_add(b, key, spec.src, spec.entry),
+            CudaShape::Custom(f) => f(node.shader, self, b, wg),
+        }
+    }
 }
 
 fn shader_key(shader: &'static Shader) -> usize {
@@ -880,20 +913,32 @@ impl Backend for CudaBackend {
 
     fn execute(&self, nodes: &[CudaNode]) {
         for node in nodes {
-            let b = &node.bindings;
-            let wg = node.workgroups;
-            let spec =
-                node.shader.cuda.as_ref().unwrap_or_else(|| {
-                    panic!("[cuda] shader `{}` has no cuda impl", node.shader.name)
-                });
-            let key = shader_key(node.shader);
-            match &spec.shape {
-                CudaShape::InOut1 => self.launch_inout_1(b, key, spec.src, spec.entry),
-                CudaShape::In2Out1 => self.launch_in2_out1(b, key, spec.src, spec.entry),
-                CudaShape::Add => self.launch_add(b, key, spec.src, spec.entry),
-                CudaShape::Custom(f) => f(node.shader, self, b, wg),
+            self.dispatch_node(node);
+        }
+    }
+
+    fn execute_captured(&self, key: usize, nodes: &[CudaNode]) {
+        {
+            let cache = self.graph_cache.lock().unwrap();
+            if let Some(graph) = cache.get(&key) {
+                graph.launch().expect("[cuda] graph launch failed");
+                return;
             }
         }
+
+        self.stream
+            .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
+            .expect("[cuda] begin_capture failed");
+        for node in nodes {
+            self.dispatch_node(node);
+        }
+        let graph = self
+            .stream
+            .end_capture(CUgraphInstantiate_flags::CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH)
+            .expect("[cuda] end_capture failed")
+            .expect("[cuda] end_capture recorded no graph (nothing was dispatched?)");
+        graph.launch().expect("[cuda] first graph launch failed");
+        self.graph_cache.lock().unwrap().insert(key, graph);
     }
 
     fn synchronize(&self) {
