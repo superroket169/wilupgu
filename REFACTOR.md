@@ -128,6 +128,138 @@ Kabul edilen sıralama:
 
 Bu ikisi kullanıcının açık talimatıyla erteleniyor: "ignis kısmını bugün bile değil yarın yaparız. o yüzden dataset loarder sonraya kalabilir."
 
+## Ek bölüm: f16/bf16 altyapısı + launch_* boilerplate temizliği (2026-07-06)
+
+Yukarıdaki plan tamamlandıktan sonraki oturumda (FlashAttention, kernel
+fusion, CUDA TF32/Graphs, AdamW on-device schedule bittikten sonra) ortaya
+çıkan yeni, ayrı bir refactor turu. Aşağıdaki maddeler sırayla uygulanıyor.
+
+### 1. [DONE] `launch_*` boilerplate -> `define_launch!` makrosu
+
+**Sorun:** `backends/cuda.rs`'te ~25 fonksiyon, hepsi aynı iskelet
+(meta byte'larını parse et -> buffer'ları kilitle -> grid config hesapla ->
+`launch!` çağır), sadece alan sayısı/mutability/grid formülü farklı.
+Sadece imzalar bile onlarca satır.
+
+**Neden generic değil, makro:** Fonksiyonlar arasındaki fark tip parametresi
+değil, *yapısal* (kaç buffer, hangisi mut, kaç meta alanı, grid formülü) --
+bu, Rust'ta generic'lerin değil makroların çözdüğü bir tekrar türü.
+
+**Tasarım:** İki makro:
+- `read_meta!(bytes, a: u32, b: f32, ...)` -- ardışık byte-offset parse'ı
+  tek satıra indirir.
+- `define_launch!(name, meta_slot: N, meta: [...], buffers: [mut/ro isim: slot, ...], let: [...], grid: expr, launch: [args])`
+  -- tüm fonksiyon gövdesini üretir. `meta` ve `let` blokları opsiyonel
+  (`$(...)?`), bazı kernel'lerde meta yok (`n` buffer uzunluğundan geliyor).
+
+**Doğrulama:** Bu makine CUDA'sız olduğu için `backends/cuda.rs` derlenemiyor
+(cudarc'ın `build.rs`'i nvcc arıyor). Makronun kendisini (hijyen -- meta'dan
+okunan değişkenlerin `grid`/`launch` ifadelerinde görünür olması, karışık
+mut/ro buffer kilitleme, karışık u32/f32 meta) gerçek CudaSlice yerine sahte
+`Mutex<Vec<f32>>` ile izole bir harness'ta `rustc --edition 2021` ile fiilen
+derleyip çalıştırarak doğruladım (5 farklı shape, hepsi doğru grid/değer
+üretti). Gerçek dosyadaki nihai derleme testi yine de arkadaşının CUDA'lı
+makinesinde olacak.
+
+**Kapsam dışı bırakılanlar (bilinçli, hand-written kalıyor):**
+- `gemm_matmul`, `gemm_weight_bwd` -- cuBLAS çağrısı, `launch!` kalıbına
+  girmiyor (madde 4'te generic-over-T olacak).
+- `launch_adamw` -- iki ayrı meta okuması (slot 4 + slot 6) artı canlı
+  `schedule` buffer'ı; bu akşam öncesi yeni doğrulanmış kodu riske atmamak
+  için dokunulmadı.
+- `launch_embedding` -- diğerlerinden farklı olarak `wg: [u32;3]` parametresi
+  alıyor (tek istisna, imza şekli uyuşmuyor).
+
+Geri kalan ~23 fonksiyon `define_launch!` çağrısına indirildi, isim/imza/
+davranış birebir aynı kaldı (akasha-core'daki çağıranlar dokunulmadı).
+`launch_causal_mask`/`launch_adamw_schedule` istisnaen imza değiştirdi
+(sabit `src`/`func`'ları artık parametre olarak alıyorlar, tekdüzelik için)
+-- bunların tek çağıranı aynı dosyadaki `custom_causal_mask`/
+`custom_adamw_schedule`, onlar da güncellendi.
+
+### 2. [PLANNED] `Dtype` enum + `Backend` trait'e zorunlu dtype-parametreli metodlar
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dtype { F32, F16, Bf16 }
+```
+`Backend` trait'ine (default impl YOK, her backend kendi impl'ında açıkça
+yazacak):
+```rust
+fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> Self::Buffer;
+fn upload_as(&self, buf: &Self::Buffer, data: &[f32], dtype: Dtype);
+fn download_as(&self, buf: &Self::Buffer, dtype: Dtype) -> Vec<f32>;
+```
+(`download_as_f32` değil `download_as` -- quantizasyon çalışmasında dönüş
+tipi de genişleyebilir, o zaman tekrar ele alınacak.)
+CPU/wgpu bugünkü haliyle sadece `Dtype::F32` dalını yazar (açık, görünür
+karar -- sessiz miras alınan default değil). CUDA gerçek f16/bf16
+dönüşümünü (`half::f16::from_f32`/`to_f32`, bit-reinterpret değil, gerçek
+yuvarlama) implement eder.
+
+### 3. [PLANNED] `CudaBuffer` -> enum
+
+```rust
+#[derive(Clone)]
+pub enum CudaBuffer {
+    F32(Arc<Mutex<CudaSlice<f32>>>),
+    F16(Arc<Mutex<CudaSlice<half::f16>>>),
+    Bf16(Arc<Mutex<CudaSlice<half::bf16>>>),
+}
+```
+Simetrik, eşit ağırlıklı erişim: `lock_f32(bindings, slot)` /
+`lock_f16(bindings, slot)` serbest fonksiyonları (ne biri "asıl yol" ne
+diğeri "özel durum" -- ikisi de `find`/`meta_bytes` gibi kardeş yardımcılar).
+Mevcut ~23 `define_launch!` çağrısı `buffers: [mut g: 0]` gibi yazıldığı
+için, `@lock` kolunun içindeki `.slice.lock().unwrap()` -> `.slice.as_f32().lock().unwrap()`
+değişimi TEK YERDE (makronun `@lock` kolunda) yapılacak -- çağıran ~23
+satırın hiçbiri değişmeyecek. Bu, makronun bu enum geçişini bile
+kolaylaştırdığının kanıtı.
+
+**Gerçek bug riski (yakalandı, unutulmasın):** `BufferPool<Buf>` şu an
+sadece `size_bytes: u64` ile anahtarlanıyor. F16 alloc'u aynı byte
+sayısında bir F32 buffer'ı geri alabilir -- pool anahtarı CUDA tarafında
+`(u64, Dtype)` olmalı (`BufferPool<Buf, K=u64>` generic key parametresi,
+wgpu tarafı `K=u64` default'uyla değişmeden kalır).
+
+### 4. [PLANNED] GEMM generic-over-T (gerçek Rust generic, makro değil)
+
+cudarc'ın kendi `Gemm<T>` trait'i f32/f16/bf16 için hazır, çağrı şekli
+üçünde de aynı:
+```rust
+fn gemm_matmul_generic<T>(&self, a: &CudaSlice<T>, b: &CudaSlice<T>, c: &mut CudaSlice<T>, transpose_b: bool, beta: f32)
+where CudaBlas: Gemm<T>
+```
+`gemm_matmul`/`gemm_matmul_f16`/`gemm_matmul_bf16` bu tek çekirdeğe ince
+sarmalayıcılar olacak -- bf16 için "yeni launch fonksiyonu" değil, aynı
+gövdeye üçüncü ince kapı.
+
+### 5. [PLANNED] CUDA-C kernel kaynağına f16 template'i (string-swap, güvenli hali)
+
+Kör `.replace("float","half")` YAPILMAYACAK (RMSNorm/softmax/cross-entropy
+gibi reduction yapan kernellerde toplama hassasiyetini bozar). Bunun yerine
+her kernel kaynağının başına iki typedef:
+```c
+typedef float scalar_t; // depolama tipi -- f16 varyantında __half olur
+typedef float acc_t;    // reduction/toplama tipi -- HER ZAMAN float kalır
+```
+f16 varyantı üretmek = sadece `scalar_t` typedef satırını değiştirmek.
+Bugün sadece GEMM'e uygulanacak (madde 4), elementwise kernellerin f16
+versiyonu şimdilik gereksiz (bkz. madde 6).
+
+### 6. Kapsam notu
+
+f16/bf16'nın bugün gerçekten ihtiyacı olan tek yer **matmul** (bant
+genişliği + tensor-core kazancı esas orada). RMSNorm/RoPE/softmax gibi
+~20 elementwise kernel şimdilik f32-only kalıyor, dokunulmuyor.
+bf16, WGSL'de native tip olmadığı için CUDA-only; wgpu tarafı zaten
+dtype-agnostic (`WgpuBuffer = Arc<wgpu::Buffer>`, ham byte) olduğu için
+mimari değişiklik gerektirmiyor, ileride sadece yeni WGSL shader + f16
+`alias` + `Features::SHADER_F16` isteği gerekecek.
+
+Akasha-core'un kendi shader'larını (hepsi `array<f32>`) f16'ya geçirmek
+ayrı, ileride ele alınacak bir iş -- bugünkü kapsam sadece wilupgu.
+
 ## Notlar / hatırlatmalar
 
 - `backend_parity` testindeki segfault, `git stash`/`git stash pop` ile pristine (değişikliklerden önceki) kodda da aynı şekilde reprodüklendiği için **wilupgu'nun yeni eklemelerinden kaynaklanmadığı kanıtlandı** — muhtemelen bu sandbox ortamında GPU adapter eksikliği/uyumsuzluğu. Kullanıcının gerçek makinesinde (CUDA'lı) muhtemelen sorun çıkarmaz.
