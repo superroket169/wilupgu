@@ -146,13 +146,15 @@ pub(crate) fn adamw(bindings: &[CpuBinding]) {
     let param_meta = read_u32(find(bindings, 4));
     let size = param_meta[0] as usize;
 
-    let cfg = read_u32(find(bindings, 5));
-    let step = cfg[0];
-    let lr = f32::from_bits(cfg[1]);
-    let beta1 = f32::from_bits(cfg[2]);
-    let beta2 = f32::from_bits(cfg[3]);
-    let eps = f32::from_bits(cfg[4]);
-    let weight_decay = f32::from_bits(cfg[5]);
+    let schedule = read_u32(find(bindings, 5));
+    let step = schedule[0];
+    let lr = f32::from_bits(schedule[1]);
+
+    let const_cfg = read_u32(find(bindings, 6));
+    let beta1 = f32::from_bits(const_cfg[0]);
+    let beta2 = f32::from_bits(const_cfg[1]);
+    let eps = f32::from_bits(const_cfg[2]);
+    let weight_decay = f32::from_bits(const_cfg[3]);
 
     let bias_correction1 = 1.0 - beta1.powi(step as i32);
     let bias_correction2 = 1.0 - beta2.powi(step as i32);
@@ -172,6 +174,26 @@ pub(crate) fn adamw(bindings: &[CpuBinding]) {
     write_f32(find(bindings, 0), &weights);
     write_f32(find(bindings, 2), &m);
     write_f32(find(bindings, 3), &v);
+}
+
+pub(crate) fn adamw_schedule(bindings: &[CpuBinding]) {
+    let state = read_u32(find(bindings, 0));
+    let step = state[0] + 1;
+
+    let cfg = read_u32(find(bindings, 1));
+    let lr_max = f32::from_bits(cfg[0]);
+    let lr_min = f32::from_bits(cfg[1]);
+    let warmup_steps = cfg[2];
+    let max_steps = cfg[3];
+
+    let lr = if step < warmup_steps {
+        lr_max * step as f32 / warmup_steps as f32
+    } else {
+        let progress = (step - warmup_steps) as f32 / (max_steps - warmup_steps) as f32;
+        lr_min + 0.5 * (lr_max - lr_min) * (1.0 + (std::f32::consts::PI * progress).cos())
+    };
+
+    write_f32(find(bindings, 0), &[f32::from_bits(step), lr]);
 }
 
 pub(crate) fn zero_tensor(bindings: &[CpuBinding]) {

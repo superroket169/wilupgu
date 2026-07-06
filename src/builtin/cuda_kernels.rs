@@ -35,11 +35,32 @@ extern "C" __global__ void zero_tensor_kernel(float* x, unsigned int n) {
 }
 "#;
 
+pub const ADAMW_SCHEDULE: &str = r#"
+struct ScheduleState { unsigned int step; float lr; };
+
+extern "C" __global__ void adamw_schedule_kernel(
+    ScheduleState* state,
+    float lr_max, float lr_min, unsigned int warmup_steps, unsigned int max_steps
+) {
+    unsigned int t = state->step + 1u;
+    state->step = t;
+
+    if (t < warmup_steps) {
+        state->lr = lr_max * (float)t / (float)warmup_steps;
+    } else {
+        float progress = (float)(t - warmup_steps) / (float)(max_steps - warmup_steps);
+        state->lr = lr_min + 0.5f * (lr_max - lr_min) * (1.0f + cosf(3.14159265f * progress));
+    }
+}
+"#;
+
 pub const ADAMW: &str = r#"
+struct ScheduleState { unsigned int step; float lr; };
+
 extern "C" __global__ void adamw_kernel(
     float* weights, const float* grads, float* m, float* v,
-    unsigned int size,
-    unsigned int step, float lr, float beta1, float beta2, float eps, float weight_decay
+    unsigned int size, const ScheduleState* schedule,
+    float beta1, float beta2, float eps, float weight_decay
 ) {
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
@@ -52,12 +73,13 @@ extern "C" __global__ void adamw_kernel(
     m[idx] = m_new;
     v[idx] = v_new;
 
-    float bias_correction1 = 1.0f - powf(beta1, (float)step);
-    float bias_correction2 = 1.0f - powf(beta2, (float)step);
+    float t = (float)schedule->step;
+    float bias_correction1 = 1.0f - powf(beta1, t);
+    float bias_correction2 = 1.0f - powf(beta2, t);
     float m_hat = m_new / bias_correction1;
     float v_hat = v_new / bias_correction2;
 
     float theta = weights[idx];
-    weights[idx] = theta - lr * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * theta);
+    weights[idx] = theta - schedule->lr * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * theta);
 }
 "#;
