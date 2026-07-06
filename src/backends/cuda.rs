@@ -70,13 +70,18 @@ pub struct CudaNode {
 //       CudaBackend
 // ========================
 
+/// cudarc's own docs on `CudaGraph`: "This object is NOT thread safe...
+struct GraphCell(CudaGraph);
+unsafe impl Send for GraphCell {}
+unsafe impl Sync for GraphCell {}
+
 pub struct CudaBackend {
     device: Arc<CuDevice>,
     pub stream: Arc<CudaStream>,
     blas: CudaBlas,
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer, (u64, Dtype)>,
-    graph_cache: Mutex<HashMap<usize, CudaGraph>>,
+    graph_cache: Mutex<HashMap<usize, GraphCell>>,
 }
 
 impl CudaBackend {
@@ -608,11 +613,16 @@ fn shader_key(shader: &'static Shader) -> usize {
 //                          Custom-shape dispatches
 // ==========================================================================
 
-fn custom_matmul(_s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _wg: [u32; 3]) {
+pub(crate) fn custom_matmul(
+    _s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
     b.gemm_matmul(bindings, false, 0.0)
 }
 
-fn custom_matmul_trp(
+pub(crate) fn custom_matmul_trp(
     _s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
@@ -621,7 +631,7 @@ fn custom_matmul_trp(
     b.gemm_matmul(bindings, true, 0.0)
 }
 
-fn custom_matmul_add(
+pub(crate) fn custom_matmul_add(
     _s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
@@ -630,7 +640,7 @@ fn custom_matmul_add(
     b.gemm_matmul(bindings, false, 1.0)
 }
 
-fn custom_matmul_weight_bwd(
+pub(crate) fn custom_matmul_weight_bwd(
     _s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
@@ -639,7 +649,7 @@ fn custom_matmul_weight_bwd(
     b.gemm_weight_bwd(bindings)
 }
 
-fn custom_causal_mask(
+pub(crate) fn custom_causal_mask(
     s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
@@ -653,11 +663,16 @@ fn custom_causal_mask(
     )
 }
 
-fn custom_adamw(s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _wg: [u32; 3]) {
+pub(crate) fn custom_adamw(
+    s: &'static Shader,
+    b: &CudaBackend,
+    bindings: &[CudaBinding],
+    _wg: [u32; 3],
+) {
     b.launch_adamw(bindings, shader_key(s))
 }
 
-fn custom_adamw_schedule(
+pub(crate) fn custom_adamw_schedule(
     s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
@@ -873,7 +888,7 @@ impl Backend for CudaBackend {
         {
             let cache = self.graph_cache.lock().unwrap();
             if let Some(graph) = cache.get(&key) {
-                graph.launch().expect("[cuda] graph launch failed");
+                graph.0.launch().expect("[cuda] graph launch failed");
                 return;
             }
         }
@@ -890,7 +905,10 @@ impl Backend for CudaBackend {
             .expect("[cuda] end_capture failed")
             .expect("[cuda] end_capture recorded no graph (nothing was dispatched?)");
         graph.launch().expect("[cuda] first graph launch failed");
-        self.graph_cache.lock().unwrap().insert(key, graph);
+        self.graph_cache
+            .lock()
+            .unwrap()
+            .insert(key, GraphCell(graph));
     }
 
     fn synchronize(&self) {
