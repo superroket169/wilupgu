@@ -242,17 +242,56 @@ vendored kaynağından `DeviceRepr`/`ValidAsZeroBits` impl'lerinin `half::f16`/
 `half::bf16` için `#[cfg(feature="f16")]` arkasında gerçekten var olduğu
 doğrulandı (tahmin değil, kaynağı okudum).
 
-### 4. [PLANNED] GEMM generic-over-T (gerçek Rust generic, makro değil)
+### 4. [DONE] GEMM generic-over-T (gerçek Rust generic, makro değil)
 
-cudarc'ın kendi `Gemm<T>` trait'i f32/f16/bf16 için hazır, çağrı şekli
-üçünde de aynı:
+**Düzeltme (kullanıcıdan, önemli):** İlk taslak `gemm_matmul_f16`/
+`gemm_matmul_bf16` gibi ayrı fonksiyonlar öneriyordu -- reddedildi, çünkü
+int8/int16 geldiğinde her shader'ı dtype başına N kere tanımlamak anlamına
+gelir (matmul_f16, softmax_f16, ... ölçeklenmiyor). Doğru tasarım: **tek**
+`gemm_matmul` fonksiyonu, bağlı tensor'un GERÇEK dtype'ını
+(`a.slice.dtype()`) çalışma zamanında okuyup hangi generic örneğini
+çağıracağına kendi karar veriyor. Hiçbir yerde `MATMUL_F16` gibi bir
+Shader/builtin sabiti yok ve olmayacak -- `MATMUL`/`MATMUL_TRP`/
+`MATMUL_ADD` aynı kalıyor, `custom_matmul` vb. hiç değişmedi.
+
 ```rust
-fn gemm_matmul_generic<T>(&self, a: &CudaSlice<T>, b: &CudaSlice<T>, c: &mut CudaSlice<T>, transpose_b: bool, beta: f32)
+fn gemm_dispatch<T>(&self, bg: &CudaSlice<T>, ag: &CudaSlice<T>, cg: &mut CudaSlice<T>,
+                     transpose_b: bool, alpha: T, beta: T, m: u32, n: u32, ki: u32)
 where CudaBlas: Gemm<T>
+// ... GemmConfig inşası, tek yer
+
+fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
+    match a.slice.dtype() {
+        Dtype::F32 => { /* .as_f32() ile kilitle, gemm_dispatch::<f32> çağır */ }
+        Dtype::F16 => { /* .as_f16() ile kilitle, gemm_dispatch::<half::f16> çağır */ }
+        Dtype::Bf16 => { /* .as_bf16() ile kilitle, gemm_dispatch::<half::bf16> çağır */ }
+    }
+}
 ```
-`gemm_matmul`/`gemm_matmul_f16`/`gemm_matmul_bf16` bu tek çekirdeğe ince
-sarmalayıcılar olacak -- bf16 için "yeni launch fonksiyonu" değil, aynı
-gövdeye üçüncü ince kapı.
+İleride int8/int16 gelirse buraya bir `match` kolu daha eklenir, yeni
+builtin/Shader gerekmez.
+
+`alpha`/`beta` neden `T::from(f32)` ile değil elle (`half::f16::from_f32`)
+dönüştürülüyor: `half` crate'i kasıtlı olarak `From<f32> for f16` sağlamıyor
+(f32->f16 kayıplı bir dönüşüm, `From` trait'i genelde kayıpsız dönüşümler
+için kullanılır) -- bunu tahminle varsaymak yerine izole bir scratch
+projede (`half = "2"`, CUDA'sız) gerçekten derleyip `from_f32`/`to_f32`
+API'sini doğruladım.
+
+**Doğrulama:** `half::f16::from_f32`/`to_f32` API'si CUDA'dan bağımsız
+izole bir projede gerçekten derlenip çalıştırıldı. Enum-dispatch + generic
+`gemm_dispatch<T>` + `MutexGuard` deref deseni de (mock `CudaSlice`/`Gemm`
+tipleriyle) izole `rustc` harness'ında doğrulandı. Gerçek `cuda.rs` yine bu
+makinede derlenemiyor (nvcc yok) -- `wilupgu/src/backends/cuda.rs`'in en
+altına `#[cfg(test)] mod f16_gemm_validation` eklendi: sabit bir 2x2 çarpım
+(sonucu f16'da tam temsil edilebilir: 19, 22, 43, 50) için F32 ve F16
+yollarının aynı `MATMUL` shader'ı üzerinden aynı sonucu verdiğini kontrol
+ediyor. `cargo test --features cuda -- --test-threads=1` ile arkadaşının
+CUDA'lı makinesinde çalıştırılmalı -- burada koşturulamadı, ama yazılan kod
+gerçek, hazır ve doğru API'lere dayanıyor.
+
+`Tensor<B>`'a da `new_dtype`/`init_from_cpu_dtype`/`to_cpu_as` eklendi
+(testin ihtiyacı -- dtype'a özel tensor alloc/upload/download).
 
 ### 5. [PLANNED] CUDA-C kernel kaynağına f16 template'i (string-swap, güvenli hali)
 

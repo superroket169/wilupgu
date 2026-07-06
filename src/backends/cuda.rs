@@ -222,17 +222,20 @@ fn cfg_1d(n: u32) -> LaunchConfig {
 }
 
 impl CudaBackend {
-    fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
-        let a = find(bindings, 0);
-        let b = find(bindings, 1);
-        let c = find(bindings, 2);
-        let dims = meta_u32(find(bindings, 3));
-        let (m, n, ki) = (dims[0], dims[1], dims[2]);
-
-        let ag = a.slice.as_f32().lock().unwrap();
-        let bg = b.slice.as_f32().lock().unwrap();
-        let mut cg = c.slice.as_f32().lock().unwrap();
-
+    fn gemm_dispatch<T>(
+        &self,
+        bg: &CudaSlice<T>,
+        ag: &CudaSlice<T>,
+        cg: &mut CudaSlice<T>,
+        transpose_b: bool,
+        alpha: T,
+        beta: T,
+        m: u32,
+        n: u32,
+        ki: u32,
+    ) where
+        CudaBlas: Gemm<T>,
+    {
         let (op_b, ldb) = if transpose_b {
             (cublasOperation_t::CUBLAS_OP_T, ki)
         } else {
@@ -244,17 +247,61 @@ impl CudaBackend {
             m: n as i32,
             n: m as i32,
             k: ki as i32,
-            alpha: 1.0,
+            alpha,
             lda: ldb as i32,
             ldb: ki as i32,
             beta,
             ldc: n as i32,
         };
+        unsafe { self.blas.gemm(cfg, bg, ag, cg).expect("[cuda] gemm failed") }
+    }
 
-        unsafe {
-            self.blas
-                .gemm(cfg, &*bg, &*ag, &mut *cg)
-                .expect("[cuda] sgemm failed")
+    fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
+        let a = find(bindings, 0);
+        let b = find(bindings, 1);
+        let c = find(bindings, 2);
+        let dims = meta_u32(find(bindings, 3));
+        let (m, n, ki) = (dims[0], dims[1], dims[2]);
+
+        match a.slice.dtype() {
+            Dtype::F32 => {
+                let ag = a.slice.as_f32().lock().unwrap();
+                let bg = b.slice.as_f32().lock().unwrap();
+                let mut cg = c.slice.as_f32().lock().unwrap();
+                self.gemm_dispatch(&*bg, &*ag, &mut *cg, transpose_b, 1.0f32, beta, m, n, ki);
+            }
+            Dtype::F16 => {
+                let ag = a.slice.as_f16().lock().unwrap();
+                let bg = b.slice.as_f16().lock().unwrap();
+                let mut cg = c.slice.as_f16().lock().unwrap();
+                self.gemm_dispatch(
+                    &*bg,
+                    &*ag,
+                    &mut *cg,
+                    transpose_b,
+                    half::f16::from_f32(1.0),
+                    half::f16::from_f32(beta),
+                    m,
+                    n,
+                    ki,
+                );
+            }
+            Dtype::Bf16 => {
+                let ag = a.slice.as_bf16().lock().unwrap();
+                let bg = b.slice.as_bf16().lock().unwrap();
+                let mut cg = c.slice.as_bf16().lock().unwrap();
+                self.gemm_dispatch(
+                    &*bg,
+                    &*ag,
+                    &mut *cg,
+                    transpose_b,
+                    half::bf16::from_f32(1.0),
+                    half::bf16::from_f32(beta),
+                    m,
+                    n,
+                    ki,
+                );
+            }
         }
     }
 
@@ -898,5 +945,66 @@ impl Backend for CudaBackend {
         self.stream
             .synchronize()
             .expect("[cuda] stream sync failed");
+    }
+}
+
+/// cargo test --features cuda -- --test-threads=1
+#[cfg(test)]
+mod f16_gemm_validation {
+    use super::CudaBackend;
+    use crate::{builtin, Backend, Binding, ComputeGraph, Dtype, Tensor, TensorMode};
+    use std::sync::Arc;
+
+    fn cuda() -> Arc<CudaBackend> {
+        Arc::new(CudaBackend::new(0).expect("[cuda] no CUDA device on this machine"))
+    }
+
+    fn run_matmul<B: Backend>(ctx: Arc<B>, dtype: Dtype) -> Vec<f32> {
+        let a_data = [1.0f32, 2.0, 3.0, 4.0];
+        let b_data = [5.0f32, 6.0, 7.0, 8.0];
+        let meta_data: [u32; 3] = [2, 2, 2]; // m, n, ki
+
+        let meta = Tensor::init_from_cpu(ctx.clone(), &meta_data);
+        let a = Tensor::init_from_cpu_dtype(ctx.clone(), &a_data, dtype);
+        let b = Tensor::init_from_cpu_dtype(ctx.clone(), &b_data, dtype);
+        let c = Tensor::new_dtype(ctx.clone(), 4, dtype);
+
+        let mut graph = ComputeGraph::new(ctx.clone());
+        graph.add_node(
+            &builtin::MATMUL,
+            &[
+                Binding::new(0, &a.buffer, TensorMode::Input),
+                Binding::new(1, &b.buffer, TensorMode::Input),
+                Binding::new(2, &c.buffer, TensorMode::Output),
+                Binding::new(3, &meta.buffer, TensorMode::Meta),
+            ],
+            [1, 1, 1],
+        );
+        graph.execute();
+        ctx.synchronize();
+
+        c.to_cpu_as(dtype)
+    }
+
+    #[test]
+    fn f16_matmul_matches_f32_matmul() {
+        let ctx = cuda();
+        let expected = [19.0f32, 22.0, 43.0, 50.0];
+
+        let f32_result = run_matmul(ctx.clone(), Dtype::F32);
+        for (got, want) in f32_result.iter().zip(expected.iter()) {
+            assert!(
+                (got - want).abs() < 1e-4,
+                "f32 path: got {got}, want {want}"
+            );
+        }
+
+        let f16_result = run_matmul(ctx, Dtype::F16);
+        for (got, want) in f16_result.iter().zip(expected.iter()) {
+            assert!(
+                (got - want).abs() < 1e-2,
+                "f16 path diverged from expected: got {got}, want {want}"
+            );
+        }
     }
 }
