@@ -95,7 +95,7 @@ impl CudaBackend {
 }
 
 // ========================================
-//            Dispatch helpers
+//                  MACROS
 // ========================================
 
 macro_rules! launch {
@@ -104,6 +104,48 @@ macro_rules! launch {
         $(b.arg($arg);)+
         unsafe { b.launch($cfg) }.expect("[cuda] kernel launch failed")
     }};
+}
+
+macro_rules! read_meta {
+    ($bytes:expr, $($field:ident : $ty:ty),+ $(,)?) => {
+        let __bytes = $bytes;
+        let mut __off = 0usize;
+        $(
+            let $field: $ty = <$ty>::from_ne_bytes(
+                __bytes[__off..__off + std::mem::size_of::<$ty>()].try_into().unwrap()
+            );
+            #[allow(unused_assignments)]
+            { __off += std::mem::size_of::<$ty>(); }
+        )+
+    };
+}
+
+macro_rules! define_launch {
+    (
+        $name:ident,
+        $(meta_slot: $meta_slot:expr, meta: [$($mf:ident : $mty:ty),* $(,)?],)?
+        buffers: [$($bkind:ident $bname:ident : $bslot:expr),* $(,)?],
+        $(let: [$($lname:ident = $lexpr:expr),* $(,)?],)?
+        grid: $grid:expr,
+        launch: [$($largs:expr),* $(,)?]
+    ) => {
+        pub fn $name(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
+            $( read_meta!(meta_bytes(find(bindings, $meta_slot)), $($mf : $mty),*); )?
+            $(
+                define_launch!(@lock $bkind $bname, bindings, $bslot);
+            )*
+            $( $( let $lname = $lexpr; )* )?
+            let f = self.compile(key, src, func);
+            let cfg = $grid;
+            launch!(self, f, cfg, $($largs),*);
+        }
+    };
+    (@lock mut $name:ident, $bindings:ident, $slot:expr) => {
+        let mut $name = find($bindings, $slot).slice.lock().unwrap();
+    };
+    (@lock ro $name:ident, $bindings:ident, $slot:expr) => {
+        let $name = find($bindings, $slot).slice.lock().unwrap();
+    };
 }
 
 fn find(bindings: &[CudaBinding], slot: u32) -> &CudaBinding {
@@ -121,10 +163,6 @@ fn meta_u32(b: &CudaBinding) -> Vec<u32> {
     bytemuck::cast_slice::<u8, u32>(&meta_bytes(b)).to_vec()
 }
 
-fn n_elems(b: &CudaBinding) -> u32 {
-    b.slice.lock().unwrap().len() as u32
-}
-
 fn cfg_1d(n: u32) -> LaunchConfig {
     LaunchConfig {
         grid_dim: ((n + 255) / 256, 1, 1),
@@ -133,8 +171,6 @@ fn cfg_1d(n: u32) -> LaunchConfig {
     }
 }
 
-// NOTE: cuda bakcend so boilded with launch function. looking for an idea for refactoring these
-// but now i have no any idea. oh nooo
 impl CudaBackend {
     fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
         let a = find(bindings, 0);
@@ -204,35 +240,29 @@ impl CudaBackend {
 
     // -------- Elementwise --------
 
-    pub fn launch_inout_1(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let x = find(bindings, 0);
-        let n = n_elems(x);
-        let f = self.compile(key, src, func);
-        let mut g = x.slice.lock().unwrap();
-        launch!(self, f, cfg_1d(n), &mut *g, &n);
-    }
+    define_launch!(
+        launch_inout_1,
+        buffers: [mut g: 0],
+        let: [n = g.len() as u32],
+        grid: cfg_1d(n),
+        launch: [&mut *g, &n]
+    );
 
-    pub fn launch_in2_out1(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let x = find(bindings, 0);
-        let dy = find(bindings, 1);
-        let dx = find(bindings, 2);
-        let n = n_elems(x);
-        let f = self.compile(key, src, func);
-        let xg = x.slice.lock().unwrap();
-        let dyg = dy.slice.lock().unwrap();
-        let mut dxg = dx.slice.lock().unwrap();
-        launch!(self, f, cfg_1d(n), &*xg, &*dyg, &mut *dxg, &n);
-    }
+    define_launch!(
+        launch_in2_out1,
+        buffers: [ro xg: 0, ro dyg: 1, mut dxg: 2],
+        let: [n = xg.len() as u32],
+        grid: cfg_1d(n),
+        launch: [&*xg, &*dyg, &mut *dxg, &n]
+    );
 
-    pub fn launch_add(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let x = find(bindings, 0);
-        let r = find(bindings, 1);
-        let n = n_elems(x);
-        let f = self.compile(key, src, func);
-        let mut xg = x.slice.lock().unwrap();
-        let rg = r.slice.lock().unwrap();
-        launch!(self, f, cfg_1d(n), &mut *xg, &*rg, &n);
-    }
+    define_launch!(
+        launch_add,
+        buffers: [mut xg: 0, ro rg: 1],
+        let: [n = xg.len() as u32],
+        grid: cfg_1d(n),
+        launch: [&mut *xg, &*rg, &n]
+    );
 
     // -------- Structured ----------
 
@@ -258,268 +288,134 @@ impl CudaBackend {
         launch!(self, f, cfg, &*g0, &*g1, &mut *g2, &vocab, &embed, &seq);
     }
 
-    fn launch_causal_mask(&self, bindings: &[CudaBinding], key: usize) {
-        let bytes = meta_bytes(find(bindings, 1));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile(key, k::CAUSAL_MASK, "causal_mask_kernel");
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        let grid = (seq_len + 15) / 16;
-        let cfg = LaunchConfig {
-            grid_dim: (grid, grid, 1),
+    define_launch!(
+        launch_causal_mask,
+        meta_slot: 1, meta: [seq_len: u32, scale: f32],
+        buffers: [mut g: 0],
+        let: [grid = (seq_len + 15) / 16],
+        grid: LaunchConfig { grid_dim: (grid, grid, 1), block_dim: (16, 16, 1), shared_mem_bytes: 0 },
+        launch: [&mut *g, &seq_len, &scale]
+    );
+
+    define_launch!(
+        launch_causal_softmax,
+        meta_slot: 1, meta: [seq_len: u32, scale: f32],
+        buffers: [mut g: 0],
+        grid: cfg_1d(seq_len),
+        launch: [&mut *g, &seq_len, &scale]
+    );
+
+    define_launch!(
+        launch_head_move,
+        meta_slot: 2, meta: [seq: u32, full_dim: u32, head_dim: u32, offset: u32],
+        buffers: [ro fg: 0, mut tg: 1],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &mut *g, &seq_len, &scale);
-    }
+        },
+        launch: [&*fg, &mut *tg, &seq, &full_dim, &head_dim, &offset]
+    );
 
-    pub fn launch_causal_softmax(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let bytes = meta_bytes(find(bindings, 1));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        launch!(self, f, cfg_1d(seq_len), &mut *g, &seq_len, &scale);
-    }
-
-    pub fn launch_head_move(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 2));
-        let (seq, full_dim, head_dim, offset) = (dims[0], dims[1], dims[2], dims[3]);
-        let f = self.compile(key, src, func);
-        let fg = find(bindings, 0).slice.lock().unwrap();
-        let mut tg = find(bindings, 1).slice.lock().unwrap();
-        let grid = ((head_dim + 15) / 16).max(1);
-        let grid_y = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (grid, grid_y, 1),
+    define_launch!(
+        launch_rope,
+        meta_slot: 1, meta: [seq: u32, dim: u32, head_dim: u32],
+        buffers: [mut g: 0],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &*fg, &mut *tg, &seq, &full_dim, &head_dim, &offset);
-    }
+        },
+        launch: [&mut *g, &seq, &dim, &head_dim]
+    );
 
-    pub fn launch_rope(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 1));
-        let (seq, dim, head_dim) = (dims[0], dims[1], dims[2]);
-        let f = self.compile(key, src, func);
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        let gx = ((head_dim / 2 + 15) / 16).max(1);
-        let gy = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (gx, gy, 1),
+    define_launch!(
+        launch_softmax,
+        meta_slot: 1, meta: [seq: u32],
+        buffers: [mut g: 0],
+        grid: cfg_1d(seq),
+        launch: [&mut *g, &seq]
+    );
+
+    define_launch!(
+        launch_softmax_bwd,
+        meta_slot: 3, meta: [seq_len: u32, scale: f32],
+        buffers: [ro yg: 0, ro dyg: 1, mut dxg: 2],
+        grid: cfg_1d(seq_len),
+        launch: [&*yg, &*dyg, &mut *dxg, &seq_len, &scale]
+    );
+
+    define_launch!(
+        launch_rmsnorm,
+        meta_slot: 3, meta: [seq_len: u32, size: u32, eps: f32],
+        buffers: [ro xg: 0, ro wg: 1, mut og: 2],
+        grid: LaunchConfig { grid_dim: (seq_len.max(1), 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 },
+        launch: [&*xg, &*wg, &mut *og, &seq_len, &size, &eps]
+    );
+
+    define_launch!(
+        launch_rmsnorm_bwd,
+        meta_slot: 5, meta: [seq_len: u32, size: u32, eps: f32],
+        buffers: [ro dyg: 0, ro xg: 1, ro wg: 2, mut dxg: 3, mut rsg: 4],
+        grid: LaunchConfig { grid_dim: (seq_len.max(1), 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 },
+        launch: [&*dyg, &*xg, &*wg, &mut *dxg, &mut *rsg, &seq_len, &size, &eps]
+    );
+
+    define_launch!(
+        launch_rmsnorm_weight_bwd,
+        meta_slot: 4, meta: [seq: u32, size: u32],
+        buffers: [ro dyg: 0, ro xg: 1, ro rsg: 2, mut dwg: 3],
+        grid: cfg_1d(size),
+        launch: [&*dyg, &*xg, &*rsg, &mut *dwg, &seq, &size]
+    );
+
+    define_launch!(
+        launch_cross_entropy,
+        meta_slot: 4, meta: [vocab: u32, rows: u32],
+        buffers: [ro lg: 0, ro tg: 1, mut pg: 2, mut losg: 3],
+        grid: cfg_1d(rows),
+        launch: [&*lg, &*tg, &mut *pg, &mut *losg, &vocab, &rows]
+    );
+
+    define_launch!(
+        launch_cross_entropy_bwd,
+        meta_slot: 4, meta: [vocab: u32, rows: u32],
+        buffers: [ro pg: 0, ro tg: 1, ro dlg: 2, mut dlogg: 3],
+        grid: cfg_1d(rows),
+        launch: [&*pg, &*tg, &*dlg, &mut *dlogg, &vocab, &rows]
+    );
+
+    define_launch!(
+        launch_softmax_rect,
+        meta_slot: 1, meta: [num_rows: u32, width: u32, scale: f32],
+        buffers: [mut g: 0],
+        grid: cfg_1d(num_rows),
+        launch: [&mut *g, &num_rows, &width, &scale]
+    );
+
+    define_launch!(
+        launch_cache_write,
+        meta_slot: 2, meta: [row_count: u32, width: u32, dst_row_offset: u32],
+        buffers: [ro sg: 0, mut dg: 1],
+        grid: LaunchConfig {
+            grid_dim: (((width + 15) / 16).max(1), ((row_count + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &mut *g, &seq, &dim, &head_dim);
-    }
+        },
+        launch: [&*sg, &mut *dg, &row_count, &width, &dst_row_offset]
+    );
 
-    pub fn launch_softmax(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let seq = meta_u32(find(bindings, 1))[0];
-        let f = self.compile(key, src, func);
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        launch!(self, f, cfg_1d(seq), &mut *g, &seq);
-    }
-
-    pub fn launch_softmax_bwd(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let bytes = meta_bytes(find(bindings, 3));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let yg = find(bindings, 0).slice.lock().unwrap();
-        let dyg = find(bindings, 1).slice.lock().unwrap();
-        let mut dxg = find(bindings, 2).slice.lock().unwrap();
-        launch!(
-            self,
-            f,
-            cfg_1d(seq_len),
-            &*yg,
-            &*dyg,
-            &mut *dxg,
-            &seq_len,
-            &scale
-        );
-    }
-
-    pub fn launch_rmsnorm(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let bytes = meta_bytes(find(bindings, 3));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let size = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let eps = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let xg = find(bindings, 0).slice.lock().unwrap();
-        let wg = find(bindings, 1).slice.lock().unwrap();
-        let mut og = find(bindings, 2).slice.lock().unwrap();
-        let cfg = LaunchConfig {
-            grid_dim: (seq_len.max(1), 1, 1),
-            block_dim: (256, 1, 1),
-            shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &*xg, &*wg, &mut *og, &seq_len, &size, &eps);
-    }
-
-    pub fn launch_rmsnorm_bwd(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let bytes = meta_bytes(find(bindings, 5));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let size = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let eps = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let dyg = find(bindings, 0).slice.lock().unwrap();
-        let xg = find(bindings, 1).slice.lock().unwrap();
-        let wg = find(bindings, 2).slice.lock().unwrap();
-        let mut dxg = find(bindings, 3).slice.lock().unwrap();
-        let mut rsg = find(bindings, 4).slice.lock().unwrap();
-        let cfg = LaunchConfig {
-            grid_dim: (seq_len.max(1), 1, 1),
-            block_dim: (256, 1, 1),
-            shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &*dyg, &*xg, &*wg, &mut *dxg, &mut *rsg, &seq_len, &size, &eps);
-    }
-
-    pub fn launch_rmsnorm_weight_bwd(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let dims = meta_u32(find(bindings, 4));
-        let (seq, size) = (dims[0], dims[1]);
-        let f = self.compile(key, src, func);
-        let dyg = find(bindings, 0).slice.lock().unwrap();
-        let xg = find(bindings, 1).slice.lock().unwrap();
-        let rsg = find(bindings, 2).slice.lock().unwrap();
-        let mut dwg = find(bindings, 3).slice.lock().unwrap();
-        launch!(
-            self,
-            f,
-            cfg_1d(size),
-            &*dyg,
-            &*xg,
-            &*rsg,
-            &mut *dwg,
-            &seq,
-            &size
-        );
-    }
-
-    pub fn launch_cross_entropy(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let dims = meta_u32(find(bindings, 4));
-        let (vocab, rows) = (dims[0], dims[1]);
-        let f = self.compile(key, src, func);
-        let lg = find(bindings, 0).slice.lock().unwrap();
-        let tg = find(bindings, 1).slice.lock().unwrap();
-        let mut pg = find(bindings, 2).slice.lock().unwrap();
-        let mut losg = find(bindings, 3).slice.lock().unwrap();
-        launch!(
-            self,
-            f,
-            cfg_1d(rows),
-            &*lg,
-            &*tg,
-            &mut *pg,
-            &mut *losg,
-            &vocab,
-            &rows
-        );
-    }
-
-    pub fn launch_cross_entropy_bwd(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let dims = meta_u32(find(bindings, 4));
-        let (vocab, rows) = (dims[0], dims[1]);
-        let f = self.compile(key, src, func);
-        let pg = find(bindings, 0).slice.lock().unwrap();
-        let tg = find(bindings, 1).slice.lock().unwrap();
-        let dlg = find(bindings, 2).slice.lock().unwrap();
-        let mut dlogg = find(bindings, 3).slice.lock().unwrap();
-        launch!(
-            self,
-            f,
-            cfg_1d(rows),
-            &*pg,
-            &*tg,
-            &*dlg,
-            &mut *dlogg,
-            &vocab,
-            &rows
-        );
-    }
-
-    pub fn launch_softmax_rect(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let bytes = meta_bytes(find(bindings, 1));
-        let num_rows = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let width = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        launch!(
-            self,
-            f,
-            cfg_1d(num_rows),
-            &mut *g,
-            &num_rows,
-            &width,
-            &scale
-        );
-    }
-
-    pub fn launch_cache_write(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 2));
-        let (row_count, width, dst_row_offset) = (dims[0], dims[1], dims[2]);
-        let f = self.compile(key, src, func);
-        let sg = find(bindings, 0).slice.lock().unwrap();
-        let mut dg = find(bindings, 1).slice.lock().unwrap();
-        let grid_x = ((width + 15) / 16).max(1);
-        let grid_y = ((row_count + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (grid_x, grid_y, 1),
+    define_launch!(
+        launch_rope_offset,
+        meta_slot: 1, meta: [seq: u32, dim: u32, head_dim: u32, pos_offset: u32],
+        buffers: [mut g: 0],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self,
-            f,
-            cfg,
-            &*sg,
-            &mut *dg,
-            &row_count,
-            &width,
-            &dst_row_offset
-        );
-    }
-
-    pub fn launch_rope_offset(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 1));
-        let (seq, dim, head_dim, pos_offset) = (dims[0], dims[1], dims[2], dims[3]);
-        let f = self.compile(key, src, func);
-        let mut g = find(bindings, 0).slice.lock().unwrap();
-        let gx = ((head_dim / 2 + 15) / 16).max(1);
-        let gy = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (gx, gy, 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &mut *g, &seq, &dim, &head_dim, &pos_offset);
-    }
+        },
+        launch: [&mut *g, &seq, &dim, &head_dim, &pos_offset]
+    );
 
     fn launch_adamw(&self, bindings: &[CudaBinding], key: usize) {
         let size = meta_u32(find(bindings, 4))[0];
@@ -553,201 +449,85 @@ impl CudaBackend {
         );
     }
 
-    fn launch_adamw_schedule(&self, bindings: &[CudaBinding], key: usize) {
-        let bytes = meta_bytes(find(bindings, 1));
-        let lr_max = f32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let lr_min = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let warmup_steps = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let max_steps = u32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+    define_launch!(
+        launch_adamw_schedule,
+        meta_slot: 1, meta: [lr_max: f32, lr_min: f32, warmup_steps: u32, max_steps: u32],
+        buffers: [mut state_g: 0],
+        grid: LaunchConfig { grid_dim: (1, 1, 1), block_dim: (1, 1, 1), shared_mem_bytes: 0 },
+        launch: [&mut *state_g, &lr_max, &lr_min, &warmup_steps, &max_steps]
+    );
 
-        let f = self.compile(key, k::ADAMW_SCHEDULE, "adamw_schedule_kernel");
-        let mut state_g = find(bindings, 0).slice.lock().unwrap();
-        let cfg = LaunchConfig {
-            grid_dim: (1, 1, 1),
-            block_dim: (1, 1, 1),
-            shared_mem_bytes: 0,
-        };
-        launch!(
-            self,
-            f,
-            cfg,
-            &mut *state_g,
-            &lr_max,
-            &lr_min,
-            &warmup_steps,
-            &max_steps
-        );
-    }
-
-    pub fn launch_rope_qk(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 2));
-        let (seq, dim, head_dim) = (dims[0], dims[1], dims[2]);
-        let f = self.compile(key, src, func);
-        let mut qg = find(bindings, 0).slice.lock().unwrap();
-        let mut kg = find(bindings, 1).slice.lock().unwrap();
-        let gx = ((head_dim / 2 + 15) / 16).max(1);
-        let gy = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (gx, gy, 1),
+    define_launch!(
+        launch_rope_qk,
+        meta_slot: 2, meta: [seq: u32, dim: u32, head_dim: u32],
+        buffers: [mut qg: 0, mut kg: 1],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &mut *qg, &mut *kg, &seq, &dim, &head_dim);
-    }
+        },
+        launch: [&mut *qg, &mut *kg, &seq, &dim, &head_dim]
+    );
 
-    pub fn launch_qkv_split(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 4));
-        let (seq, full_dim, head_dim, head_offset) = (dims[0], dims[1], dims[2], dims[3]);
-        let f = self.compile(key, src, func);
-        let sg = find(bindings, 0).slice.lock().unwrap();
-        let mut qg = find(bindings, 1).slice.lock().unwrap();
-        let mut kg = find(bindings, 2).slice.lock().unwrap();
-        let mut vg = find(bindings, 3).slice.lock().unwrap();
-        let grid_x = ((head_dim + 15) / 16).max(1);
-        let grid_y = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (grid_x, grid_y, 1),
+    define_launch!(
+        launch_qkv_split,
+        meta_slot: 4, meta: [seq: u32, full_dim: u32, head_dim: u32, head_offset: u32],
+        buffers: [ro sg: 0, mut qg: 1, mut kg: 2, mut vg: 3],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self,
-            f,
-            cfg,
-            &*sg,
-            &mut *qg,
-            &mut *kg,
-            &mut *vg,
-            &seq,
-            &full_dim,
-            &head_dim,
-            &head_offset
-        );
-    }
+        },
+        launch: [&*sg, &mut *qg, &mut *kg, &mut *vg, &seq, &full_dim, &head_dim, &head_offset]
+    );
 
-    pub fn launch_qkv_scatter(&self, bindings: &[CudaBinding], key: usize, src: &str, func: &str) {
-        let dims = meta_u32(find(bindings, 4));
-        let (seq, full_dim, head_dim, head_offset) = (dims[0], dims[1], dims[2], dims[3]);
-        let f = self.compile(key, src, func);
-        let qg = find(bindings, 0).slice.lock().unwrap();
-        let kg = find(bindings, 1).slice.lock().unwrap();
-        let vg = find(bindings, 2).slice.lock().unwrap();
-        let mut dg = find(bindings, 3).slice.lock().unwrap();
-        let grid_x = ((head_dim + 15) / 16).max(1);
-        let grid_y = ((seq + 15) / 16).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (grid_x, grid_y, 1),
+    define_launch!(
+        launch_qkv_scatter,
+        meta_slot: 4, meta: [seq: u32, full_dim: u32, head_dim: u32, head_offset: u32],
+        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, mut dg: 3],
+        grid: LaunchConfig {
+            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
             block_dim: (16, 16, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self,
-            f,
-            cfg,
-            &*qg,
-            &*kg,
-            &*vg,
-            &mut *dg,
-            &seq,
-            &full_dim,
-            &head_dim,
-            &head_offset
-        );
-    }
+        },
+        launch: [&*qg, &*kg, &*vg, &mut *dg, &seq, &full_dim, &head_dim, &head_offset]
+    );
 
-    pub fn launch_flash_attention(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let bytes = meta_bytes(find(bindings, 5));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let qg = find(bindings, 0).slice.lock().unwrap();
-        let kg = find(bindings, 1).slice.lock().unwrap();
-        let vg = find(bindings, 2).slice.lock().unwrap();
-        let mut og = find(bindings, 3).slice.lock().unwrap();
-        let mut lg = find(bindings, 4).slice.lock().unwrap();
-        let num_heads = (dim / head_dim).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+    define_launch!(
+        launch_flash_attention,
+        meta_slot: 5, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, mut og: 3, mut lg: 4],
+        grid: LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self, f, cfg, &*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale
-        );
-    }
+        },
+        launch: [&*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale]
+    );
 
-    pub fn launch_flash_attention_bwd_dq(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let bytes = meta_bytes(find(bindings, 7));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let qg = find(bindings, 0).slice.lock().unwrap();
-        let kg = find(bindings, 1).slice.lock().unwrap();
-        let vg = find(bindings, 2).slice.lock().unwrap();
-        let og = find(bindings, 3).slice.lock().unwrap();
-        let dog = find(bindings, 4).slice.lock().unwrap();
-        let lg = find(bindings, 5).slice.lock().unwrap();
-        let mut dqg = find(bindings, 6).slice.lock().unwrap();
-        let num_heads = (dim / head_dim).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+    define_launch!(
+        launch_flash_attention_bwd_dq,
+        meta_slot: 7, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dqg: 6],
+        grid: LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self, f, cfg, &*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim,
-            &head_dim, &scale
-        );
-    }
+        },
+        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim, &head_dim, &scale]
+    );
 
-    pub fn launch_flash_attention_bwd_dkdv(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-    ) {
-        let bytes = meta_bytes(find(bindings, 8));
-        let seq_len = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-        let dim = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
-        let head_dim = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
-        let scale = f32::from_ne_bytes(bytes[12..16].try_into().unwrap());
-        let f = self.compile(key, src, func);
-        let qg = find(bindings, 0).slice.lock().unwrap();
-        let kg = find(bindings, 1).slice.lock().unwrap();
-        let vg = find(bindings, 2).slice.lock().unwrap();
-        let og = find(bindings, 3).slice.lock().unwrap();
-        let dog = find(bindings, 4).slice.lock().unwrap();
-        let lg = find(bindings, 5).slice.lock().unwrap();
-        let mut dkg = find(bindings, 6).slice.lock().unwrap();
-        let mut dvg = find(bindings, 7).slice.lock().unwrap();
-        let num_heads = (dim / head_dim).max(1);
-        let cfg = LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), num_heads, 1),
+    define_launch!(
+        launch_flash_attention_bwd_dkdv,
+        meta_slot: 8, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32],
+        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dkg: 6, mut dvg: 7],
+        grid: LaunchConfig {
+            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,
-        };
-        launch!(
-            self, f, cfg, &*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len,
-            &dim, &head_dim, &scale
-        );
-    }
+        },
+        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len, &dim, &head_dim, &scale]
+    );
 
     fn dispatch_node(&self, node: &CudaNode) {
         let b = &node.bindings;
@@ -814,7 +594,12 @@ fn custom_causal_mask(
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.launch_causal_mask(bindings, shader_key(s))
+    b.launch_causal_mask(
+        bindings,
+        shader_key(s),
+        k::CAUSAL_MASK,
+        "causal_mask_kernel",
+    )
 }
 
 fn custom_adamw(s: &'static Shader, b: &CudaBackend, bindings: &[CudaBinding], _wg: [u32; 3]) {
@@ -827,7 +612,12 @@ fn custom_adamw_schedule(
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.launch_adamw_schedule(bindings, shader_key(s))
+    b.launch_adamw_schedule(
+        bindings,
+        shader_key(s),
+        k::ADAMW_SCHEDULE,
+        "adamw_schedule_kernel",
+    )
 }
 
 pub(crate) mod dispatch {
