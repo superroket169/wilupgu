@@ -6,7 +6,7 @@ pub(crate) mod pool;
 pub mod shader;
 pub mod tensor;
 
-pub use backend::{Backend, Binding, TensorMode};
+pub use backend::{Backend, Binding, Dtype, TensorMode};
 pub use backends::WgpuBackend;
 #[cfg(feature = "cuda")]
 pub use backends::CudaBackend;
