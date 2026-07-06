@@ -45,6 +45,11 @@ impl<B: Backend> ComputeGraph<B> {
     pub fn execute(&self) {
         self.ctx.execute(&self.nodes);
     }
+
+    pub fn execute_captured(&self) {
+        let key = self.nodes.as_ptr() as usize;
+        self.ctx.execute_captured(key, &self.nodes);
+    }
 }
 
 pub fn fuse_compute_graphs<B: Backend>(

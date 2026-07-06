@@ -39,5 +39,8 @@ pub trait Backend: Send + Sync + 'static {
         workgroups: [u32; 3],
     ) -> Self::Node;
     fn execute(&self, nodes: &[Self::Node]);
+    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
+        self.execute(nodes);
+    }
     fn synchronize(&self);
 }
