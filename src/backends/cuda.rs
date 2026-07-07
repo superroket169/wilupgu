@@ -294,150 +294,6 @@ impl CudaBackend {
 
     // -------- Structured ----------
 
-    pub fn launch_embedding(
-        &self,
-        bindings: &[CudaBinding],
-        key: usize,
-        src: &str,
-        func: &str,
-        wg: [u32; 3],
-    ) {
-        let dims = meta_u32(find(bindings, 3));
-        let (vocab, embed, seq) = (dims[0], dims[1], dims[2]);
-        let f = self.compile(key, src, func);
-
-        let g0 = find(bindings, 0).slice.as_f32().lock().unwrap();
-        let g1 = find(bindings, 1).slice.as_f32().lock().unwrap();
-        let mut g2 = find(bindings, 2).slice.as_f32().lock().unwrap();
-
-        let cfg = LaunchConfig {
-            grid_dim: (wg[0].max(1), seq.max(1), 1),
-            block_dim: (256, 1, 1),
-            shared_mem_bytes: 0,
-        };
-        launch!(self, f, cfg, &*g0, &*g1, &mut *g2, &vocab, &embed, &seq);
-    }
-
-    define_launch!(
-        launch_causal_softmax,
-        meta_slot: 1, meta: [seq_len: u32, scale: f32],
-        buffers: [mut g: 0],
-        grid: cfg_1d(seq_len),
-        launch: [&mut *g, &seq_len, &scale]
-    );
-
-    define_launch!(
-        launch_head_move,
-        meta_slot: 2, meta: [seq: u32, full_dim: u32, head_dim: u32, offset: u32],
-        buffers: [ro fg: 0, mut tg: 1],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*fg, &mut *tg, &seq, &full_dim, &head_dim, &offset]
-    );
-
-    define_launch!(
-        launch_rope,
-        meta_slot: 1, meta: [seq: u32, dim: u32, head_dim: u32],
-        buffers: [mut g: 0],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&mut *g, &seq, &dim, &head_dim]
-    );
-
-    define_launch!(
-        launch_softmax,
-        meta_slot: 1, meta: [seq: u32],
-        buffers: [mut g: 0],
-        grid: cfg_1d(seq),
-        launch: [&mut *g, &seq]
-    );
-
-    define_launch!(
-        launch_softmax_bwd,
-        meta_slot: 3, meta: [seq_len: u32, scale: f32],
-        buffers: [ro yg: 0, ro dyg: 1, mut dxg: 2],
-        grid: cfg_1d(seq_len),
-        launch: [&*yg, &*dyg, &mut *dxg, &seq_len, &scale]
-    );
-
-    define_launch!(
-        launch_rmsnorm,
-        meta_slot: 3, meta: [seq_len: u32, size: u32, eps: f32],
-        buffers: [ro xg: 0, ro wg: 1, mut og: 2],
-        grid: LaunchConfig { grid_dim: (seq_len.max(1), 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 },
-        launch: [&*xg, &*wg, &mut *og, &seq_len, &size, &eps]
-    );
-
-    define_launch!(
-        launch_rmsnorm_bwd,
-        meta_slot: 5, meta: [seq_len: u32, size: u32, eps: f32],
-        buffers: [ro dyg: 0, ro xg: 1, ro wg: 2, mut dxg: 3, mut rsg: 4],
-        grid: LaunchConfig { grid_dim: (seq_len.max(1), 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 },
-        launch: [&*dyg, &*xg, &*wg, &mut *dxg, &mut *rsg, &seq_len, &size, &eps]
-    );
-
-    define_launch!(
-        launch_rmsnorm_weight_bwd,
-        meta_slot: 4, meta: [seq: u32, size: u32],
-        buffers: [ro dyg: 0, ro xg: 1, ro rsg: 2, mut dwg: 3],
-        grid: cfg_1d(size),
-        launch: [&*dyg, &*xg, &*rsg, &mut *dwg, &seq, &size]
-    );
-
-    define_launch!(
-        launch_cross_entropy,
-        meta_slot: 4, meta: [vocab: u32, rows: u32],
-        buffers: [ro lg: 0, ro tg: 1, mut pg: 2, mut losg: 3],
-        grid: cfg_1d(rows),
-        launch: [&*lg, &*tg, &mut *pg, &mut *losg, &vocab, &rows]
-    );
-
-    define_launch!(
-        launch_cross_entropy_bwd,
-        meta_slot: 4, meta: [vocab: u32, rows: u32],
-        buffers: [ro pg: 0, ro tg: 1, ro dlg: 2, mut dlogg: 3],
-        grid: cfg_1d(rows),
-        launch: [&*pg, &*tg, &*dlg, &mut *dlogg, &vocab, &rows]
-    );
-
-    define_launch!(
-        launch_softmax_rect,
-        meta_slot: 1, meta: [num_rows: u32, width: u32, scale: f32],
-        buffers: [mut g: 0],
-        grid: cfg_1d(num_rows),
-        launch: [&mut *g, &num_rows, &width, &scale]
-    );
-
-    define_launch!(
-        launch_cache_write,
-        meta_slot: 2, meta: [row_count: u32, width: u32, dst_row_offset: u32],
-        buffers: [ro sg: 0, mut dg: 1],
-        grid: LaunchConfig {
-            grid_dim: (((width + 15) / 16).max(1), ((row_count + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*sg, &mut *dg, &row_count, &width, &dst_row_offset]
-    );
-
-    define_launch!(
-        launch_rope_offset,
-        meta_slot: 1, meta: [seq: u32, dim: u32, head_dim: u32, pos_offset: u32],
-        buffers: [mut g: 0],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&mut *g, &seq, &dim, &head_dim, &pos_offset]
-    );
-
     fn launch_adamw(&self, bindings: &[CudaBinding], key: usize) {
         let size = meta_u32(find(bindings, 4))[0];
 
@@ -478,78 +334,6 @@ impl CudaBackend {
         launch: [&mut *state_g, &lr_max, &lr_min, &warmup_steps, &max_steps]
     );
 
-    define_launch!(
-        launch_rope_qk,
-        meta_slot: 2, meta: [seq: u32, dim: u32, head_dim: u32, row_offset: u32],
-        buffers: [mut qg: 0, mut kg: 1],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim / 2 + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&mut *qg, &mut *kg, &seq, &dim, &head_dim, &row_offset]
-    );
-
-    define_launch!(
-        launch_qkv_split,
-        meta_slot: 4, meta: [seq: u32, full_dim: u32, head_dim: u32, head_offset: u32],
-        buffers: [ro sg: 0, mut qg: 1, mut kg: 2, mut vg: 3],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*sg, &mut *qg, &mut *kg, &mut *vg, &seq, &full_dim, &head_dim, &head_offset]
-    );
-
-    define_launch!(
-        launch_qkv_scatter,
-        meta_slot: 4, meta: [seq: u32, full_dim: u32, head_dim: u32, head_offset: u32],
-        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, mut dg: 3],
-        grid: LaunchConfig {
-            grid_dim: (((head_dim + 15) / 16).max(1), ((seq + 15) / 16).max(1), 1),
-            block_dim: (16, 16, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*qg, &*kg, &*vg, &mut *dg, &seq, &full_dim, &head_dim, &head_offset]
-    );
-
-    define_launch!(
-        launch_flash_attention,
-        meta_slot: 5, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
-        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, mut og: 3, mut lg: 4],
-        grid: LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
-            block_dim: (64, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*qg, &*kg, &*vg, &mut *og, &mut *lg, &seq_len, &dim, &head_dim, &scale, &row_offset]
-    );
-
-    define_launch!(
-        launch_flash_attention_bwd_dq,
-        meta_slot: 7, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
-        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dqg: 6],
-        grid: LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
-            block_dim: (64, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dqg, &seq_len, &dim, &head_dim, &scale, &row_offset]
-    );
-
-    define_launch!(
-        launch_flash_attention_bwd_dkdv,
-        meta_slot: 8, meta: [seq_len: u32, dim: u32, head_dim: u32, scale: f32, row_offset: u32],
-        buffers: [ro qg: 0, ro kg: 1, ro vg: 2, ro og: 3, ro dog: 4, ro lg: 5, mut dkg: 6, mut dvg: 7],
-        grid: LaunchConfig {
-            grid_dim: (((seq_len + 63) / 64).max(1), (dim / head_dim).max(1), 1),
-            block_dim: (64, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        launch: [&*qg, &*kg, &*vg, &*og, &*dog, &*lg, &mut *dkg, &mut *dvg, &seq_len, &dim, &head_dim, &scale, &row_offset]
-    );
-
     fn dispatch_node(&self, node: &CudaNode) {
         let b = &node.bindings;
         let wg = node.workgroups;
@@ -564,12 +348,14 @@ impl CudaBackend {
             CudaShape::Generic {
                 meta_fields,
                 block_dim,
+                append_len,
             } => self.dispatch_generic(
                 node.shader,
                 spec.src,
                 spec.entry,
                 *meta_fields,
                 *block_dim,
+                *append_len,
                 b,
                 wg,
             ),
@@ -578,6 +364,7 @@ impl CudaBackend {
     }
 
     /// Data-driven dispatch for CudaShape::Generic
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_generic(
         &self,
         shader: &'static Shader,
@@ -585,6 +372,7 @@ impl CudaBackend {
         entry: &str,
         meta_fields: &[MetaField],
         block_dim: (u32, u32, u32),
+        append_len: bool,
         bindings: &[CudaBinding],
         workgroups: [u32; 3],
     ) {
@@ -618,11 +406,9 @@ impl CudaBackend {
         let meta_vals: Vec<MetaValue> = if let Some(&slot) = meta_slots.first() {
             let bytes = meta_bytes(find(bindings, slot));
 
-            //
-            assert_eq!(
-                bytes.len(),
-                meta_fields.len() * 4,
-                "[cuda] '{}': meta slot is {} bytes but meta_fields declares {} field(s) ({} bytes expected) \
+            assert!(
+                bytes.len() >= meta_fields.len() * 4,
+                "[cuda] '{}': meta slot is only {} bytes but meta_fields declares {} field(s) ({} bytes needed) \
                  — layout/meta_fields are out of sync",
                 shader.name,
                 bytes.len(),
@@ -659,6 +445,21 @@ impl CudaBackend {
             Vec::new()
         };
 
+        let len_arg: u32 = if append_len {
+            buf_guards
+                .first()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "[cuda] '{}': append_len needs at least one buffer",
+                        shader.name
+                    )
+                })
+                .1
+                .len() as u32
+        } else {
+            0
+        };
+
         let key = shader_key(shader);
         let f = self.compile(key, src, entry);
         let cfg = LaunchConfig {
@@ -692,6 +493,9 @@ impl CudaBackend {
                     b.arg(v);
                 }
             }
+        }
+        if append_len {
+            b.arg(&len_arg);
         }
         unsafe { b.launch(cfg) }.expect("[cuda] kernel launch failed");
     }

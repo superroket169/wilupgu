@@ -83,6 +83,7 @@ pub static RESIDUAL_ADD: Shader = Shader {
         shape: CudaShape::Generic {
             meta_fields: &[],
             block_dim: (256, 1, 1),
+            append_len: true,
         },
     }),
 };
@@ -98,6 +99,7 @@ pub static BWD_ADD_INPLACE: Shader = Shader {
         shape: CudaShape::Generic {
             meta_fields: &[],
             block_dim: (256, 1, 1),
+            append_len: true,
         },
     }),
 };
@@ -113,6 +115,7 @@ pub static ZERO_TENSOR: Shader = Shader {
         shape: CudaShape::Generic {
             meta_fields: &[MetaField::U32],
             block_dim: (256, 1, 1),
+            append_len: false,
         },
     }),
 };
@@ -158,6 +161,7 @@ pub static CAUSAL_MASK: Shader = Shader {
         shape: CudaShape::Generic {
             meta_fields: &[MetaField::U32, MetaField::F32],
             block_dim: (16, 16, 1),
+            append_len: false,
         },
     }),
 };
