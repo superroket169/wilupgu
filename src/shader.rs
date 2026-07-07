@@ -33,6 +33,7 @@ pub enum CudaShape {
     Generic {
         meta_fields: &'static [MetaField],
         block_dim: (u32, u32, u32),
+        append_len: bool,
     },
 
     #[cfg(feature = "cuda")]

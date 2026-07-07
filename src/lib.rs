@@ -13,7 +13,7 @@ pub use backends::CudaBackend;
 #[cfg(feature = "cpu")]
 pub use backends::CpuBackend;
 pub use graph::{fuse_compute_graphs, ComputeGraph};
-pub use shader::{CpuBinding, CudaSpec, CudaShape, Shader};
+pub use shader::{CpuBinding, CudaShape, CudaSpec, MetaField, Shader};
 pub use tensor::Tensor;
 
 pub type Real = f32;
