@@ -1,7 +1,7 @@
 use crate::backend::{Backend, Binding, Dtype, TensorMode};
 use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
-use crate::shader::{CudaShape, Shader};
+use crate::shader::{CudaShape, MetaField, Shader};
 use cudarc::cublas::sys::{cublasMath_t, cublasOperation_t, cublasSetMathMode, cublasStatus_t};
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
@@ -292,32 +292,6 @@ impl CudaBackend {
         }
     }
 
-    // -------- Elementwise --------
-
-    define_launch!(
-        launch_inout_1,
-        buffers: [mut g: 0],
-        let: [n = g.len() as u32],
-        grid: cfg_1d(n),
-        launch: [&mut *g, &n]
-    );
-
-    define_launch!(
-        launch_in2_out1,
-        buffers: [ro xg: 0, ro dyg: 1, mut dxg: 2],
-        let: [n = xg.len() as u32],
-        grid: cfg_1d(n),
-        launch: [&*xg, &*dyg, &mut *dxg, &n]
-    );
-
-    define_launch!(
-        launch_add,
-        buffers: [mut xg: 0, ro rg: 1],
-        let: [n = xg.len() as u32],
-        grid: cfg_1d(n),
-        launch: [&mut *xg, &*rg, &n]
-    );
-
     // -------- Structured ----------
 
     pub fn launch_embedding(
@@ -343,15 +317,6 @@ impl CudaBackend {
         };
         launch!(self, f, cfg, &*g0, &*g1, &mut *g2, &vocab, &embed, &seq);
     }
-
-    define_launch!(
-        launch_causal_mask,
-        meta_slot: 1, meta: [seq_len: u32, scale: f32],
-        buffers: [mut g: 0],
-        let: [grid = (seq_len + 15) / 16],
-        grid: LaunchConfig { grid_dim: (grid, grid, 1), block_dim: (16, 16, 1), shared_mem_bytes: 0 },
-        launch: [&mut *g, &seq_len, &scale]
-    );
 
     define_launch!(
         launch_causal_softmax,
@@ -594,15 +559,147 @@ impl CudaBackend {
             .cuda
             .as_ref()
             .unwrap_or_else(|| panic!("[cuda] shader `{}` has no cuda impl", node.shader.name));
-        let key = shader_key(node.shader);
 
         match &spec.shape {
-            CudaShape::InOut1 => self.launch_inout_1(b, key, spec.src, spec.entry),
-            CudaShape::In2Out1 => self.launch_in2_out1(b, key, spec.src, spec.entry),
-            CudaShape::Add => self.launch_add(b, key, spec.src, spec.entry),
+            CudaShape::Generic {
+                meta_fields,
+                block_dim,
+            } => self.dispatch_generic(
+                node.shader,
+                spec.src,
+                spec.entry,
+                *meta_fields,
+                *block_dim,
+                b,
+                wg,
+            ),
             CudaShape::Custom(f) => f(node.shader, self, b, wg),
         }
     }
+
+    /// Data-driven dispatch for CudaShape::Generic
+    fn dispatch_generic(
+        &self,
+        shader: &'static Shader,
+        src: &str,
+        entry: &str,
+        meta_fields: &[MetaField],
+        block_dim: (u32, u32, u32),
+        bindings: &[CudaBinding],
+        workgroups: [u32; 3],
+    ) {
+        let meta_slots: Vec<u32> = shader
+            .layout
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| **m == TensorMode::Meta)
+            .map(|(i, _)| i as u32)
+            .collect();
+        assert!(
+            meta_slots.len() <= 1,
+            "[cuda] '{}': dispatch_generic supports at most one Meta slot ({} declared in layout) \
+             — use CudaShape::Custom for kernels with more",
+            shader.name,
+            meta_slots.len()
+        );
+
+        let mut buf_guards: Vec<(TensorMode, std::sync::MutexGuard<'_, CudaSlice<f32>>)> =
+            Vec::new();
+
+        for (slot, mode) in shader.layout.iter().enumerate() {
+            if *mode == TensorMode::Meta {
+                continue;
+            }
+
+            let binding = find(bindings, slot as u32);
+            buf_guards.push((*mode, binding.slice.as_f32().lock().unwrap()));
+        }
+
+        let meta_vals: Vec<MetaValue> = if let Some(&slot) = meta_slots.first() {
+            let bytes = meta_bytes(find(bindings, slot));
+
+            //
+            assert_eq!(
+                bytes.len(),
+                meta_fields.len() * 4,
+                "[cuda] '{}': meta slot is {} bytes but meta_fields declares {} field(s) ({} bytes expected) \
+                 — layout/meta_fields are out of sync",
+                shader.name,
+                bytes.len(),
+                meta_fields.len(),
+                meta_fields.len() * 4
+            );
+
+            let mut vals = Vec::with_capacity(meta_fields.len());
+            let mut off = 0usize;
+
+            for field in meta_fields {
+                vals.push(match field {
+                    MetaField::U32 => {
+                        let v = u32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                        off += 4;
+                        MetaValue::U32(v)
+                    }
+
+                    MetaField::F32 => {
+                        let v = f32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                        off += 4;
+                        MetaValue::F32(v)
+                    }
+                });
+            }
+            vals
+        } else {
+            assert!(
+                meta_fields.is_empty(),
+                "[cuda] '{}': meta_fields declares {} field(s) but layout has no Meta slot",
+                shader.name,
+                meta_fields.len()
+            );
+            Vec::new()
+        };
+
+        let key = shader_key(shader);
+        let f = self.compile(key, src, entry);
+        let cfg = LaunchConfig {
+            grid_dim: (
+                workgroups[0].max(1),
+                workgroups[1].max(1),
+                workgroups[2].max(1),
+            ),
+            block_dim,
+            shared_mem_bytes: 0,
+        };
+
+        let mut b = self.stream.launch_builder(&f);
+        for (mode, guard) in buf_guards.iter_mut() {
+            match mode {
+                TensorMode::Input => {
+                    b.arg(&**guard);
+                }
+                TensorMode::Output | TensorMode::InOut => {
+                    b.arg(&mut **guard);
+                }
+                TensorMode::Meta => unreachable!("Meta slots are filtered out above"),
+            }
+        }
+        for mv in &meta_vals {
+            match mv {
+                MetaValue::U32(v) => {
+                    b.arg(v);
+                }
+                MetaValue::F32(v) => {
+                    b.arg(v);
+                }
+            }
+        }
+        unsafe { b.launch(cfg) }.expect("[cuda] kernel launch failed");
+    }
+}
+
+enum MetaValue {
+    U32(u32),
+    F32(f32),
 }
 
 fn shader_key(shader: &'static Shader) -> usize {
@@ -649,20 +746,6 @@ pub(crate) fn custom_matmul_weight_bwd(
     b.gemm_weight_bwd(bindings)
 }
 
-pub(crate) fn custom_causal_mask(
-    s: &'static Shader,
-    b: &CudaBackend,
-    bindings: &[CudaBinding],
-    _wg: [u32; 3],
-) {
-    b.launch_causal_mask(
-        bindings,
-        shader_key(s),
-        k::CAUSAL_MASK,
-        "causal_mask_kernel",
-    )
-}
-
 pub(crate) fn custom_adamw(
     s: &'static Shader,
     b: &CudaBackend,
@@ -688,8 +771,8 @@ pub(crate) fn custom_adamw_schedule(
 
 pub(crate) mod dispatch {
     pub(crate) use super::{
-        custom_adamw, custom_adamw_schedule, custom_causal_mask, custom_matmul, custom_matmul_add,
-        custom_matmul_trp, custom_matmul_weight_bwd,
+        custom_adamw, custom_adamw_schedule, custom_matmul, custom_matmul_add, custom_matmul_trp,
+        custom_matmul_weight_bwd,
     };
 }
 
