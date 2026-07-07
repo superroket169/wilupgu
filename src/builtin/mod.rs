@@ -4,7 +4,7 @@ pub(crate) mod cuda_kernels;
 use crate::backend::TensorMode::{InOut, Input, Meta, Output};
 #[cfg(feature = "cuda")]
 use crate::backends::cuda::dispatch as cd;
-use crate::shader::{CudaShape, CudaSpec, Shader};
+use crate::shader::{CudaShape, CudaSpec, MetaField, Shader};
 use cpu_kernels as cpu;
 use cuda_kernels as k;
 
@@ -80,7 +80,10 @@ pub static RESIDUAL_ADD: Shader = Shader {
     cuda: Some(CudaSpec {
         src: k::ADD,
         entry: "add_kernel",
-        shape: CudaShape::Add,
+        shape: CudaShape::Generic {
+            meta_fields: &[],
+            block_dim: (256, 1, 1),
+        },
     }),
 };
 
@@ -92,7 +95,10 @@ pub static BWD_ADD_INPLACE: Shader = Shader {
     cuda: Some(CudaSpec {
         src: k::BWD_ADD_INPLACE,
         entry: "bwd_add_inplace_kernel",
-        shape: CudaShape::Add,
+        shape: CudaShape::Generic {
+            meta_fields: &[],
+            block_dim: (256, 1, 1),
+        },
     }),
 };
 
@@ -104,7 +110,10 @@ pub static ZERO_TENSOR: Shader = Shader {
     cuda: Some(CudaSpec {
         src: k::ZERO_TENSOR,
         entry: "zero_tensor_kernel",
-        shape: CudaShape::InOut1,
+        shape: CudaShape::Generic {
+            meta_fields: &[MetaField::U32],
+            block_dim: (256, 1, 1),
+        },
     }),
 };
 
@@ -143,13 +152,12 @@ pub static CAUSAL_MASK: Shader = Shader {
     layout: &[InOut, Meta],
     wgpu: Some(include_str!("../shaders/causal_mask.wgsl")),
     cpu: Some(cpu::causal_mask),
-
-    #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
-        src: "",
-        entry: "",
-        shape: CudaShape::Custom(cd::custom_causal_mask),
+        src: k::CAUSAL_MASK,
+        entry: "causal_mask_kernel",
+        shape: CudaShape::Generic {
+            meta_fields: &[MetaField::U32, MetaField::F32],
+            block_dim: (16, 16, 1),
+        },
     }),
-    #[cfg(not(feature = "cuda"))]
-    cuda: None,
 };

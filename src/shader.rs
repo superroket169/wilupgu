@@ -23,10 +23,18 @@ pub struct CudaSpec {
     pub shape: CudaShape,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MetaField {
+    U32,
+    F32,
+}
+
 pub enum CudaShape {
-    InOut1,
-    In2Out1,
-    Add,
+    Generic {
+        meta_fields: &'static [MetaField],
+        block_dim: (u32, u32, u32),
+    },
+
     #[cfg(feature = "cuda")]
     Custom(
         fn(
