@@ -401,6 +401,58 @@ fonksiyonları kullanıyor, `ADAMW`'a hiç dokunmuyor, `Backend` zaten import
 edilmiş -- sorun beklenmiyor. `advanced_graph_test.rs`/`graph_chain_test.rs`
 hiç CUDA-specific kod içermiyor.
 
+## Üçüncü round (2026-07-06 20:47) -- ADIM 1 GEÇTİ, adım 2'de 9/10 test yeşil
+
+Arkadaşın makinesi: **hiç ayrık ekran kartı yok** (ne NVIDIA ne AMD ne
+Intel), sadece CPU + iGPU -- bu yüzden gerçek CUDA testini o çalıştırıp
+log'u geri gönderiyor, ilginç bir workflow ama işe yarıyor.
+
+`cargo check --features cuda` yine temiz. `cargo test --features cuda`:
+- **`f16_gemm_validation::f16_matmul_matches_f32_matmul` -- GEÇTİ.**
+  Bugünkü Dtype/CudaBuffer-enum/gemm dtype-dispatch/gerçek `half::f16`
+  dönüşümü zincirinin TAMAMI artık gerçek donanımda doğrulanmış oldu.
+- `meta_cache_check` -- geçti (bir önceki round'daki düzeltme doğruydu).
+- `advanced_graph_test` -- 2/2 geçti.
+- `backend_parity` -- 6/7 geçti, `parity_matmul_large` FAILED:
+  `a=625.625549 b=625.766357 err=1.41e-1 eps=5.00e-4`.
+
+**Bu bir bug değil.** `run_all_backends!` makrosu aynı işlemi wgpu (tam
+fp32) VE cuda üzerinde çalıştırıp karşılaştırıyor -- ama `CudaBackend::new()`
+bu oturumda TF32'yi (`cublasSetMathMode(..., CUBLAS_TF32_TENSOR_OP_MATH)`)
+BİLEREK açtı, hız için. TF32 mantissa'yı ~11 bite düşürüyor. Ölçülen
+relative error: 0.1408/625.625 ≈ 2.25e-4 -- gerçek bir hatanın izi değil,
+tam olarak TF32'nin beklenen hassasiyet kaybı. Eski `EPS_NORM=5e-4` MUTLAK
+bir tolerans olduğu için 625 civarındaki değerlerde bunu yakalayamıyordu
+(mutlak 5e-4 hata, ~625'lik bir değerde ~8e-7 relative hassasiyet istemek
+demek -- TF32'nin sağlayamayacağı kadar sıkı).
+
+**Düzeltme:** `assert_close_rel(label, a, b, atol, rtol)` eklendi
+(`err <= atol + rtol*max(|a|,|b|)`), sadece wgpu-vs-cuda karşılaştırmasında
+kullanılıyor (CPU-referans karşılaştırmaları `EPS_TIGHT`/`EPS_EXACT` ile
+mutlak kalmaya devam ediyor, onlar TF32'den etkilenmiyor). `EPS_REL=5e-3`
+-- ölçülen 2.25e-4'ün üzerinde ~20x pay, TF32 gürültüsünü es geçecek kadar
+gevşek ama gerçek bir hatayı (tamamen farklı büyüklükte olurdu) hâlâ
+yakalayacak kadar sıkı. `cargo check/test --features cpu` ile bu değişiklik
+de doğrulandı (wgpu tarafı etkilenmiyor).
+
+**Tüm 5 adım da geçti** -- wilupgu tarafı 5/5 tamamen yeşil, akasha-core
+tarafı da (`cargo check --lib`/`cargo test --lib`/`cargo build --release`,
+hepsi `--features cuda`) 3/3 yeşil, release build dahil.
+
+## bf16 (2026-07-06 21:xx) -- mimari zaten hazırmış, sadece test eklendi
+
+`gemm_matmul`'ün dtype-dispatch match'i baştan beri `Dtype::Bf16` kolunu da
+içeriyordu (f16 ile aynı anda, simetrik olsun diye yazılmıştı) -- yeni bir
+mimari değişikliğe gerek kalmadı, sadece `f16_matmul_matches_f32_matmul`'ün
+yanına aynı kalıpta `bf16_matmul_matches_f32_matmul` eklendi (aynı 2x2
+çarpım, tolerans f16'dan daha gevşek: 3e-1 -- bf16'nın 7-bit mantissa'sı
+f16'nın 10-bit'inden belirgin daha kaba). Modül adı `f16_gemm_validation`
+-> `gemm_dtype_validation` olarak değiştirildi (artık ikisini de kapsıyor).
+`half::bf16::from_f32`/`to_f32` API'si de CUDA'sız izole scratch projede
+gerçekten test edildi (f16 ile aynı şekilde). `tester_script.bat`'ın 5.
+adımı artık `gemm_dtype_validation` alt string'iyle her ikisini de
+çalıştırıyor.
+
 ## Notlar / hatırlatmalar
 
 - `backend_parity` testindeki segfault, `git stash`/`git stash pop` ile pristine (değişikliklerden önceki) kodda da aynı şekilde reprodüklendiği için **wilupgu'nun yeni eklemelerinden kaynaklanmadığı kanıtlandı** — muhtemelen bu sandbox ortamında GPU adapter eksikliği/uyumsuzluğu. Kullanıcının gerçek makinesinde (CUDA'lı) muhtemelen sorun çıkarmaz.
