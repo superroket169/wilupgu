@@ -64,5 +64,6 @@ pub trait Backend: Send + Sync + 'static {
     fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
         self.execute(nodes);
     }
+    fn release_captured(&self, _key: usize) {}
     fn synchronize(&self);
 }

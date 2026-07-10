@@ -798,6 +798,10 @@ impl Backend for CudaBackend {
             .insert(key, GraphCell(graph));
     }
 
+    fn release_captured(&self, key: usize) {
+        self.graph_cache.lock().unwrap().remove(&key);
+    }
+
     fn synchronize(&self) {
         self.stream
             .synchronize()
