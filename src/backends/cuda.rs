@@ -70,10 +70,17 @@ pub struct CudaNode {
 //       CudaBackend
 // ========================
 
-/// cudarc's own docs on `CudaGraph`: "This object is NOT thread safe...
-struct GraphCell(CudaGraph);
+struct GraphCell {
+    graph: CudaGraph,
+    owner: std::thread::ThreadId,
+}
 unsafe impl Send for GraphCell {}
 unsafe impl Sync for GraphCell {}
+
+enum GraphState {
+    Warmed,
+    Captured(GraphCell),
+}
 
 pub struct CudaBackend {
     device: Arc<CuDevice>,
@@ -81,13 +88,14 @@ pub struct CudaBackend {
     blas: CudaBlas,
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer, (u64, Dtype)>,
-    graph_cache: Mutex<HashMap<usize, GraphCell>>,
+    graph_cache: Mutex<HashMap<usize, GraphState>>,
 }
 
 impl CudaBackend {
     pub fn new(ordinal: usize) -> Result<Self, DriverError> {
         let device = CuDevice::new(ordinal)?;
-        let stream = device.default_stream();
+        let stream = device.new_stream()?;
+
         let blas = CudaBlas::new(stream.clone()).map_err(|e| {
             eprintln!("[cuda] cuBLAS init failed: {e:?}");
             DriverError(cudarc::driver::sys::CUresult::CUDA_ERROR_UNKNOWN)
@@ -772,12 +780,30 @@ impl Backend for CudaBackend {
     }
 
     fn execute_captured(&self, key: usize, nodes: &[CudaNode]) {
-        {
+        let warmed = {
             let cache = self.graph_cache.lock().unwrap();
-            if let Some(graph) = cache.get(&key) {
-                graph.0.launch().expect("[cuda] graph launch failed");
-                return;
+            match cache.get(&key) {
+                Some(GraphState::Captured(cell)) => {
+                    debug_assert_eq!(
+                        cell.owner,
+                        std::thread::current().id(),
+                        "[cuda] captured graph launched from a different thread than it was captured on (CudaGraph is not thread safe)"
+                    );
+                    cell.graph.launch().expect("[cuda] graph launch failed");
+                    return;
+                }
+                Some(GraphState::Warmed) => true,
+                None => false,
             }
+        };
+
+        if !warmed {
+            self.execute(nodes);
+            self.graph_cache
+                .lock()
+                .unwrap()
+                .insert(key, GraphState::Warmed);
+            return;
         }
 
         self.stream
@@ -786,16 +812,22 @@ impl Backend for CudaBackend {
         for node in nodes {
             self.dispatch_node(node);
         }
+
         let graph = self
             .stream
             .end_capture(CUgraphInstantiate_flags::CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH)
             .expect("[cuda] end_capture failed")
             .expect("[cuda] end_capture recorded no graph (nothing was dispatched?)");
+
         graph.launch().expect("[cuda] first graph launch failed");
-        self.graph_cache
-            .lock()
-            .unwrap()
-            .insert(key, GraphCell(graph));
+
+        self.graph_cache.lock().unwrap().insert(
+            key,
+            GraphState::Captured(GraphCell {
+                graph,
+                owner: std::thread::current().id(),
+            }),
+        );
     }
 
     fn release_captured(&self, key: usize) {
