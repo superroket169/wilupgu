@@ -1,9 +1,13 @@
 use crate::backend::{Backend, Binding};
 use crate::shader::Shader;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+static NEXT_GRAPH_ID: AtomicUsize = AtomicUsize::new(0);
 
 pub struct ComputeGraph<B: Backend> {
     ctx: Arc<B>,
+    id: usize,
     nodes: Vec<B::Node>,
 }
 
@@ -11,6 +15,7 @@ impl<B: Backend> ComputeGraph<B> {
     pub fn new(ctx: Arc<B>) -> Self {
         Self {
             ctx,
+            id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
             nodes: Vec::new(),
         }
     }
@@ -47,8 +52,13 @@ impl<B: Backend> ComputeGraph<B> {
     }
 
     pub fn execute_captured(&self) {
-        let key = self.nodes.as_ptr() as usize;
-        self.ctx.execute_captured(key, &self.nodes);
+        self.ctx.execute_captured(self.id, &self.nodes);
+    }
+}
+
+impl<B: Backend> Drop for ComputeGraph<B> {
+    fn drop(&mut self) {
+        self.ctx.release_captured(self.id);
     }
 }
 
@@ -60,5 +70,9 @@ pub fn fuse_compute_graphs<B: Backend>(
         .iter()
         .flat_map(|g| g.nodes.iter().cloned())
         .collect();
-    ComputeGraph { ctx, nodes }
+    ComputeGraph {
+        ctx,
+        id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
+        nodes,
+    }
 }
