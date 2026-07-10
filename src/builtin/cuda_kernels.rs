@@ -8,7 +8,9 @@ extern "C" __global__ void add_kernel(float* x, const float* residual, unsigned 
 "#;
 
 pub const CAUSAL_MASK: &str = r#"
-extern "C" __global__ void causal_mask_kernel(float* scores, unsigned int seq_len, float scale) {
+extern "C" __global__ void causal_mask_kernel(float* scores, const unsigned int* meta) {
+    unsigned int seq_len = meta[0];
+    float scale = __uint_as_float(meta[1]);
     unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
     if (row >= seq_len || col >= seq_len) return;
@@ -29,7 +31,8 @@ extern "C" __global__ void bwd_add_inplace_kernel(float* t, const float* source,
 "#;
 
 pub const ZERO_TENSOR: &str = r#"
-extern "C" __global__ void zero_tensor_kernel(float* x, unsigned int n) {
+extern "C" __global__ void zero_tensor_kernel(float* x, const unsigned int* meta) {
+    unsigned int n = meta[0];
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) { x[idx] = 0.0f; }
 }

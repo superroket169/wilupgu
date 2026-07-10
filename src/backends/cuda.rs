@@ -89,6 +89,7 @@ pub struct CudaBackend {
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer, (u64, Dtype)>,
     graph_cache: Mutex<HashMap<usize, GraphState>>,
+    capturing: std::sync::atomic::AtomicBool,
 }
 
 impl CudaBackend {
@@ -118,6 +119,7 @@ impl CudaBackend {
             kernel_cache: Mutex::new(HashMap::new()),
             pool: BufferPool::new(),
             graph_cache: Mutex::new(HashMap::new()),
+            capturing: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -221,11 +223,23 @@ impl CudaBackend {
         unsafe { self.blas.gemm(cfg, bg, ag, cg).expect("[cuda] gemm failed") }
     }
 
+    fn gemm_meta_u32(&self, b: &CudaBinding) -> Vec<u32> {
+        if self.capturing.load(std::sync::atomic::Ordering::Relaxed) {
+            return meta_u32(b);
+        }
+        let g = b.slice.as_f32().lock().unwrap();
+        let f32s = self
+            .stream
+            .clone_dtoh(&*g)
+            .expect("[cuda] live meta dtoh failed");
+        bytemuck::cast_slice::<f32, u32>(&f32s).to_vec()
+    }
+
     fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
         let a = find(bindings, 0);
         let b = find(bindings, 1);
         let c = find(bindings, 2);
-        let dims = meta_u32(find(bindings, 3));
+        let dims = self.gemm_meta_u32(find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
         match a.slice.dtype() {
@@ -274,7 +288,7 @@ impl CudaBackend {
         let a = find(bindings, 0);
         let dc = find(bindings, 1);
         let db = find(bindings, 2);
-        let dims = meta_u32(find(bindings, 3));
+        let dims = self.gemm_meta_u32(find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
         let ag = a.slice.as_f32().lock().unwrap();
@@ -371,7 +385,10 @@ impl CudaBackend {
         }
     }
 
-    /// Data-driven dispatch for CudaShape::Generic
+    /// Data-driven dispatch for CudaShape::Generic.
+    ///
+    /// Meta is passed to the kernel as a device pointer
+    /// and a captured CUDA graph stays valid because only the pointer is baked into it, not the values.
     #[allow(clippy::too_many_arguments)]
     fn dispatch_generic(
         &self,
@@ -399,50 +416,13 @@ impl CudaBackend {
             meta_slots.len()
         );
 
-        let mut buf_guards: Vec<(TensorMode, std::sync::MutexGuard<'_, CudaSlice<f32>>)> =
-            Vec::new();
-
-        for (slot, mode) in shader.layout.iter().enumerate() {
-            if *mode == TensorMode::Meta {
-                continue;
-            }
-
-            let binding = find(bindings, slot as u32);
-            buf_guards.push((*mode, binding.slice.as_f32().lock().unwrap()));
-        }
-
-        let meta_vals: Vec<MetaValue> = if let Some(&slot) = meta_slots.first() {
-            let bytes = meta_bytes(find(bindings, slot));
-
-            assert!(
-                bytes.len() >= meta_fields.len() * 4,
-                "[cuda] '{}': meta slot is only {} bytes but meta_fields declares {} field(s) ({} bytes needed) \
-                 — layout/meta_fields are out of sync",
-                shader.name,
-                bytes.len(),
-                meta_fields.len(),
-                meta_fields.len() * 4
+        if let Some(&slot) = meta_slots.first() {
+            assert_eq!(
+                slot as usize,
+                shader.layout.len() - 1,
+                "[cuda] '{}': the Meta slot must be the last binding so kernel arg order matches the layout",
+                shader.name
             );
-
-            let mut vals = Vec::with_capacity(meta_fields.len());
-            let mut off = 0usize;
-
-            for field in meta_fields {
-                vals.push(match field {
-                    MetaField::U32 => {
-                        let v = u32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
-                        off += 4;
-                        MetaValue::U32(v)
-                    }
-
-                    MetaField::F32 => {
-                        let v = f32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
-                        off += 4;
-                        MetaValue::F32(v)
-                    }
-                });
-            }
-            vals
         } else {
             assert!(
                 meta_fields.is_empty(),
@@ -450,8 +430,28 @@ impl CudaBackend {
                 shader.name,
                 meta_fields.len()
             );
-            Vec::new()
-        };
+        }
+
+        let mut buf_guards: Vec<(TensorMode, std::sync::MutexGuard<'_, CudaSlice<f32>>)> =
+            Vec::new();
+
+        for (slot, mode) in shader.layout.iter().enumerate() {
+            let binding = find(bindings, slot as u32);
+            buf_guards.push((*mode, binding.slice.as_f32().lock().unwrap()));
+        }
+
+        if let Some(&slot) = meta_slots.first() {
+            let len_bytes = buf_guards[slot as usize].1.len() * 4;
+            assert!(
+                len_bytes >= meta_fields.len() * 4,
+                "[cuda] '{}': meta buffer is only {} bytes but meta_fields declares {} field(s) ({} bytes needed) \
+                 — layout/meta_fields are out of sync",
+                shader.name,
+                len_bytes,
+                meta_fields.len(),
+                meta_fields.len() * 4
+            );
+        }
 
         let len_arg: u32 = if append_len {
             buf_guards
@@ -483,22 +483,11 @@ impl CudaBackend {
         let mut b = self.stream.launch_builder(&f);
         for (mode, guard) in buf_guards.iter_mut() {
             match mode {
-                TensorMode::Input => {
+                TensorMode::Input | TensorMode::Meta => {
                     b.arg(&**guard);
                 }
                 TensorMode::Output | TensorMode::InOut => {
                     b.arg(&mut **guard);
-                }
-                TensorMode::Meta => unreachable!("Meta slots are filtered out above"),
-            }
-        }
-        for mv in &meta_vals {
-            match mv {
-                MetaValue::U32(v) => {
-                    b.arg(v);
-                }
-                MetaValue::F32(v) => {
-                    b.arg(v);
                 }
             }
         }
@@ -507,11 +496,6 @@ impl CudaBackend {
         }
         unsafe { b.launch(cfg) }.expect("[cuda] kernel launch failed");
     }
-}
-
-enum MetaValue {
-    U32(u32),
-    F32(f32),
 }
 
 fn shader_key(shader: &'static Shader) -> usize {
@@ -806,6 +790,8 @@ impl Backend for CudaBackend {
             return;
         }
 
+        self.capturing
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.stream
             .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
             .expect("[cuda] begin_capture failed");
@@ -818,6 +804,8 @@ impl Backend for CudaBackend {
             .end_capture(CUgraphInstantiate_flags::CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH)
             .expect("[cuda] end_capture failed")
             .expect("[cuda] end_capture recorded no graph (nothing was dispatched?)");
+        self.capturing
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         graph.launch().expect("[cuda] first graph launch failed");
 
