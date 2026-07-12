@@ -435,9 +435,23 @@ impl CudaBackend {
         let mut buf_guards: Vec<(TensorMode, std::sync::MutexGuard<'_, CudaSlice<f32>>)> =
             Vec::new();
 
+        // self-deadlock assert
+        let mut seen_bufs: Vec<*const ()> = Vec::new();
         for (slot, mode) in shader.layout.iter().enumerate() {
             let binding = find(bindings, slot as u32);
-            buf_guards.push((*mode, binding.slice.as_f32().lock().unwrap()));
+            let mutex = binding.slice.as_f32();
+            let ptr = mutex as *const _ as *const ();
+
+            assert!(
+                !seen_bufs.contains(&ptr),
+                "[cuda] '{}': the same buffer is bound to slot {} and an earlier slot \
+                 — dispatch_generic cannot lock it twice",
+                shader.name,
+                slot
+            );
+
+            seen_bufs.push(ptr);
+            buf_guards.push((*mode, mutex.lock().unwrap()));
         }
 
         if let Some(&slot) = meta_slots.first() {
@@ -581,18 +595,34 @@ impl Backend for CudaBackend {
     }
 
     fn alloc(&self, size_bytes: u64) -> CudaBuffer {
+        assert_eq!(
+            size_bytes % 4,
+            0,
+            "[cuda] alloc: size must be a multiple of 4 (f32 elements), got {size_bytes}"
+        );
+
         if let Some(buf) = self.pool.take((size_bytes, Dtype::F32)) {
             return buf;
         }
+
         let n = (size_bytes as usize) / std::mem::size_of::<f32>();
         let slice = self
             .stream
             .alloc_zeros::<f32>(n)
             .expect("[cuda] alloc failed");
+
         CudaBuffer::F32(Arc::new(Mutex::new(slice)))
     }
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> CudaBuffer {
+        // type byte assert
+        assert_eq!(
+            std::mem::size_of::<T>() % 4,
+            0,
+            "[cuda] alloc_from_cpu stores everything as f32 words; \
+             element type must be 4-byte aligned"
+        );
+
         let f32s: &[f32] = bytemuck::cast_slice(data);
         let size_bytes = (f32s.len() * std::mem::size_of::<f32>()) as u64;
         if let Some(buf) = self.pool.take((size_bytes, Dtype::F32)) {
@@ -711,7 +741,7 @@ impl Backend for CudaBackend {
 
     fn recycle(&self, size_bytes: u64, buf: CudaBuffer) {
         let dtype = buf.dtype();
-        self.pool.recycle((size_bytes, dtype), buf);
+        let _ = self.pool.recycle((size_bytes, dtype), buf);
     }
 
     fn is_sole_owner(buf: &CudaBuffer) -> bool {
