@@ -1,10 +1,8 @@
 use crate::backend::{Backend, Binding, Dtype, TensorMode};
-use crate::pool::BufferPool;
+use crate::pool::{size_class, BufferPool};
 use crate::shader::Shader;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use wgpu::util::DeviceExt;
 
 pub type WgpuBuffer = Arc<wgpu::Buffer>;
 
@@ -25,9 +23,14 @@ pub struct WgpuBackend {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     pipeline_cache: Mutex<HashMap<usize, (Arc<wgpu::BindGroupLayout>, Arc<wgpu::ComputePipeline>)>>,
-    submit_count: AtomicU64,
+    in_flight: Mutex<VecDeque<wgpu::SubmissionIndex>>,
     pool: BufferPool<WgpuBuffer>,
 }
+
+/// Only block once this many submissions are unfinished
+/// then wait for the oldest
+/// keeping the queue fed instead of stalling on every other submit.
+const MAX_IN_FLIGHT: usize = 16;
 
 impl WgpuBackend {
     pub async fn new() -> Self {
@@ -50,7 +53,7 @@ impl WgpuBackend {
             device: Arc::new(device),
             queue: Arc::new(queue),
             pipeline_cache: Mutex::new(HashMap::new()),
-            submit_count: AtomicU64::new(0),
+            in_flight: Mutex::new(VecDeque::new()),
             pool: BufferPool::new(),
         }
     }
@@ -64,13 +67,17 @@ impl Backend for WgpuBackend {
         "wgpu"
     }
 
+    // Buffers are created at their == power-of-two == size class so slightly
+    // different lengths share pool buckets. Tensor tracks the logical size;
+    // to_cpu truncates back down to it.
     fn alloc(&self, size_bytes: u64) -> WgpuBuffer {
-        if let Some(buf) = self.pool.take(size_bytes) {
+        let class = size_class(size_bytes);
+        if let Some(buf) = self.pool.take(class) {
             return buf;
         }
         Arc::new(self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: size_bytes,
+            size: class,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -79,21 +86,10 @@ impl Backend for WgpuBackend {
     }
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> WgpuBuffer {
-        let bytes = bytemuck::cast_slice(data);
-        if let Some(buf) = self.pool.take(bytes.len() as u64) {
-            self.queue.write_buffer(&buf, 0, bytes);
-            return buf;
-        }
-        Arc::new(
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: None,
-                    contents: bytes,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
-                }),
-        )
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        let buf = self.alloc(bytes.len() as u64);
+        self.queue.write_buffer(&buf, 0, bytes);
+        buf
     }
 
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &WgpuBuffer, data: &[T]) {
@@ -159,7 +155,9 @@ impl Backend for WgpuBackend {
     }
 
     fn recycle(&self, size_bytes: u64, buf: WgpuBuffer) {
-        self.pool.recycle(size_bytes, buf);
+        if let Some(evicted) = self.pool.recycle(size_class(size_bytes), buf) {
+            evicted.destroy();
+        }
     }
 
     fn is_sole_owner(buf: &WgpuBuffer) -> bool {
@@ -278,18 +276,29 @@ impl Backend for WgpuBackend {
                 );
             }
         }
-        self.queue.submit(Some(encoder.finish()));
+        let idx = self.queue.submit(Some(encoder.finish()));
 
-        const POLL_INTERVAL: u64 = 2;
-        let n = self.submit_count.fetch_add(1, Ordering::Relaxed) + 1;
-        if n % POLL_INTERVAL == 0 {
-            self.device.poll(wgpu::Maintain::Wait);
-        } else {
-            self.device.poll(wgpu::Maintain::Poll);
+        let oldest = {
+            let mut q = self.in_flight.lock().unwrap();
+            q.push_back(idx);
+            if q.len() > MAX_IN_FLIGHT {
+                q.pop_front()
+            } else {
+                None
+            }
+        };
+        match oldest {
+            Some(i) => {
+                self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(i));
+            }
+            None => {
+                self.device.poll(wgpu::Maintain::Poll);
+            }
         }
     }
 
     fn synchronize(&self) {
         self.device.poll(wgpu::Maintain::Wait);
+        self.in_flight.lock().unwrap().clear();
     }
 }
