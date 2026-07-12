@@ -92,7 +92,7 @@ impl Backend for CpuBackend {
     fn free_buffer(&self, _buf: CpuBuffer) {}
 
     fn recycle(&self, size_bytes: u64, buf: CpuBuffer) {
-        self.pool.recycle(size_bytes, buf);
+        let _ = self.pool.recycle(size_bytes, buf);
     }
 
     fn is_sole_owner(buf: &CpuBuffer) -> bool {
