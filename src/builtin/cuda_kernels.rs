@@ -69,10 +69,8 @@ extern "C" __global__ void adamw_kernel(
     if (idx >= size) return;
 
     float g = grads[idx];
-    float clamped_grad = fminf(fmaxf(g, -1.0f), 1.0f);
-
-    float m_new = beta1 * m[idx] + (1.0f - beta1) * clamped_grad;
-    float v_new = beta2 * v[idx] + (1.0f - beta2) * clamped_grad * clamped_grad;
+    float m_new = beta1 * m[idx] + (1.0f - beta1) * g;
+    float v_new = beta2 * v[idx] + (1.0f - beta2) * g * g;
     m[idx] = m_new;
     v[idx] = v_new;
 

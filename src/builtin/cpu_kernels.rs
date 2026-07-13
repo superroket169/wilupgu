@@ -160,7 +160,7 @@ pub(crate) fn adamw(bindings: &[CpuBinding]) {
     let bias_correction2 = 1.0 - beta2.powi(step as i32);
 
     for idx in 0..size {
-        let g = grads[idx].clamp(-1.0, 1.0);
+        let g = grads[idx];
         m[idx] = beta1 * m[idx] + (1.0 - beta1) * g;
         v[idx] = beta2 * v[idx] + (1.0 - beta2) * g * g;
 
