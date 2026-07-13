@@ -37,7 +37,7 @@ fn main(
 
     let m_new = cfg.beta1 * m[idx] + (1.0 - cfg.beta1) * g;
     let v_new = cfg.beta2 * v[idx] + (1.0 - cfg.beta2) * g * g;
-    
+
     m[idx] = m_new;
     v[idx] = v_new;
 
