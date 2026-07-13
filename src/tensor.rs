@@ -28,7 +28,9 @@ impl<B: Backend> Tensor<B> {
     }
 
     pub fn to_cpu<T: bytemuck::Pod + Default + Clone>(&self) -> Vec<T> {
-        self.ctx.copy_to_cpu(&self.buffer)
+        let mut v: Vec<T> = self.ctx.copy_to_cpu(&self.buffer);
+        v.truncate(self.size as usize / std::mem::size_of::<T>());
+        v
     }
 
     pub fn new_dtype(ctx: Arc<B>, elem_count: usize, dtype: Dtype) -> Self {
@@ -45,7 +47,9 @@ impl<B: Backend> Tensor<B> {
     }
 
     pub fn to_cpu_as(&self, dtype: Dtype) -> Vec<f32> {
-        self.ctx.download_as(&self.buffer, dtype)
+        let mut v = self.ctx.download_as(&self.buffer, dtype);
+        v.truncate(self.size as usize / dtype.elem_size());
+        v
     }
 }
 
