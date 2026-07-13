@@ -27,6 +27,36 @@ pub static MATMUL: Shader = Shader {
     cuda: None,
 };
 
+pub static GEMV: Shader = Shader {
+    name: "Gemv",
+    layout: &[Input, Input, Output, Meta],
+    wgpu: Some(include_str!("../shaders/fwd/gemv.wgsl")),
+    cpu: Some(cpu::matmul),
+    #[cfg(feature = "cuda")]
+    cuda: Some(CudaSpec {
+        src: "",
+        entry: "",
+        shape: CudaShape::Custom(cd::custom_matmul),
+    }),
+    #[cfg(not(feature = "cuda"))]
+    cuda: None,
+};
+
+pub static GEMV_ADD: Shader = Shader {
+    name: "GemvAdd",
+    layout: &[Input, Input, InOut, Meta],
+    wgpu: Some(include_str!("../shaders/fwd/gemv_add.wgsl")),
+    cpu: Some(cpu::matmul_add),
+    #[cfg(feature = "cuda")]
+    cuda: Some(CudaSpec {
+        src: "",
+        entry: "",
+        shape: CudaShape::Custom(cd::custom_matmul_add),
+    }),
+    #[cfg(not(feature = "cuda"))]
+    cuda: None,
+};
+
 pub static MATMUL_TRP: Shader = Shader {
     name: "MatMulTrp",
     layout: &[Input, Input, Output, Meta],
