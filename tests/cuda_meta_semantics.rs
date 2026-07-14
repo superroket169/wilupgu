@@ -1,4 +1,11 @@
-//! Run with: cargo test --release --features cuda --test meta_cache_check
+//! Run with: cargo test --release --features cuda --test cuda_meta_semantics
+//!
+//! The CUDA backend has two meta read paths with different lifetimes:
+//! - generic kernels get the Meta buffer as a device pointer -> read LIVE
+//!   at every dispatch (check 2 leans on the same liveness for Input);
+//! - cuBLAS shapes read dims on the host: live dtoh on plain execute(),
+//!   but the build_node-time `cached_meta` snapshot during graph capture,
+//!   so captured GEMM dims are FROZEN (check 3).
 
 #![cfg(feature = "cuda")]
 
@@ -35,7 +42,7 @@ struct ConstCfg {
 }
 
 #[test]
-fn meta_cache_check() {
+fn cuda_meta_semantics() {
     let ctx = cuda_ctx();
 
     // ---------------------------------------------------------------
@@ -158,6 +165,55 @@ fn meta_cache_check() {
     println!(
         "[check 2] AdamW: per-step deltas shrink in line with falling lr -> schedule_state is read LIVE each dispatch, not cached. OK"
     );
+
+    // ---------------------------------------------------------------
+    // check 3: cuBLAS dims are FROZEN once a graph is captured. The GEMM
+    // path reads m/n/k on the host; during capture it uses the snapshot
+    // taken at build_node time, and replays bake those dims in. A meta
+    // update on the device after capture must NOT change what replays
+    // compute.
+
+    let (m, n, k) = (2u32, 2u32, 2u32);
+    let a = Tensor::init_from_cpu(ctx.clone(), &[1.0f32, 2.0, 3.0, 4.0]);
+    let b = Tensor::init_from_cpu(ctx.clone(), &[1.0f32, 0.0, 0.0, 1.0]);
+    let out = Tensor::init_from_cpu(ctx.clone(), &[0.0f32; 4]);
+    let meta = Tensor::init_from_cpu(ctx.clone(), &[m, n, k]);
+
+    let mut cap_graph = ComputeGraph::new(ctx.clone());
+    cap_graph.add_node(
+        &builtin::MATMUL,
+        &[
+            Binding::new(0, &a.buffer, TensorMode::Input),
+            Binding::new(1, &b.buffer, TensorMode::Input),
+            Binding::new(2, &out.buffer, TensorMode::Output),
+            Binding::new(3, &meta.buffer, TensorMode::Meta),
+        ],
+        [(n + 15) / 16, (m + 15) / 16, 1],
+    );
+
+    cap_graph.execute_captured(); // 1st run: warm-up (plain execute, live dims)
+    ctx.synchronize();
+    cap_graph.execute_captured(); // 2nd run: capture from cached_meta + launch
+    ctx.synchronize();
+    let before: Vec<f32> = out.to_cpu();
+
+    // Shrink M to 1 on the device and wipe the output. If dims were still
+    // read live only row 0 would be recomputed and row 1 would stay zero;
+    // frozen dims must reproduce both rows.
+    meta.copy_from_cpu(&[1u32, n, k]);
+    out.copy_from_cpu(&[0.0f32; 4]);
+    cap_graph.execute_captured(); // replay
+    ctx.synchronize();
+    let after: Vec<f32> = out.to_cpu();
+
+    assert_eq!(
+        before, after,
+        "captured GEMM re-read meta from the device -- dims must be frozen at capture time"
+    );
+
+    println!("[check 3] MatMul (cuBLAS): device-side meta update ignored by captured replay -> dims frozen at capture. OK");
+    println!("  before = {:?}", before);
+    println!("  after  = {:?}", after);
 
     println!("\nAll checks passed.");
 }

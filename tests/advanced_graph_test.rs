@@ -39,7 +39,7 @@ fn run_mixed_transformer_block<B: Backend>(
     graph.add_node(
         &builtin::RESIDUAL_ADD,
         &[
-            Binding::new(0, &t_out.buffer, TensorMode::InOut),
+            Binding::new(0, &t_out.buffer, TensorMode::Accumulate),
             Binding::new(1, &t_residual.buffer, TensorMode::Input),
         ],
         [16, 1, 1],
