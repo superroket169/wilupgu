@@ -24,7 +24,8 @@ for an NVIDIA GPU at runtime and fall back to `WgpuBackend` instead of
 hard-failing.
 
 Measured on an RTX 4050 training a 162M-parameter transformer: CUDA ~80
-steps/min vs Vulkan ~31 steps/min (~2.5x).
+steps/min vs Vulkan ~31 steps/min (~2.5x). *Stale measurement — taken before
+buffer pooling, flash attention and the fused-CE rework; due for a re-run.*
 
 ## Built-in shaders
 
