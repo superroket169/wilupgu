@@ -1,7 +1,7 @@
 pub(crate) mod cpu_kernels;
 pub(crate) mod cuda_kernels;
 
-use crate::backend::TensorMode::{InOut, Input, Meta, Output};
+use crate::backend::TensorMode::{Accumulate, InOut, Input, Meta, Output};
 #[cfg(feature = "cuda")]
 use crate::backends::cuda::dispatch as cd;
 use crate::shader::{CudaShape, CudaSpec, MetaField, Shader};
@@ -44,7 +44,7 @@ pub static GEMV: Shader = Shader {
 
 pub static GEMV_ADD: Shader = Shader {
     name: "GemvAdd",
-    layout: &[Input, Input, InOut, Meta],
+    layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/fwd/gemv_add.wgsl")),
     cpu: Some(cpu::matmul_add),
     #[cfg(feature = "cuda")]
@@ -74,7 +74,7 @@ pub static MATMUL_TRP: Shader = Shader {
 
 pub static MATMUL_ADD: Shader = Shader {
     name: "MatMulAdd",
-    layout: &[Input, Input, InOut, Meta],
+    layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/fwd/matmul_add.wgsl")),
     cpu: Some(cpu::matmul_add),
     #[cfg(feature = "cuda")]
@@ -89,7 +89,9 @@ pub static MATMUL_ADD: Shader = Shader {
 
 pub static MATMUL_WEIGHT_BWD: Shader = Shader {
     name: "MatMulWeightBwd",
-    layout: &[Input, Input, Output, Meta],
+    // dB += A^T x dC in all three backends (cuBLAS beta=1)
+    // grads build up across micro-batches
+    layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/bwd/matmul_weight_trp.wgsl")),
     cpu: Some(cpu::matmul_weight_bwd),
     #[cfg(feature = "cuda")]
@@ -104,7 +106,7 @@ pub static MATMUL_WEIGHT_BWD: Shader = Shader {
 
 pub static RESIDUAL_ADD: Shader = Shader {
     name: "ResidualAdd",
-    layout: &[InOut, Input],
+    layout: &[Accumulate, Input],
     wgpu: Some(include_str!("../shaders/add.wgsl")),
     cpu: Some(cpu::residual_add),
     cuda: Some(CudaSpec {
@@ -120,7 +122,7 @@ pub static RESIDUAL_ADD: Shader = Shader {
 
 pub static BWD_ADD_INPLACE: Shader = Shader {
     name: "BwdAddInplace",
-    layout: &[InOut, Input],
+    layout: &[Accumulate, Input],
     wgpu: Some(include_str!("../shaders/bwd/bwd_add_inplace.wgsl")),
     cpu: Some(cpu::residual_add),
     cuda: Some(CudaSpec {
