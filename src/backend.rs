@@ -3,8 +3,17 @@ use crate::shader::Shader;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TensorMode {
     Input,
+    /// Fully overwritten by the kernel: prior contents (pool garbage
+    /// included) never leak into the result.
     Output,
+    /// Read-modify-write where the old value is consumed (AdamW weights,
+    /// in-place masking).
     InOut,
+    /// Read-add-write: the kernel does `buf += result`, so the caller must
+    /// hand over initialized (usually zeroed or partial-sum) contents.
+    /// Backends treat it like InOut; the mode exists so layouts state the
+    /// init contract instead of hiding it behind Output/InOut.
+    Accumulate,
     Meta,
 }
 
@@ -41,9 +50,22 @@ pub trait Backend: Send + Sync + 'static {
     type Buffer: Clone + Send + Sync + 'static;
     type Node: Clone + Send + Sync + 'static;
     fn name(&self) -> &'static str;
+
+    /// Returned buffer may come from the pool: contents are GARBAGE, and the
+    /// physical size can exceed `size_bytes` (wgpu rounds up to a power-of-two
+    /// size class). CUDA additionally asserts `size_bytes % 4 == 0`.
     fn alloc(&self, size_bytes: u64) -> Self::Buffer;
+
+    /// CUDA stores every buffer as f32 words -- `T` must be 4-byte aligned.
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> Self::Buffer;
+
+    /// Ordered against queued kernel work on the backend's single queue/stream:
+    /// safe to call between executes without a synchronize().
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &Self::Buffer, data: &[T]);
+
+    /// Blocking. Returns the PHYSICAL buffer contents -- on wgpu the tail beyond
+    /// the logical tensor size is pool garbage. Go through `Tensor::to_cpu`,
+    /// which truncates to the logical size.
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &Self::Buffer) -> Vec<T>;
 
     // dynamic type quantization like somethings

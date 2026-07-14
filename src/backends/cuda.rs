@@ -500,7 +500,7 @@ impl CudaBackend {
                 TensorMode::Input | TensorMode::Meta => {
                     b.arg(&**guard);
                 }
-                TensorMode::Output | TensorMode::InOut => {
+                TensorMode::Output | TensorMode::InOut | TensorMode::Accumulate => {
                     b.arg(&mut **guard);
                 }
             }
