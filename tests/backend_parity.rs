@@ -159,7 +159,7 @@ fn run_residual_add<B: Backend>(ctx: Arc<B>, x: &[f32], r: &[f32]) -> Vec<f32> {
     g.add_node(
         &builtin::RESIDUAL_ADD,
         &[
-            Binding::new(0, &tx.buffer, TensorMode::InOut),
+            Binding::new(0, &tx.buffer, TensorMode::Accumulate),
             Binding::new(1, &tr.buffer, TensorMode::Input),
         ],
         [(n + 255) / 256, 1, 1],
