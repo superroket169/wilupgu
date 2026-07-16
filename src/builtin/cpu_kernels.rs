@@ -189,7 +189,13 @@ pub(crate) fn adamw_schedule(bindings: &[CpuBinding]) {
     let lr = if step < warmup_steps {
         lr_max * step as f32 / warmup_steps as f32
     } else {
-        let progress = (step - warmup_steps) as f32 / (max_steps - warmup_steps) as f32;
+        // Clamp: past max_steps the cosine must not wrap back up; also guards
+        // max_steps == warmup_steps
+        let progress = if max_steps > warmup_steps {
+            ((step - warmup_steps) as f32 / (max_steps - warmup_steps) as f32).min(1.0)
+        } else {
+            1.0
+        };
         lr_min + 0.5 * (lr_max - lr_min) * (1.0 + (std::f32::consts::PI * progress).cos())
     };
 
