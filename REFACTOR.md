@@ -5,13 +5,29 @@ oturumda bitecek boyutta. Sıra: doğruluk → crash → hız → VRAM → temiz
 
 ## 🟢 Eğitim kalitesi ayarları
 
-**E1** — Weight decay'i norm ağırlıkları ve embedding'den çıkar.
-**E2** — out_proj / ffn_down için depth-scaled init (1/√(2L)).
+**E1** ✅ (2026-07-16) — Weight decay norm ağırlıkları ve embedding'den
+çıkarıldı: collect_trainable_params artık (weight, grad, decay) üçlüsü
+üretiyor (bayrak parametrelerin adlandırıldığı tek yerde); AdamW::new iki
+ConstCfg tutuyor (decay'li/decay'siz) ve node başına uygununu bağlıyor.
+Sıra sözleşmesi ve moments düzeni değişmedi; dış trainable_params() API'si
+çift dönmeye devam ediyor (diagnose.rs etkilenmedi).
+**E2** ✅ (2026-07-16) — out_proj / ffn_down init std'sine 1/√(2L) çarpanı
+(weights.rs::random; GPT-2 pratiği — residual akışına yazan 2L projeksiyonun
+birikimi derinlikten bağımsız kalsın). Yalnız sıfırdan init'i etkiler;
+mevcut checkpoint'ten devam eden koşulara etkisi yok.
 
 ## 🔵 Yeni feat'ler (en sona)
 
 **F1** — Gerçek batch size'ı decode/prefill/causal_attention'a tamamla.
-**F2** — Streaming dataset modülü.
+**F2** ✅ (2026-07-16) — Streaming dataset: data.rs yeniden yazıldı. Raw
+corpus bir kez chunk-chunk (8MB, UTF-8 + satır/kelime sınırında kesim)
+tokenize edilip 16M-token'lık raw u32 LE shard dosyalarına yazılıyor
+(data/train_shards/; dizin varsa yeniden tokenize edilmez). Eğitimde en
+fazla 4 shard bellekte (~256MB), her 256 batch'te biri rastgele soğuk
+shard'la değişiyor; pencere-sayısı-ağırlıklı örnekleme. Chunk mekaniği
+encode closure'ı aldığı için tokenizersız test edilebilir — 3 host testi:
+losslessness (çok byte'lı char'lar sınırda), batch tutarlılığı + rotasyon,
+B8 paniği. 50M-char truncation tarihe karıştı.
 **F3** — Docs pass.
 **F4** — ember CUDA shader'ları (K6'dan sonra).
 **F5** — ember: ClippedReLU tek copy-clamp kernel'i; mse_loss graph'ını
@@ -26,13 +42,11 @@ Input, Meta], wilupgu builtin/mod.rs:157). Slot 5'e StepConfig'i Meta olarak
 veriyor ama layout Input (ScheduleState{step,lr}) bekliyor → add_node mode
 assert'inde panik; slot 6 (ConstCfg) hiç yok. Trainer::new kurulurken çöker,
 smoke test geçemez.
-**B2** — rmsnorm_bwd.wgsl'de eksik barrier (workgroup yarışı). `let ss =
-reduce(tid)` ile tüm thread'ler partial[0]'ı okuyor; hemen ardından
-`partial[tid] = local_sum_grad` aynı diziyi barrier'sız eziyor. Hızlı thread
-partial[0]'ı, yavaş thread daha okumadan bozabilir → nadiren yanlış dX. CUDA
-ikizi doğru (cuda.rs:481/:499'da __syncthreads var) — WGSL'de eksik. Çözüm:
-okuma sonrası workgroupBarrier(), ya da cross_entropy.wgsl'deki ayrı
-var<workgroup> değişkeni + barrier deseni.
+**B2** ✅ (2026-07-15) — rmsnorm_bwd.wgsl'de eksik barrier (workgroup
+yarışı): `reduce()` sonundaki barrier yazımları bitiriyordu ama partial[0]
+okumalarını değil; hızlı thread bir sonraki `partial[tid] = ...` ile diziyi
+erken ezebiliyordu → nadiren yanlış dX. Fix: sonuç yerel değişkene alınıp
+okuma sonrası workgroupBarrier() (CUDA ikizi zaten doğruydu).
 **B3** — T1 taramasının sonucu, üç kernel Output etiketli ama accumulate:
 EMBEDDING_BWD (akasha shaders/mod.rs:26, atomik += — WGSL CAS loop / CUDA
 atomicAdd), RMSNORM_WEIGHT_BWD (mod.rs:287, dWeight[i] += acc), ember
@@ -40,28 +54,38 @@ BIAS_ADD_BWD (dBias[j] += acc). Bugün davranış doğru (trainer zero'luyor)
 ama Output kontratı "pool çöpü asla sızmaz" der — taze pool buffer'ı
 bağlanırsa çöp grad üretir, T1'in dokümantasyon değeri kaybolur. (Kontrol
 edildi: flash bwd dq/dkdv gerçekten tam overwrite, Output etiketi doğru.)
-**B4** — Cosine schedule progress clamp'lenmiyor (adamw_schedule.wgsl,
-cuda_kernels.rs:41, cpu_kernels.rs:192, config.rs:78 host formülü): step >
-max_steps'te cos π'yi geçip geri döner → LR tekrar lr_max'a tırmanır. Ayrıca
-max_steps == warmup_steps → sıfıra bölme. MAX_STEPS sonrası fine-tune/devam
-senaryosunda sessizce patlar; progress.min(1.0) yeterli.
-**B5** — Checkpoint'te optimizer state yok: V2 sadece weights; AdamW::moments
-+ schedule_state (step sayacı) kaydedilmiyor. Resume'da momentler sıfır +
-step 0'dan → warmup baştan (main.rs:78 step'i sadece dosya adından taşıyor)
-→ resume anında loss sıçraması. Continued pretraining'den ÖNCE V3: moments +
-step + (ideali) RNG/data cursor. Not: find_latest_checkpoint
-model_final.bin'i de görmüyor.
-**B6** — train_step + cfg.batch_size > 1 sessizce yanlış (train.rs:326-342):
-her mikro-batch seq_len'lik pencereyi rows = batch*seq buffer'ının başına
-kopyalayıp TÜM satırlar üzerinden forward/CE koşuyor. batch_size=1'de
-(bugünkü üretim yolu) doğru; >1'de bayat satırlar loss/grad'a karışır. F1
-bitene kadar `assert_eq!(self.cfg.batch_size, 1)` koy.
+**B4** ✅ (2026-07-15) — Cosine schedule progress dört kopyada da
+(adamw_schedule.wgsl, cuda_kernels.rs, cpu_kernels.rs, config.rs host
+formülü) aynı desenle clamp'lendi: max_steps > warmup_steps ise
+progress.min(1.0), değilse (0/0 durumu) progress = 1.0 → lr_min.
+Host formülüne sınır testi eklendi (config.rs::tests::cosine_lr_boundaries:
+t=0, warmup, max, max+N, max==warmup). CUDA kopyası bu makinede
+derlenemiyor — nvidia makinede bir tur bekliyor.
+**B5** ✅ (2026-07-16) — V3 checkpoint: AKV3 = weights + AdamW m/v momentleri
++ schedule_step + train_step (dosya içinde; resume artık dosya adına muhtaç
+değil). V1/V2 kütüphaneden tamamen söküldü — legacy okuyucular yalnız yeni
+bin/migrate_checkpoint_v3.rs'te (v1 VE v2 okur, bitwise verify'lı; bu
+makinedeki model_final.bin.v2.bin → model_final.v3.bin migre edildi, 75
+tensör doğrulandı). main.rs: resume model_step_* → model_final.v3.bin →
+sıfırdan sırasıyla; final kayıt model_final.v3.bin'e (model_final.bin v1
+anısı, asla yazılmaz). Bekçi test: v3_save_load_roundtrip. Kalan ideal:
+RNG/data cursor — F2 streaming dataset kendi cursor'ını getirince oraya.
+Not: eski model_step_*.bin (v2) dosyaları artık yüklenmez — migre et ya da
+sil.
+**B6** ✅ (2026-07-15) — Tarif düzeltmesi: "seq_len'lik pencere rows
+buffer'ına" mekanizması güncel kodda yok — train_step'in penceresi
+cross_entropy.seq_len = rows (batch*seq) boyutlu ve giriş uzunlukları
+zaten assert'li (tarama yerel `seq_len` adına aldanmış). Kapatılan gerçek
+boşluklar: (1) arg batch_size ile cfg.batch_size birlikte >1 (dokümante
+tanımsız kombinasyon) artık train_step'te assert'le reddediliyor;
+(2) Trainer::new, caller'ın verdiği input_tokens tensörünün rows token
+tuttuğunu assert ediyor — bayat-satır riskinin asıl kaynağı buydu.
 **B7** — generate() boş prompt + dolu cache → panik (inference.rs:267-275):
 prefill yolu EmptyPrompt dönerken, resumed-cache yolunda prompt_tokens boşsa
 `last = Vec::new()` kalır ve sample_token(&[], ...) idx[0]'da paniker.
-**B8** — Dataset::random_batch underflow (data.rs:37): token sayısı
-seq_len+1'den azsa `self.tokens.len() - self.seq_len - 1` taşar/paniker.
-from_file'a anlamlı bir assert.
+**B8** ✅ (2026-07-16) — F2 ile birlikte kapandı: seq_len+1'den küçük
+shard'lar uyarıyla elenir, hiç kullanılabilir shard kalmazsa anlamlı
+assert mesajı (test: tiny_corpus_panics_instead_of_underflowing).
 
 ### 🟠 Hız
 
@@ -89,9 +113,10 @@ döngüsü çıkar.
 **B12** — Prefill her çağrıda graph'ı ve tüm ara buffer'ları yeniden kuruyor
 (inference.rs:83-152). Pool yumuşatıyor ama prompt başına build + upload
 maliyeti var; uzunlukları bucket'layıp graph cache'lemek mümkün.
-**B13** — save_v2 tüm parametreleri tek seferde host'a topluyor
-(checkpoint.rs:38): 162M model için ~650MB Vec<Vec<f32>> + bincode.
-Tensor-tensor streaming yazım RAM spike'ını da duraklamayı da azaltır.
+**B13** — checkpoint::save tüm parametreleri tek seferde host'a topluyor;
+V3 momentleri de eklediği için tepe ~3× büyüdü (162M model için ~2GB
+Vec<Vec<f32>> + bincode). Tensor-tensor streaming yazım RAM spike'ını da
+duraklamayı da azaltır — V3 sonrası önceliği arttı.
 
 ### 🟡 Tasarım / tutarlılık
 
