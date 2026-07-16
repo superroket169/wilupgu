@@ -51,7 +51,14 @@ extern "C" __global__ void adamw_schedule_kernel(
     if (t < warmup_steps) {
         state->lr = lr_max * (float)t / (float)warmup_steps;
     } else {
-        float progress = (float)(t - warmup_steps) / (float)(max_steps - warmup_steps);
+        
+        // Clamp: past max_steps the cosine must not wrap back up; also guards
+        // max_steps == warmup_steps (0/0)
+        float progress = 1.0f;
+        if (max_steps > warmup_steps) {
+            progress = fminf((float)(t - warmup_steps) / (float)(max_steps - warmup_steps), 1.0f);
+        }
+        
         state->lr = lr_min + 0.5f * (lr_max - lr_min) * (1.0f + cosf(3.14159265f * progress));
     }
 }

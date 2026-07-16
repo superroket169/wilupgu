@@ -21,7 +21,14 @@ fn main() {
     if (t < cfg.warmup_steps) {
         state.lr = cfg.lr_max * f32(t) / f32(cfg.warmup_steps);
     } else {
-        let progress = f32(t - cfg.warmup_steps) / f32(cfg.max_steps - cfg.warmup_steps);
+
+        // Clamp: past max_steps the cosine must not wrap back up; also guards
+        // max_steps == warmup_steps
+        var progress: f32 = 1.0;
+        if (cfg.max_steps > cfg.warmup_steps) {
+            progress = min(f32(t - cfg.warmup_steps) / f32(cfg.max_steps - cfg.warmup_steps), 1.0);
+        }
+        
         state.lr = cfg.lr_min + 0.5 * (cfg.lr_max - cfg.lr_min) * (1.0 + cos(3.14159265 * progress));
     }
 }
