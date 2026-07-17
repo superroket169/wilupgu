@@ -3,15 +3,6 @@
 Kapsam: akasha-core + wilupgu + ember. Yalnız YAPILMAMIŞ maddeler; biten iş
 buradan silinir (tarihçe git log'da). Sıra: doğruluk → hız → tasarım → feat.
 
-## 🔴 Doğruluk
-
-**B1** — ember AdamW kırık. ember/src/optim/adamw.rs:83-89 ADAMW'ye 6 slot
-bağlıyor; layout 7 slot ([InOut, Input, InOut, InOut, Meta, Input, Meta],
-wilupgu builtin/mod.rs:157). Slot 5'e StepConfig'i Meta olarak veriyor ama
-layout Input (ScheduleState{step,lr}) bekliyor → add_node mode assert'inde
-panik; slot 6 (ConstCfg) hiç yok. Trainer::new kurulurken çöker, smoke test
-geçemez.
-
 ## 🟠 Hız
 
 **B9** — CUDA decode: her matmul dispatch'inde bloklayan dtoh (cuda.rs
@@ -37,9 +28,6 @@ bucket'layıp graph cache'lemek mümkün.
 
 **B15** — %4 alloc assert'i sadece CUDA'da; wgpu/cpu alloc'ta yok. wgpu'da
 tek yakalanma yeri wgpu'nun kendi validation hatası olur.
-
-**B18** — ember bias_add.wgsl'de bounds guard yok. Pow2 pool sayesinde bugün
-zararsız ama projenin kendi konvansiyonuna aykırı.
 
 **B19** — CpuBuffer = Arc<Mutex<Vec<u8>>> + cast_slice (cpu.rs,
 cpu_kernels.rs): Vec<u8>'in f32 hizası garanti değil; cast_slice hizasızlıkta
