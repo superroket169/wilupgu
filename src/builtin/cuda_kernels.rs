@@ -2,7 +2,7 @@
 
 pub const ADD: &str = r#"
 extern "C" __global__ void add_kernel(float* x, const float* residual, unsigned int n) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int idx = (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x + threadIdx.x;
     if (idx < n) { x[idx] = x[idx] + residual[idx]; }
 }
 "#;
@@ -25,7 +25,7 @@ extern "C" __global__ void causal_mask_kernel(float* scores, const unsigned int*
 
 pub const BWD_ADD_INPLACE: &str = r#"
 extern "C" __global__ void bwd_add_inplace_kernel(float* t, const float* source, unsigned int n) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int idx = (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x + threadIdx.x;
     if (idx < n) { t[idx] = t[idx] + source[idx]; }
 }
 "#;
