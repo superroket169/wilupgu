@@ -18,7 +18,14 @@ mevcut checkpoint'ten devam eden koşulara etkisi yok.
 
 ## 🔵 Yeni feat'ler (en sona)
 
-**F1** — Gerçek batch size'ı decode/prefill/causal_attention'a tamamla.
+**F1** 🟡 train tarafı ✅ (2026-07-17) — main.rs gerçek batch'e geçti:
+`akasha_hall_1().with_batch_size(BATCH_SIZE)`, input_tokens `B*seq_len`,
+`train_step(..., /*host-loop*/ 1, ...)`. config.rs: BATCH_SIZE=4 (4050'de
+VRAM'e göre kalibre edilecek), ACCUMULATION_STEPS=16 → effective batch 64
+korundu. batching_validation gövdesi backend-jenerik `batching_parity<B>`
+oldu; yeni cfg(cuda) ikizi gerçek CudaBackend'de koşuyor ve akasha
+tester_script.bat adım 2'ye otomatik dahil. KALAN: prefill/decode batch —
+bilinçli erteleme, Big Refactor'un Block yüzeyine bırakıldı.
 **F2** ✅ (2026-07-16) — Streaming dataset: data.rs yeniden yazıldı. Raw
 corpus bir kez chunk-chunk (8MB, UTF-8 + satır/kelime sınırında kesim)
 tokenize edilip 16M-token'lık raw u32 LE shard dosyalarına yazılıyor
@@ -47,13 +54,16 @@ yarışı): `reduce()` sonundaki barrier yazımları bitiriyordu ama partial[0]
 okumalarını değil; hızlı thread bir sonraki `partial[tid] = ...` ile diziyi
 erken ezebiliyordu → nadiren yanlış dX. Fix: sonuç yerel değişkene alınıp
 okuma sonrası workgroupBarrier() (CUDA ikizi zaten doğruydu).
-**B3** — T1 taramasının sonucu, üç kernel Output etiketli ama accumulate:
-EMBEDDING_BWD (akasha shaders/mod.rs:26, atomik += — WGSL CAS loop / CUDA
-atomicAdd), RMSNORM_WEIGHT_BWD (mod.rs:287, dWeight[i] += acc), ember
-BIAS_ADD_BWD (dBias[j] += acc). Bugün davranış doğru (trainer zero'luyor)
-ama Output kontratı "pool çöpü asla sızmaz" der — taze pool buffer'ı
-bağlanırsa çöp grad üretir, T1'in dokümantasyon değeri kaybolur. (Kontrol
-edildi: flash bwd dq/dkdv gerçekten tam overwrite, Output etiketi doğru.)
+**B3** ✅ (2026-07-16) — Üç kernel Output → Accumulate relabel edildi
+(layout + emitter binding çifti birlikte): EMBEDDING_BWD ve
+RMSNORM_WEIGHT_BWD (akasha shaders/mod.rs + nn/ops/emit.rs), ember
+BIAS_ADD_BWD (ember shaders/mod.rs + nn/ops/emit.rs). Davranış değişikliği
+yok (backend'ler Accumulate'ı InOut gibi işler); kazanç kontrat
+dürüstlüğü. Doğrulama: v3_save_load_roundtrip (train graph iki yeni
+etiketle add_node assert'inden geçip 3 gerçek adım koşuyor). Ember'in
+smoke testi B1 (AdamW slot uyumsuzluğu, önceden var) yüzünden Trainer::new
+aşamasında düşüyor — relabel'a ulaşamıyor, B1 ile birlikte doğrulanacak.
+(Flash bwd dq/dkdv tam overwrite, Output etiketi doğru — dokunulmadı.)
 **B4** ✅ (2026-07-15) — Cosine schedule progress dört kopyada da
 (adamw_schedule.wgsl, cuda_kernels.rs, cpu_kernels.rs, config.rs host
 formülü) aynı desenle clamp'lendi: max_steps > warmup_steps ise
@@ -80,9 +90,10 @@ boşluklar: (1) arg batch_size ile cfg.batch_size birlikte >1 (dokümante
 tanımsız kombinasyon) artık train_step'te assert'le reddediliyor;
 (2) Trainer::new, caller'ın verdiği input_tokens tensörünün rows token
 tuttuğunu assert ediyor — bayat-satır riskinin asıl kaynağı buydu.
-**B7** — generate() boş prompt + dolu cache → panik (inference.rs:267-275):
-prefill yolu EmptyPrompt dönerken, resumed-cache yolunda prompt_tokens boşsa
-`last = Vec::new()` kalır ve sample_token(&[], ...) idx[0]'da paniker.
+**B7** ✅ (2026-07-16) — generate() başına tek guard: prompt_tokens boşsa
+EmptyPrompt döner; hem prefill hem resumed-cache yolunu kapsar
+(sample_token(&[], ...) paniki artık erişilmez). prefill()'in kendi
+kontrolü duruyor (public API kendi başına da çağrılabilir).
 **B8** ✅ (2026-07-16) — F2 ile birlikte kapandı: seq_len+1'den küçük
 shard'lar uyarıyla elenir, hiç kullanılabilir shard kalmazsa anlamlı
 assert mesajı (test: tiny_corpus_panics_instead_of_underflowing).
@@ -113,27 +124,38 @@ döngüsü çıkar.
 **B12** — Prefill her çağrıda graph'ı ve tüm ara buffer'ları yeniden kuruyor
 (inference.rs:83-152). Pool yumuşatıyor ama prompt başına build + upload
 maliyeti var; uzunlukları bucket'layıp graph cache'lemek mümkün.
-**B13** — checkpoint::save tüm parametreleri tek seferde host'a topluyor;
-V3 momentleri de eklediği için tepe ~3× büyüdü (162M model için ~2GB
-Vec<Vec<f32>> + bincode). Tensor-tensor streaming yazım RAM spike'ını da
-duraklamayı da azaltır — V3 sonrası önceliği arttı.
+**B13** ✅ (2026-07-17) — checkpoint::save artık tensör-tensör streaming
+yazıyor: V3Body'yi toplamak yerine alanlar bincode fixint-LE düzeniyle
+(struct = alanlar art arda, Vec = u64 len + elemanlar) elle sıralanıyor,
+her tensör to_cpu edilip hemen dosyaya akıyor — host tepesi ~2GB'dan tek
+tensöre (~150MB, embedding/lm_head) indi. Byte düzeni bincode'la birebir
+aynı; load hâlâ bincode V3Body parse'ı → v3_save_load_roundtrip yeni
+yazımın format sözleşmesini otomatik bekçiliyor. V3Body struct'ı load +
+migrate_checkpoint_v3 için yaşamaya devam ediyor.
 
 ### 🟡 Tasarım / tutarlılık
 
-**B14** — RMSNorm eps ikiliği: layers.rs:144 eps=1e-5 hardcode; inference
-yolu cfg.norm_eps kullanıyor (inference_graphs.rs:58). Bugün ikisi de 1e-5
-ama biri değişirse train/inference sessizce ayrışır.
+**B14** ✅ (2026-07-17) — RMSNorm eps ikiliği kapandı: RMSNorm::new artık
+eps parametresi alıyor, üç çağıran da (TransformerBlock norm_1/norm_2,
+Trainer final_norm) cfg.norm_eps geçiyor. Tek kaynak config.rs; train ve
+inference artık ayrışamaz.
 **B15** — T3 asimetrisi: %4 assert sadece CUDA alloc'ta (cuda.rs:598);
 wgpu/cpu alloc'ta yok. wgpu'da tek yakalanma yeri wgpu'nun kendi validation
 hatası olur.
-**B16** — grid256 1D limiti (emit.rs:679): silu/add/residual_add eleman
-sayısı 16.7M'i (65535×256) aşarsa sessizce dispatch dışı kalır. Bugün
-güvenli (max ~3.1M) ama model büyüyünce görünmez mayın; grid256_2d zaten
-var, tutarlı kullanmak ucuz.
-**B17** — embedding.wgsl geçersiz token id'de satırı hiç yazmıyor ama Output
-("tamamen üzerine yazılır") etiketli — pool'lu out buffer'da çöp hidden
-state sızabilir. Bugün teorik (tokenlar hep vocab içi); ya satırı sıfırla
-ya yorumla belgele.
+**B16** ✅ (2026-07-17) — grid256 1D limiti kaldırıldı: emit.rs'te grid256
+silindi, altı elementwise emitter (silu, silu_out, silu_bwd, add_out,
+residual_add, add_inplace_bwd) grid256_2d'ye geçti; 6 WGSL + 6 CUDA kernel
+ZERO_TENSOR'un 2D-linearize desenini aldı (idx = (wg.y*num_wg.x+wg.x)*256
++ local). 1D grid'le çağrılırsa (y=1) index hesabı eskisiyle birebir aynı
+— ember gibi diğer wilupgu kullanıcıları etkilenmez. Gerçek batch'te
+tetiklenirdi: SiLU hidden buffer'ı B*512*3072, B≥11'de 16.7M'i aşıyor.
+Bekçi test: emit.rs elementwise_ops_past_1d_grid_limit (17M elemanlı
+tensörde sınırın iki yakası + kuyruk doğrulanıyor). CUDA kopyaları bu
+makinede derlenemiyor — nvidia turunda doğrulanacak.
+**B17** ✅ (2026-07-16) — embedding.wgsl ve CUDA ikizi geçersiz token id'de
+artık 0.0 yazıyor (else dalı) — Output kontratı gerçek oldu. CPU ikizi
+zaten sıfır yazıyordu (taze vec![0.0]); üç backend artık aynı. CUDA kopyası
+bu makinede derlenemiyor — nvidia turunda derlenecek.
 **B18** — ember bias_add.wgsl'de bounds guard yok — T4 eklerken atlanmış.
 Pow2 pool sayesinde bugün zararsız ama projenin kendi konvansiyonuna aykırı.
 **B19** — CpuBuffer = Arc<Mutex<Vec<u8>>> + cast_slice (cpu.rs:62,
