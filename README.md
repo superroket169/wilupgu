@@ -7,7 +7,8 @@ building compute graphs that run independently of the CPU. A kernel is a
 `Shader` static carrying its per-backend sources; you decide which backends
 each kernel implements, and adding a whole new backend only requires
 implementing the `Backend` trait. Buffers are recycled through an automatic
-pool. Quantization (f16/bf16 groundwork on CUDA) is not fully integrated yet.
+pool. On CUDA, f32-storage matmuls can run their compute in bf16 tensor cores
+(`set_bf16_matmul`); full quantized storage (f16/int8/int4) is future work.
 
 Currently used by **akasha-core** (LLM engine) and **ember** (NNUE engine).
 

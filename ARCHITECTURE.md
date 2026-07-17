@@ -81,7 +81,10 @@ keşfedildikçe buraya satır eklenir.
   içerik isteyen `init_from_cpu` ya da ZERO_TENSOR kullanır.
 - **wgpu dispatch ekseni ≤ 65535 workgroup.** 16.7M+ elemanlı tensöre düz 1D
   grid atan kernel sessizce eksik çalışır ya da device kaybettirir —
-  2D-linearize desen şart (zero_tensor / adamw / grad_scale örnekleri).
+  2D-linearize desen şart (zero_tensor referans deseni; B16'dan beri tüm
+  elementwise builtin'ler — residual_add, bwd_add_inplace — ve akasha'nın
+  silu/add ailesi de böyle; 1D grid'le çağrılırsa y=1 olduğundan davranış
+  eski düz desenle birebir aynıdır).
 - **dispatch_generic kısıtları** (CUDA): en fazla BİR Meta slot ve Meta SON
   slot olmalı; generic yol yalnız F32 buffer kilitler. Aşan kernel
   `CudaShape::Custom` yazar.
@@ -161,7 +164,7 @@ için fark yok). CUDA'da üç aşamalı yaşam döngüsü:
 |  | wgpu | cuda | cpu |
 |---|---|---|---|
 | Kernel kaynağı | WGSL (`Shader.wgpu`), pipeline cache (anahtar = Shader adresi) | CUDA C string → NVRTC → PTX, kernel cache | `fn(&[CpuBinding])`, doğrudan çağrı |
-| Matmul yolu | kendi tiled WGSL'i / m=1'de GEMV | **cuBLAS** (TF32 açık) | naif üçlü döngü |
+| Matmul yolu | kendi tiled WGSL'i / m=1'de GEMV | **cuBLAS** (TF32 açık; `set_bf16_matmul(true)` ile f32-storage matmul compute'u bf16 tensor-core'a geçer — matmul ailesi, GEMV hariç) | naif üçlü döngü |
 | Pool | **pow2 size class**, bucket başı 8, fazlası destroy | exact-size, anahtar (boyut, dtype) | exact-size |
 | Fiziksel boyut | mantıksaldan BÜYÜK olabilir | == mantıksal | == mantıksal |
 | Meta okuma | device'ta, execute anında (hep canlı) | generic: device pointer (canlı); cuBLAS: dispatch'te dtoh, capture'da donuk | host'ta, dispatch anında (canlı) |
@@ -214,8 +217,12 @@ Kurallar:
 
 - Her zaman `cargo test -- --test-threads=1` — paralel testler eşzamanlı
   GPU device'ları yüzünden segfault eder.
-- Bu makinede nvcc yok: cuda feature hiç derlenmemiş kod içerebilir; CUDA'ya
-  dokunan her değişiklik nvidia makinede bir tur ister.
+- Bu makinede nvcc yok, ama Rust tarafı yine de TİP-CHECK edilebilir: cudarc
+  build.rs yalnız `nvcc --version` çıktısını okur — PATH'e "release 13.3"
+  basan sahte bir nvcc koyup `cargo check --features cuda` çalıştırmak tüm
+  cfg(cuda) Rust kodunu derletir (link yok, koşturamazsın). NVRTC'nin
+  derleyeceği CUDA C string'lerini ve gerçek sayıları hâlâ nvidia makinesi
+  doğrular.
 - Yeni builtin = backend_parity'ye satır (checklist madde 7); GEMV/GEMV_ADD
   ve akasha'ya özgü kerneller akasha tarafındaki emit.rs testlerinde yaşar
   (bkz. akasha-core/ARCHITECTURE.md → Test haritası).
