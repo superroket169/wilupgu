@@ -90,6 +90,7 @@ pub struct CudaBackend {
     pool: BufferPool<CudaBuffer, (u64, Dtype)>,
     graph_cache: Mutex<HashMap<usize, GraphState>>,
     capturing: std::sync::atomic::AtomicBool,
+    bf16_matmul: std::sync::atomic::AtomicBool,
 }
 
 impl CudaBackend {
@@ -120,7 +121,13 @@ impl CudaBackend {
             pool: BufferPool::new(),
             graph_cache: Mutex::new(HashMap::new()),
             capturing: std::sync::atomic::AtomicBool::new(false),
+            bf16_matmul: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    pub fn set_bf16_matmul(&self, on: bool) {
+        self.bf16_matmul
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(crate) fn compile(&self, key: usize, src: &str, func: &str) -> CudaFunction {
@@ -223,6 +230,58 @@ impl CudaBackend {
         unsafe { self.blas.gemm(cfg, bg, ag, cg).expect("[cuda] gemm failed") }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn gemm_ex_f32_bf16c(
+        &self,
+        transa: cublasOperation_t,
+        transb: cublasOperation_t,
+        m: i32,
+        n: i32,
+        k: i32,
+        alpha: f32,
+        a: &CudaSlice<f32>,
+        lda: i32,
+        b: &CudaSlice<f32>,
+        ldb: i32,
+        beta: f32,
+        c: &mut CudaSlice<f32>,
+        ldc: i32,
+    ) {
+        use cudarc::cublas::sys::{cublasComputeType_t, cublasGemmAlgo_t, cudaDataType_t};
+        use cudarc::driver::{DevicePtr, DevicePtrMut};
+        let (a, _record_a) = a.device_ptr(&self.stream);
+        let (b, _record_b) = b.device_ptr(&self.stream);
+        let (c, _record_c) = c.device_ptr_mut(&self.stream);
+        unsafe {
+            cudarc::cublas::result::gemm_ex(
+                *self.blas.handle(),
+                transa,
+                transb,
+                m,
+                n,
+                k,
+                (&alpha) as *const f32 as *const _,
+                a as *const _,
+                cudaDataType_t::CUDA_R_32F,
+                lda,
+                b as *const _,
+                cudaDataType_t::CUDA_R_32F,
+                ldb,
+                (&beta) as *const f32 as *const _,
+                c as *mut _,
+                cudaDataType_t::CUDA_R_32F,
+                ldc,
+                cublasComputeType_t::CUBLAS_COMPUTE_32F_FAST_16BF,
+                cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            )
+            .expect("[cuda] gemm_ex (bf16 compute) failed")
+        }
+    }
+
+    fn bf16_matmul_on(&self) -> bool {
+        self.bf16_matmul.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn gemm_meta_u32(&self, b: &CudaBinding) -> Vec<u32> {
         if self.capturing.load(std::sync::atomic::Ordering::Relaxed) {
             return meta_u32(b);
@@ -247,7 +306,30 @@ impl CudaBackend {
                 let ag = a.slice.as_f32().lock().unwrap();
                 let bg = b.slice.as_f32().lock().unwrap();
                 let mut cg = c.slice.as_f32().lock().unwrap();
-                self.gemm_dispatch(&*bg, &*ag, &mut *cg, transpose_b, 1.0f32, beta, m, n, ki);
+                if self.bf16_matmul_on() {
+                    let (op_b, ldb) = if transpose_b {
+                        (cublasOperation_t::CUBLAS_OP_T, ki)
+                    } else {
+                        (cublasOperation_t::CUBLAS_OP_N, n)
+                    };
+                    self.gemm_ex_f32_bf16c(
+                        op_b,
+                        cublasOperation_t::CUBLAS_OP_N,
+                        n as i32,
+                        m as i32,
+                        ki as i32,
+                        1.0,
+                        &bg,
+                        ldb as i32,
+                        &ag,
+                        ki as i32,
+                        beta,
+                        &mut cg,
+                        n as i32,
+                    );
+                } else {
+                    self.gemm_dispatch(&*bg, &*ag, &mut *cg, transpose_b, 1.0f32, beta, m, n, ki);
+                }
             }
             Dtype::F16 => {
                 let ag = a.slice.as_f16().lock().unwrap();
@@ -294,6 +376,25 @@ impl CudaBackend {
         let ag = a.slice.as_f32().lock().unwrap();
         let dcg = dc.slice.as_f32().lock().unwrap();
         let mut dbg = db.slice.as_f32().lock().unwrap();
+
+        if self.bf16_matmul_on() {
+            self.gemm_ex_f32_bf16c(
+                cublasOperation_t::CUBLAS_OP_N,
+                cublasOperation_t::CUBLAS_OP_T,
+                n as i32,
+                ki as i32,
+                m as i32,
+                1.0,
+                &dcg,
+                n as i32,
+                &ag,
+                ki as i32,
+                1.0,
+                &mut dbg,
+                n as i32,
+            );
+            return;
+        }
 
         let cfg = GemmConfig {
             transa: cublasOperation_t::CUBLAS_OP_N,
@@ -929,6 +1030,23 @@ mod gemm_dtype_validation {
             assert!(
                 (got - want).abs() < 3e-1,
                 "bf16 path diverged from expected: got {got}, want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn bf16_compute_on_f32_storage_matches_reference() {
+        let ctx = cuda();
+        let expected = [19.0f32, 22.0, 43.0, 50.0];
+
+        ctx.set_bf16_matmul(true);
+        let result = run_matmul(ctx.clone(), Dtype::F32);
+        ctx.set_bf16_matmul(false);
+
+        for (got, want) in result.iter().zip(expected.iter()) {
+            assert!(
+                (got - want).abs() < 3e-1,
+                "bf16-compute f32-storage path diverged: got {got}, want {want}"
             );
         }
     }
