@@ -71,6 +71,12 @@ impl Backend for WgpuBackend {
     // different lengths share pool buckets. Tensor tracks the logical size;
     // to_cpu truncates back down to it.
     fn alloc(&self, size_bytes: u64) -> WgpuBuffer {
+        assert_eq!(
+            size_bytes % 4,
+            0,
+            "[wgpu] alloc: size must be a multiple of 4 (f32 elements), got {size_bytes}"
+        );
+
         let class = size_class(size_bytes);
         if let Some(buf) = self.pool.take(class) {
             return buf;
@@ -86,6 +92,13 @@ impl Backend for WgpuBackend {
     }
 
     fn alloc_from_cpu<T: bytemuck::Pod>(&self, data: &[T]) -> WgpuBuffer {
+        assert_eq!(
+            std::mem::size_of::<T>() % 4,
+            0,
+            "[wgpu] alloc_from_cpu stores everything as f32 words; \
+             element type must be 4-byte aligned"
+        );
+
         let bytes: &[u8] = bytemuck::cast_slice(data);
         let buf = self.alloc(bytes.len() as u64);
         self.queue.write_buffer(&buf, 0, bytes);
