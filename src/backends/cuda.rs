@@ -2,7 +2,9 @@ use crate::backend::{Backend, Binding, Dtype, TensorMode};
 use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
 use crate::shader::{CudaShape, MetaField, Shader};
-use cudarc::cublas::sys::{cublasMath_t, cublasOperation_t, cublasSetMathMode, cublasStatus_t};
+use cudarc::cublas::sys::{
+    cublasMath_t, cublasOperation_t, cublasSetMathMode, cublasSetWorkspace_v2, cublasStatus_t,
+};
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::result::DriverError;
 use cudarc::driver::sys::{CUgraphInstantiate_flags, CUstreamCaptureMode};
@@ -82,10 +84,16 @@ enum GraphState {
     Captured(GraphCell),
 }
 
+const CUBLAS_WORKSPACE_BYTES: usize = 32 * 1024 * 1024;
+
 pub struct CudaBackend {
     device: Arc<CuDevice>,
     pub stream: Arc<CudaStream>,
     blas: CudaBlas,
+
+    // pointer stays valid for the backend's lifetime.
+    #[allow(dead_code)]
+    cublas_workspace: CudaSlice<u8>,
     kernel_cache: Mutex<HashMap<usize, CudaFunction>>,
     pool: BufferPool<CudaBuffer, (u64, Dtype)>,
     graph_cache: Mutex<HashMap<usize, GraphState>>,
@@ -113,10 +121,25 @@ impl CudaBackend {
             }
         }
 
+        let cublas_workspace = stream.alloc_zeros::<u8>(CUBLAS_WORKSPACE_BYTES)?;
+        unsafe {
+            use cudarc::driver::DevicePtr;
+            let (ptr, _record) = cublas_workspace.device_ptr(&stream);
+            let status =
+                cublasSetWorkspace_v2(*blas.handle(), ptr as *mut _, CUBLAS_WORKSPACE_BYTES);
+            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
+                eprintln!(
+                    "[cuda] cublasSetWorkspace_v2 failed: {status:?} -- cuBLAS keeps its \
+                     default on-demand workspace, which can break under graph capture"
+                );
+            }
+        }
+
         Ok(Self {
             device,
             stream,
             blas,
+            cublas_workspace,
             kernel_cache: Mutex::new(HashMap::new()),
             pool: BufferPool::new(),
             graph_cache: Mutex::new(HashMap::new()),
