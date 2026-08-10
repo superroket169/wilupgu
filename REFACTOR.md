@@ -31,12 +31,6 @@ cpu_kernels.rs): Vec<u8>'in f32 hizası garanti değil; cast_slice hizasızlıkt
 panikler (pratikte allocator 16 byte veriyor diye çalışıyor).
 bytemuck::pod_collect_to_vec ya da Vec<f32> tutmak latent paniği kapatır.
 
-**B20** — Ufaklıklar: generate'te EOS=50256 hardcode (config'e taşınabilir);
-zero_grads_graph transient'leri ikinci kez zero'luyor (zararsız israf);
-ember shaders/mod.rs başındaki "mistakenly file" yorumu kalmış;
-wilupgu::CAUSAL_MASK üretim yolunda kullanıcısız (sadece parity testi
-kullanıyor).
-
 **B21** — wgpu backend'de embedding/CE gibi büyük tensörlü (>16.7M eleman)
 kernellerin bir kısmı 2D-linearize edilmemiş; iGPU'da (Intel HD 620, Mesa)
 train_step ilk execute()'ta "Parent device is lost" ile patlıyor (65535
