@@ -26,9 +26,6 @@ bucket'layıp graph cache'lemek mümkün.
 
 ## 🟡 Tasarım / tutarlılık
 
-**B15** — %4 alloc assert'i sadece CUDA'da; wgpu/cpu alloc'ta yok. wgpu'da
-tek yakalanma yeri wgpu'nun kendi validation hatası olur.
-
 **B19** — CpuBuffer = Arc<Mutex<Vec<u8>>> + cast_slice (cpu.rs,
 cpu_kernels.rs): Vec<u8>'in f32 hizası garanti değil; cast_slice hizasızlıkta
 panikler (pratikte allocator 16 byte veriyor diye çalışıyor).
@@ -39,6 +36,15 @@ zero_grads_graph transient'leri ikinci kez zero'luyor (zararsız israf);
 ember shaders/mod.rs başındaki "mistakenly file" yorumu kalmış;
 wilupgu::CAUSAL_MASK üretim yolunda kullanıcısız (sadece parity testi
 kullanıyor).
+
+**B21** — wgpu backend'de embedding/CE gibi büyük tensörlü (>16.7M eleman)
+kernellerin bir kısmı 2D-linearize edilmemiş; iGPU'da (Intel HD 620, Mesa)
+train_step ilk execute()'ta "Parent device is lost" ile patlıyor (65535
+workgroup sınırı — bkz. wilupgu ARCHITECTURE.md dispatch ekseni kontratı).
+B16'da residual_add/bwd_add_inplace/silu/add ailesi düzeltilmişti;
+embedding(_bwd) ve cross_entropy(_bwd) düzeltme kapsamına girmemiş
+görünüyor — vocab=50257 boyutu bunları >16.7M eşiğine sokuyor.
+Şüpheli: emit.rs'teki embedding/CE emitter'ları, ilgili wgsl kernelleri.
 
 ## 🔵 Feat'ler
 
