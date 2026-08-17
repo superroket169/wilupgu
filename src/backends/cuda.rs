@@ -946,12 +946,16 @@ impl Backend for CudaBackend {
 
         self.capturing
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        // RELAXED, not THREAD_LOCAL:
-        // Burası sonradan adam gibi çözülecek. capture hatası veriyor diye düzeltiverdik işte.
         self.stream
-            .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_RELAXED)
+            .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
             .expect("[cuda] begin_capture failed");
-        for node in nodes {
+
+        // DEBUG (temporary, remove once B13 is identified)
+        for (i, node) in nodes.iter().enumerate() {
+            eprintln!(
+                "[cuda-capture-debug] dispatching #{i}: {}",
+                node.shader.name
+            );
             self.dispatch_node(node);
         }
 
