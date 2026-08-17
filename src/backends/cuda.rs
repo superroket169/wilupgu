@@ -106,6 +106,12 @@ impl CudaBackend {
         let device = CuDevice::new(ordinal)?;
         let stream = device.new_stream()?;
 
+        // DEBUG (temporary, remove once B13 is identified):
+        eprintln!(
+            "[cuda-capture-debug] has_async_alloc = {}",
+            device.has_async_alloc()
+        );
+
         let blas = CudaBlas::new(stream.clone()).map_err(|e| {
             eprintln!("[cuda] cuBLAS init failed: {e:?}");
             DriverError(cudarc::driver::sys::CUresult::CUDA_ERROR_UNKNOWN)
