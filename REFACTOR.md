@@ -24,27 +24,9 @@ D[i] = Σ dO·O precompute edilirse bwd'den koca bir head_dim döngüsü çıkar
 Pool yumuşatıyor ama prompt başına build + upload maliyeti var; uzunlukları
 bucket'layıp graph cache'lemek mümkün.
 
-## 🟡 Tasarım / tutarlılık
-
-**B19** — CpuBuffer = Arc<Mutex<Vec<u8>>> + cast_slice (cpu.rs,
-cpu_kernels.rs): Vec<u8>'in f32 hizası garanti değil; cast_slice hizasızlıkta
-panikler (pratikte allocator 16 byte veriyor diye çalışıyor).
-bytemuck::pod_collect_to_vec ya da Vec<f32> tutmak latent paniği kapatır.
-
-**B21** — wgpu backend'de embedding/CE gibi büyük tensörlü (>16.7M eleman)
-kernellerin bir kısmı 2D-linearize edilmemiş; iGPU'da (Intel HD 620, Mesa)
-train_step ilk execute()'ta "Parent device is lost" ile patlıyor (65535
-workgroup sınırı — bkz. wilupgu ARCHITECTURE.md dispatch ekseni kontratı).
-B16'da residual_add/bwd_add_inplace/silu/add ailesi düzeltilmişti;
-embedding(_bwd) ve cross_entropy(_bwd) düzeltme kapsamına girmemiş
-görünüyor — vocab=50257 boyutu bunları >16.7M eşiğine sokuyor.
-Şüpheli: emit.rs'teki embedding/CE emitter'ları, ilgili wgsl kernelleri.
-
 ## 🔵 Feat'ler
 
 **F4** — ember CUDA shader'ları.
-**F5** — ember: ClippedReLU tek copy-clamp kernel'i; mse_loss graph'ını her
-train_step'te kurmak yerine yeniden kullan.
 **F6** — Quantization (NNUE int8 ölçekleme) — ember entegrasyonuyla birlikte
 yapılacak: NNUE zaten quantization-aware eğitim istiyor, zemin oraya kurulur.
 
