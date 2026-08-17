@@ -202,7 +202,12 @@ impl CudaBackend {
                         Ok(Some(graph)) => graph.launch().is_ok(),
                         _ => false,
                     },
-                    Err(_) => false,
+                    Err(_) => {
+                        let _ = self.stream.end_capture(
+                            CUgraphInstantiate_flags::CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH,
+                        );
+                        false
+                    }
                 }
             }
             Err(_) => false,
