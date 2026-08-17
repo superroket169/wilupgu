@@ -39,10 +39,22 @@ impl WgpuBackend {
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
             .expect("[wgpu] no adapter");
+        let info = adapter.get_info();
+        let limits = adapter.limits();
+        eprintln!(
+            "[wgpu] adapter: {} ({:?}, {:?}) | max_storage_buffer_binding_size={} max_buffer_size={} max_compute_workgroups_per_dimension={} max_compute_invocations_per_workgroup={}",
+            info.name,
+            info.backend,
+            info.device_type,
+            limits.max_storage_buffer_binding_size,
+            limits.max_buffer_size,
+            limits.max_compute_workgroups_per_dimension,
+            limits.max_compute_invocations_per_workgroup,
+        );
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    required_limits: adapter.limits(),
+                    required_limits: limits.clone(),
                     ..Default::default()
                 },
                 None,
