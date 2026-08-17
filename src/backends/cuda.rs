@@ -99,6 +99,9 @@ pub struct CudaBackend {
     graph_cache: Mutex<HashMap<usize, GraphState>>,
     capturing: std::sync::atomic::AtomicBool,
     bf16_matmul: std::sync::atomic::AtomicBool,
+    // küfür ettiğim nvidia sürücülerinin keyfi yüzünden ilk başta deniyoruz capture oluyor mu yoksa
+    // sürücünün keyfine göre normal execute e dönyüruz.
+    capture_supported: bool,
 }
 
 impl CudaBackend {
@@ -106,24 +109,36 @@ impl CudaBackend {
         let device = CuDevice::new(ordinal)?;
         let stream = device.new_stream()?;
 
-        // DEBUG (temporary, remove once B13 is identified):
-        eprintln!(
-            "[cuda-capture-debug] has_async_alloc = {}",
-            device.has_async_alloc()
-        );
-
         let blas = CudaBlas::new(stream.clone()).map_err(|e| {
             eprintln!("[cuda] cuBLAS init failed: {e:?}");
             DriverError(cudarc::driver::sys::CUresult::CUDA_ERROR_UNKNOWN)
         })?;
 
-        // DEBUG (temporary, isolation): cublasSetMathMode
-        eprintln!(
-            "[cuda-capture-debug] cublasSetMathMode/SetWorkspace_v2 SKIPPED for B13 isolation"
-        );
-        let cublas_workspace = stream.alloc_zeros::<u8>(CUBLAS_WORKSPACE_BYTES)?;
+        unsafe {
+            let status =
+                cublasSetMathMode(*blas.handle(), cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH);
+            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
+                eprintln!(
+                    "[cuda] cublasSetMathMode(TF32) failed: {status:?} -- matmuls stay full FP32"
+                );
+            }
+        }
 
-        Ok(Self {
+        let cublas_workspace = stream.alloc_zeros::<u8>(CUBLAS_WORKSPACE_BYTES)?;
+        unsafe {
+            use cudarc::driver::DevicePtr;
+            let (ptr, _record) = cublas_workspace.device_ptr(&stream);
+            let status =
+                cublasSetWorkspace_v2(*blas.handle(), ptr as *mut _, CUBLAS_WORKSPACE_BYTES);
+            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
+                eprintln!(
+                    "[cuda] cublasSetWorkspace_v2 failed: {status:?} -- cuBLAS keeps its \
+                     default on-demand workspace, which can break under graph capture"
+                );
+            }
+        }
+
+        let mut backend = Self {
             device,
             stream,
             blas,
@@ -133,7 +148,68 @@ impl CudaBackend {
             graph_cache: Mutex::new(HashMap::new()),
             capturing: std::sync::atomic::AtomicBool::new(false),
             bf16_matmul: std::sync::atomic::AtomicBool::new(false),
-        })
+            capture_supported: true,
+        };
+        backend.capture_supported = backend.probe_capture_support();
+        if !backend.capture_supported {
+            eprintln!("[cuda] CUDA graph capture is not usable on this GPU/driver");
+        }
+        Ok(backend)
+    }
+
+    // f u nvidia
+    fn probe_capture_support(&self) -> bool {
+        let out = self.alloc(4); // 1 f32 element
+        let meta = self.alloc_from_cpu(&[1u32]);
+        let node = CudaNode {
+            shader: &crate::builtin::ZERO_TENSOR,
+            bindings: vec![
+                CudaBinding {
+                    slot: 0,
+                    slice: out,
+                    mode: TensorMode::Output,
+                    cached_meta: None,
+                },
+                CudaBinding {
+                    slot: 1,
+                    slice: meta,
+                    mode: TensorMode::Meta,
+                    cached_meta: None,
+                },
+            ],
+            workgroups: [1, 1, 1],
+        };
+
+        self.dispatch_node(&node);
+
+        self.capturing
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let supported = match self
+            .stream
+            .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
+        {
+            Ok(()) => {
+                let previous_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(|_| {}));
+                let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.dispatch_node(&node);
+                }));
+                std::panic::set_hook(previous_hook);
+                match dispatched {
+                    Ok(()) => match self.stream.end_capture(
+                        CUgraphInstantiate_flags::CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH,
+                    ) {
+                        Ok(Some(graph)) => graph.launch().is_ok(),
+                        _ => false,
+                    },
+                    Err(_) => false,
+                }
+            }
+            Err(_) => false,
+        };
+        self.capturing
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        supported
     }
 
     pub fn set_bf16_matmul(&self, on: bool) {
@@ -906,6 +982,11 @@ impl Backend for CudaBackend {
     }
 
     fn execute_captured(&self, key: usize, nodes: &[CudaNode]) {
+        if !self.capture_supported {
+            self.execute(nodes);
+            return;
+        }
+
         let warmed = {
             let cache = self.graph_cache.lock().unwrap();
             match cache.get(&key) {
@@ -938,12 +1019,7 @@ impl Backend for CudaBackend {
             .begin_capture(CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
             .expect("[cuda] begin_capture failed");
 
-        // DEBUG (temporary, remove once B13 is identified)
-        for (i, node) in nodes.iter().enumerate() {
-            eprintln!(
-                "[cuda-capture-debug] dispatching #{i}: {}",
-                node.shader.name
-            );
+        for node in nodes {
             self.dispatch_node(node);
         }
 
@@ -1069,6 +1145,13 @@ mod gemm_dtype_validation {
     }
 }
 
+/// Regression test for B13: on GPUs/drivers where real stream capture isn't
+/// usable, CudaBackend::new's probe_capture_support already caught that at
+/// construction time and set capture_supported = false, so this never
+/// panics -- execute_captured transparently falls back to plain execute.
+/// This just proves that fallback holds end-to-end through the public
+/// ComputeGraph API, not only inside the probe itself.
+///
 /// cargo test --features cuda -- --test-threads=1
 #[cfg(test)]
 mod capture_isolation_repro {
@@ -1094,8 +1177,8 @@ mod capture_isolation_repro {
             [1, 1, 1],
         );
 
-        graph.execute_captured(); // warmup: plain execute, marks Warmed
-        graph.execute_captured(); // real capture -- panics here in Trainer's case
+        graph.execute_captured(); // warmup
+        graph.execute_captured(); // real capture attempt, or a transparent fallback
         ctx.synchronize();
     }
 }
