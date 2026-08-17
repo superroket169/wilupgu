@@ -1086,3 +1086,34 @@ mod gemm_dtype_validation {
         }
     }
 }
+
+/// cargo test --features cuda -- --test-threads=1
+#[cfg(test)]
+mod capture_isolation_repro {
+    use super::CudaBackend;
+    use crate::{builtin, Backend, Binding, ComputeGraph, TensorMode};
+    use std::sync::Arc;
+
+    #[test]
+    fn bare_zero_tensor_survives_capture() {
+        let ctx = Arc::new(CudaBackend::new(0).expect("[cuda] no CUDA device on this machine"));
+
+        let buf = crate::Tensor::new(ctx.clone(), 64 * 4);
+        let meta_data: [u32; 1] = [64];
+        let meta = crate::Tensor::init_from_cpu(ctx.clone(), &meta_data);
+
+        let mut graph = ComputeGraph::new(ctx.clone());
+        graph.add_node(
+            &builtin::ZERO_TENSOR,
+            &[
+                Binding::new(0, &buf.buffer, TensorMode::Output),
+                Binding::new(1, &meta.buffer, TensorMode::Meta),
+            ],
+            [1, 1, 1],
+        );
+
+        graph.execute_captured(); // warmup: plain execute, marks Warmed
+        graph.execute_captured(); // real capture -- panics here in Trainer's case
+        ctx.synchronize();
+    }
+}
