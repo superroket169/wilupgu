@@ -117,29 +117,11 @@ impl CudaBackend {
             DriverError(cudarc::driver::sys::CUresult::CUDA_ERROR_UNKNOWN)
         })?;
 
-        unsafe {
-            let status =
-                cublasSetMathMode(*blas.handle(), cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH);
-            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
-                eprintln!(
-                    "[cuda] cublasSetMathMode(TF32) failed: {status:?} -- matmuls stay full FP32"
-                );
-            }
-        }
-
+        // DEBUG (temporary, isolation): cublasSetMathMode
+        eprintln!(
+            "[cuda-capture-debug] cublasSetMathMode/SetWorkspace_v2 SKIPPED for B13 isolation"
+        );
         let cublas_workspace = stream.alloc_zeros::<u8>(CUBLAS_WORKSPACE_BYTES)?;
-        unsafe {
-            use cudarc::driver::DevicePtr;
-            let (ptr, _record) = cublas_workspace.device_ptr(&stream);
-            let status =
-                cublasSetWorkspace_v2(*blas.handle(), ptr as *mut _, CUBLAS_WORKSPACE_BYTES);
-            if status != cublasStatus_t::CUBLAS_STATUS_SUCCESS {
-                eprintln!(
-                    "[cuda] cublasSetWorkspace_v2 failed: {status:?} -- cuBLAS keeps its \
-                     default on-demand workspace, which can break under graph capture"
-                );
-            }
-        }
 
         Ok(Self {
             device,
