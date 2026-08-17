@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 wgpu = "0.19"
-bytemuck = { version = "1.15", features = ["derive"] }
+bytemuck = { version = "1.15", features = ["derive", "extern_crate_alloc"] }
 pollster = "0.3"
 futures-intrusive = "0.5"
 cudarc = { version = "0.19", optional = true, features = ["cublas", "nvrtc", "cuda-version-from-build-system", "f16"] }

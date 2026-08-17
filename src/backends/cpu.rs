@@ -59,7 +59,7 @@ impl Backend for CpuBackend {
 
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &CpuBuffer) -> Vec<T> {
         let g = buf.lock().unwrap();
-        bytemuck::cast_slice::<u8, T>(&g).to_vec()
+        bytemuck::pod_collect_to_vec::<u8, T>(&g)
     }
 
     fn alloc_dtype(&self, elem_count: usize, dtype: Dtype) -> CpuBuffer {
