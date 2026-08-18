@@ -5,6 +5,11 @@ buradan silinir (tarihçe git log'da). Sıra: doğruluk → hız → tasarım �
 
 ## 🟠 Hız
 
+**B13** — Cuda graph capture'u çok dengesiz çalıştığı için artık opsiyonel çalışıyor.
+cuda graph dan resmen pes edilmiştir. kod hala bulunacaktır ancak kullanılması zorlanmayacaktır.
+Performans konusunda karşılaştırmalar yapılacaktır. şimdi tam net olmamak ile birlikte sadece cpu tarafında
+bir fazla kullanım söz konusu olabilir. ileride netleştirilecektir.
+
 **B9** — CUDA decode: her matmul dispatch'inde bloklayan dtoh (cuda.rs
 gemm_meta_u32): capture dışında her cuBLAS çağrısı meta'yı device'tan senkron
 çeker. Decode graph capture edilmiyor → token başına ~61 matmul × bloklayan
@@ -49,6 +54,10 @@ eklemek bu sınıfı neredeyse bitirir. Maliyeti dakikalar.
 4. **Periyodik taramayı ritüelleştir.** Her N commit'te ya da her büyük
 refactor sonrası bağımsız okuma turu — solo geliştiricinin code review'u
 budur.
+5. **Panik satırını doğrulamadan teori kurma (B13'ten ders).** Bir hata
+mesajındaki dosya:satır'ı hangi fonksiyona ait olduğunu okumadan "muhtemelen
+X" demek, yanlış fonksiyonlara yama yapmaya götürür. Önce satırın gerçekten
+hangi çağrıya ait olduğunu doğrula, sonra teori kur.
 
 Sonrası: continued pretraining (yaklaşan ~10 günlük koşu; Big Refactor o
 sırada tasarlanır) → chat fine-tuning.
