@@ -36,11 +36,16 @@ impl WgpuBackend {
     pub async fn new() -> Self {
         let instance = wgpu::Instance::default();
         let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
             .await
             .expect("[wgpu] no adapter");
+
         let info = adapter.get_info();
         let limits = adapter.limits();
+
         eprintln!(
             "[wgpu] adapter: {} ({:?}, {:?}) | max_storage_buffer_binding_size={} max_buffer_size={} max_compute_workgroups_per_dimension={} max_compute_invocations_per_workgroup={}",
             info.name,
@@ -283,6 +288,39 @@ impl Backend for WgpuBackend {
     }
 
     fn execute(&self, nodes: &[WgpuNode]) {
+        // DIAGNOSTIC ONLY (see chat, 2026-08-18 RADV hang investigation):
+        // WILUPGU_FORCE_SYNC=1 submits + waits after every single node instead
+        // of batching them into one compute pass. If this makes an otherwise
+        // corrupting/hanging run correct, it confirms a missing inter-dispatch
+        // barrier (wgpu automatic?) rather than a kernel bug.
+        // Not meant to ship as-is -- extremely slow (one submit+wait per node).
+        //
+        // despite everything its working now :D
+        if std::env::var("WILUPGU_FORCE_SYNC").is_ok() {
+            for node in nodes {
+                let mut encoder = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: None,
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(&node.pipeline);
+                    cpass.set_bind_group(0, &node.bind_group, &[]);
+                    cpass.dispatch_workgroups(
+                        node.workgroups[0],
+                        node.workgroups[1],
+                        node.workgroups[2],
+                    );
+                }
+                self.queue.submit(Some(encoder.finish()));
+                self.device.poll(wgpu::Maintain::Wait);
+            }
+            self.in_flight.lock().unwrap().clear();
+            return;
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
