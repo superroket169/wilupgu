@@ -1141,7 +1141,7 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "wilupgu"
-version = "0.4.1"
+version = "0.4.2-wgpu-patch"
 dependencies = [
  "bytemuck",
  "cudarc",
