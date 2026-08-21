@@ -107,6 +107,7 @@ pub struct CudaBackend {
 impl CudaBackend {
     pub fn new(ordinal: usize) -> Result<Self, DriverError> {
         let device = CuDevice::new(ordinal)?;
+        device.set_blocking_synchronize()?; // cpu stress fix
         let stream = device.new_stream()?;
 
         let blas = CudaBlas::new(stream.clone()).map_err(|e| {
