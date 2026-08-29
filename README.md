@@ -51,7 +51,9 @@ cargo test -- --test-threads=1         # ALWAYS single-threaded: parallel tests
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the layer map, core contracts,
 buffer lifecycle, execute paths, backend differences, and the checklist for
-adding a new kernel.
+adding a new kernel. See [SHADERS.md](SHADERS.md) for the per-shader
+wgsl/cuda/cpu/meta/emitter catalog, covering both wilupgu's builtins and
+akasha-core's own shaders.
 
 ## License
 
