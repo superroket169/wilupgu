@@ -375,7 +375,7 @@ impl CudaBackend {
         self.bf16_matmul.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn gemm_meta_u32(&self, b: &CudaBinding) -> Vec<u32> {
+    fn gemm_meta_u32(&self, shader_name: &str, b: &CudaBinding) -> Vec<u32> {
         if self.capturing.load(std::sync::atomic::Ordering::Relaxed) {
             return meta_u32(b);
         }
@@ -384,14 +384,15 @@ impl CudaBackend {
             .stream
             .clone_dtoh(&*g)
             .expect("[cuda] live meta dtoh failed");
+        crate::io_log::log("dtoh", shader_name, (f32s.len() * 4) as u64);
         bytemuck::cast_slice::<f32, u32>(&f32s).to_vec()
     }
 
-    fn gemm_matmul(&self, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
+    fn gemm_matmul(&self, shader_name: &str, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
         let a = find(bindings, 0);
         let b = find(bindings, 1);
         let c = find(bindings, 2);
-        let dims = self.gemm_meta_u32(find(bindings, 3));
+        let dims = self.gemm_meta_u32(shader_name, find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
         match a.slice.dtype() {
@@ -459,11 +460,11 @@ impl CudaBackend {
         }
     }
 
-    fn gemm_weight_bwd(&self, bindings: &[CudaBinding]) {
+    fn gemm_weight_bwd(&self, shader_name: &str, bindings: &[CudaBinding]) {
         let a = find(bindings, 0);
         let dc = find(bindings, 1);
         let db = find(bindings, 2);
-        let dims = self.gemm_meta_u32(find(bindings, 3));
+        let dims = self.gemm_meta_u32(shader_name, find(bindings, 3));
         let (m, n, ki) = (dims[0], dims[1], dims[2]);
 
         let ag = a.slice.as_f32().lock().unwrap();
@@ -715,39 +716,39 @@ fn shader_key(shader: &'static Shader) -> usize {
 // ==========================================================================
 
 pub(crate) fn custom_matmul(
-    _s: &'static Shader,
+    s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.gemm_matmul(bindings, false, 0.0)
+    b.gemm_matmul(s.name, bindings, false, 0.0)
 }
 
 pub(crate) fn custom_matmul_trp(
-    _s: &'static Shader,
+    s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.gemm_matmul(bindings, true, 0.0)
+    b.gemm_matmul(s.name, bindings, true, 0.0)
 }
 
 pub(crate) fn custom_matmul_add(
-    _s: &'static Shader,
+    s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.gemm_matmul(bindings, false, 1.0)
+    b.gemm_matmul(s.name, bindings, false, 1.0)
 }
 
 pub(crate) fn custom_matmul_weight_bwd(
-    _s: &'static Shader,
+    s: &'static Shader,
     b: &CudaBackend,
     bindings: &[CudaBinding],
     _wg: [u32; 3],
 ) {
-    b.gemm_weight_bwd(bindings)
+    b.gemm_weight_bwd(s.name, bindings)
 }
 
 pub(crate) fn custom_adamw(
@@ -837,11 +838,13 @@ impl Backend for CudaBackend {
         self.stream
             .memcpy_htod(f32s, &mut *g)
             .expect("[cuda] htod copy failed");
+        crate::io_log::log("htod", "-", (f32s.len() * 4) as u64);
     }
 
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &CudaBuffer) -> Vec<T> {
         let g = buf.as_f32().lock().unwrap();
         let f32s = self.stream.clone_dtoh(&*g).expect("[cuda] dtoh failed");
+        crate::io_log::log("dtoh", "-", (f32s.len() * 4) as u64);
         bytemuck::cast_slice::<f32, T>(&f32s).to_vec()
     }
 
@@ -961,6 +964,7 @@ impl Backend for CudaBackend {
                         .stream
                         .clone_dtoh(&*g)
                         .expect("[cuda] meta dtoh at build time failed");
+                    crate::io_log::log("dtoh", shader.name, (data.len() * 4) as u64);
                     Some(bytemuck::cast_slice::<f32, u8>(&data).to_vec())
                 } else {
                     None

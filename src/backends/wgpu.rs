@@ -123,7 +123,9 @@ impl Backend for WgpuBackend {
     }
 
     fn copy_from_cpu<T: bytemuck::Pod>(&self, buf: &WgpuBuffer, data: &[T]) {
-        self.queue.write_buffer(buf, 0, bytemuck::cast_slice(data));
+        let bytes = bytemuck::cast_slice(data);
+        self.queue.write_buffer(buf, 0, bytes);
+        crate::io_log::log("htod", "-", bytes.len() as u64);
     }
 
     fn copy_to_cpu<T: bytemuck::Pod + Default + Clone>(&self, buf: &WgpuBuffer) -> Vec<T> {
@@ -149,6 +151,7 @@ impl Backend for WgpuBackend {
         let result = bytemuck::cast_slice::<_, T>(&mapped).to_vec();
         drop(mapped);
         staging.unmap();
+        crate::io_log::log("dtoh", "-", buf.size());
         result
     }
 

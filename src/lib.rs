@@ -2,6 +2,7 @@ pub mod backend;
 pub mod backends;
 pub mod builtin;
 pub mod graph;
+pub(crate) mod io_log;
 pub(crate) mod pool;
 pub mod shader;
 pub mod tensor;
