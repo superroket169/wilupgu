@@ -5,11 +5,6 @@ buradan silinir (tarihçe git log'da). Sıra: doğruluk → hız → tasarım �
 
 ## 🟠 Hız
 
-**B13** — Cuda graph capture'u çok dengesiz çalıştığı için artık opsiyonel çalışıyor.
-cuda graph dan resmen pes edilmiştir. kod hala bulunacaktır ancak kullanılması zorlanmayacaktır.
-Performans konusunda karşılaştırmalar yapılacaktır. şimdi tam net olmamak ile birlikte sadece cpu tarafında
-bir fazla kullanım söz konusu olabilir. ileride netleştirilecektir.
-
 **B9** — CUDA decode: her matmul dispatch'inde bloklayan dtoh (cuda.rs
 gemm_meta_u32): capture dışında her cuBLAS çağrısı meta'yı device'tan senkron
 çeker. Decode graph capture edilmiyor → token başına ~61 matmul × bloklayan
@@ -38,21 +33,26 @@ Yeni, kalıcı erişimli AMD test makinesi geldi (Ryzen 7 7700 + RX 7600 discret
 denenememişti; eğitim şimdiye kadar hep CUDA'da koştu). İki ayrı, bağımsız
 bulgu çıktı:
 
-**1) Flash attention register spill — DÜZELTİLDİ (lokal, commit'lenmedi).**
+**1) Flash attention register spill — ÇÖZÜLDÜ ve KAPATILDI (2026-08-30).**
 `flash_attention.wgsl` / `flash_attention_bwd_dq.wgsl` /
 `flash_attention_bwd_dkdv.wgsl` üçünde de `array<f32, MAX_HEAD_DIM>` tipinde
 per-thread accumulator, döngü sınırı runtime Meta değeri (`m.head_dim`) olduğu
 için derleyici tarafından unroll edilemiyor, register yerine VRAM-backed
-scratch belleğe spill oluyor (RADV hang dump'ında doğrulandı: VGPRs=16,
-Scratch=64KB/wave). Bu hem ciddi yavaşlık hem de (dkdv'de iki dizi olduğu
-için) gerçek bir `radv/amdgpu: GPU hang` (`ring gfx_0.0.0 timeout`) sebebiydi.
-Fix: üç dosyada da `m.head_dim` yerine bu modelin sabit `HEAD_DIM: u32 = 64u`
-compile-time sabiti kullanılıyor (config.rs'teki `DIM/NUM_HEADS` ile aynı).
-**Eksik:** bu, `emit.rs::flash_attention_validation`'ın farklı head_dim'lerle
-test ettiği boundary-value testlerini kıracak (pipeline cache tek static WGSL
-kaynağına bağlı, per-head_dim varyant yok) — production'a girmeden önce ya
-assert + tek-head_dim kabulü ya da head_dim'e göre shader üretimi gerekiyor.
-B11'in (a) maddesiyle aynı kök alanı (tiling yokluğu) ama farklı somut sorun.
+scratch belleğe spill oluyordu (RADV hang dump'ında doğrulandı: VGPRs=16,
+Scratch=64KB/wave) — hem ciddi yavaşlık hem de gerçek bir
+`radv/amdgpu: GPU hang` sebebiydi. Fix: üç dosyada da sabit
+`HEAD_DIM: u32 = 64u` (akasha-hall'un tek konfigürasyonu). Bu, hardcode'un
+head_dim≠64 için sessizce yanlış sonuç üretmesine açık kapı bırakmıştı —
+kapatılan asıl kısım bu: akasha-core `ops/emit.rs::assert_flash_head_dim`
+artık her iki emitter'da (`flash_attention`, `flash_attention_bwd`)
+`head_dim == 64` assert ediyor (tek-head_dim kabulü, shader üretimi değil —
+akasha tek bir modelin motoru, jenerik head_dim ihtiyacı yok). Bu assert
+olmadan zaten 4 akasha testi (gradcheck, batching, prefill, flash attention'ın
+kendi testi) tiny config'lerde (head_dim=4/8/16) sessizce yanlış sayı
+üretiyordu — testler artık hepsi head_dim=64'e taşındı, ayrıca guard'ın
+gerçekten patladığını kanıtlayan bir `#[should_panic]` testi eklendi. CUDA
+kernel'i hiç etkilenmedi (hâlâ runtime `head_dim` okuyor, `<=128` sınırıyla
+genel). Detaylar: akasha-core git log + wilupgu/SHADERS.md.
 
 **2) wgpu otomatik senkronizasyon bug'ı — AÇIK, gerçek engel bu.**
 Register-spill fix'i hang'i tam çözmedi: normal (async) çalıştırmada step
@@ -81,8 +81,6 @@ sürümlük API kırılması), bu oturumda başlanmadı.
   (bisection ile minimal bariyer noktasını bul, çoğu hızı geri kazan).
 - Uzun vade: `wgpu` 0.19.4 → 30.0.0 upgrade — muhtemel kalıcı çözüm, ayrı
   bir oturumluk iş.
-- Flash attention head_dim sabitlemesinin test-genelliği sorunu (madde 1)
-  ayrıca çözülmeli, production'a girmeden önce.
 
 ## 🔵 Feat'ler
 

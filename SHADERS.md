@@ -16,7 +16,7 @@ okumak daha doğru.
 | Gemv | fwd/gemv.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_with()` (m=1, H6 auto-route) |
 | GemvAdd | fwd/gemv_add.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_add_with()` (m=1) |
 | MatMulTrp | fwd/matmul_trp.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_trp()` |
-| MatMulAdd | fwd/matmul_add.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_add()` (m>1) |
+| MatMulAdd | fwd/matmul_add.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_add_with()` (m>1, block_pre_attn/block_post_attn own the meta); plain `matmul_add()` is now `#[cfg(test)]`-only |
 | MatMulWeightBwd | bwd/matmul_weight_trp.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_weight_bwd()` |
 | ResidualAdd | add.wgsl | Generic (`ADD`) | ✓ | akasha `residual_add()` |
 | BwdAddInplace | bwd/bwd_add_inplace.wgsl | Generic (`BWD_ADD_INPLACE`) | ✓ | akasha `add_inplace_bwd()` |
