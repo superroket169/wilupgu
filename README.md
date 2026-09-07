@@ -10,7 +10,7 @@ implementing the `Backend` trait. Buffers are recycled through an automatic
 pool. On CUDA, f32-storage matmuls can run their compute in bf16 tensor cores
 (`set_bf16_matmul`); full quantized storage (f16/int8/int4) is future work.
 
-Currently used by **akasha-core** (LLM engine) and **ember** (NNUE engine).
+Currently used by **sequexa-core** (LLM engine) and **ember** (NNUE engine).
 
 ## Backends
 
@@ -34,7 +34,7 @@ Twelve kernels ship ready to use on all three backends: `matmul`,
 `matmul_trp`, `matmul_add`, `matmul_weight_bwd`, `gemv`, `gemv_add`,
 `residual_add`, `bwd_add_inplace`, `zero_tensor`, `causal_mask`, `adamw`,
 `adamw_schedule`. Downstream projects add their own kernels the same way — a
-`Shader` static with per-backend sources; akasha-core's `shaders/` directory
+`Shader` static with per-backend sources; sequexa-core's `shaders/` directory
 is the living example.
 
 ## Building & testing
@@ -53,7 +53,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the layer map, core contracts,
 buffer lifecycle, execute paths, backend differences, and the checklist for
 adding a new kernel. See [SHADERS.md](SHADERS.md) for the per-shader
 wgsl/cuda/cpu/meta/emitter catalog, covering both wilupgu's builtins and
-akasha-core's own shaders.
+sequexa-core's own shaders.
 
 ## License
 

@@ -1,10 +1,10 @@
 # Shader kataloğu
 
 Her shader'ın wgsl/cuda/cpu/meta/emitter parçalarını tek satırda görmek için.
-Kaynak: wilupgu `src/builtin/mod.rs` (12 builtin) + akasha-core
+Kaynak: wilupgu `src/builtin/mod.rs` (12 builtin) + sequexa-core
 `src/shaders/mod.rs` (30 shader), 2026-08-29 itibarıyla. Yeni shader
 eklerken buraya bir satır ekle (bkz. ARCHITECTURE.md "Yeni kernel ekleme
-checklist'i" madde 8). Bu dosya iki repo'yu birlikte kapsar çünkü akasha
+checklist'i" madde 8). Bu dosya iki repo'yu birlikte kapsar çünkü sequexa
 sadece wilupgu'nun builtin'lerini tüketen bir downstream'dir — tek kaynaktan
 okumak daha doğru.
 
@@ -12,23 +12,23 @@ okumak daha doğru.
 
 | Shader | wgsl | cuda | cpu | Kullanan |
 |---|---|---|---|---|
-| MatMul | fwd/matmul.wgsl | Custom → cuBLAS | ✓ | akasha `matmul()` (m>1) |
-| Gemv | fwd/gemv.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_with()` (m=1, H6 auto-route) |
-| GemvAdd | fwd/gemv_add.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_add_with()` (m=1) |
-| MatMulTrp | fwd/matmul_trp.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_trp()` |
-| MatMulAdd | fwd/matmul_add.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_add_with()` (m>1, block_pre_attn/block_post_attn own the meta); plain `matmul_add()` is now `#[cfg(test)]`-only |
-| MatMulWeightBwd | bwd/matmul_weight_trp.wgsl | Custom → cuBLAS | ✓ | akasha `matmul_weight_bwd()` |
-| ResidualAdd | add.wgsl | Generic (`ADD`) | ✓ | akasha `residual_add()` |
-| BwdAddInplace | bwd/bwd_add_inplace.wgsl | Generic (`BWD_ADD_INPLACE`) | ✓ | akasha `add_inplace_bwd()` |
-| ZeroTensor | zero_tensor.wgsl | Generic (`ZERO_TENSOR`) | ✓ | akasha `zero()` |
-| AdamW | bwd/adamw.wgsl | Custom → `launch_adamw` | ✓ | akasha `optim/adamw.rs` |
-| AdamWSchedule | bwd/adamw_schedule.wgsl | Custom → `launch_adamw_schedule` | ✓ | akasha `optim/adamw.rs` |
-| CausalMask | causal_mask.wgsl | Generic (`CAUSAL_MASK`) | ✓ | **hiçbir akasha çağıran yok** — sadece wilupgu'nun kendi `backend_parity` testi kullanıyor; H5'te causal attention flash'a taşınınca akasha tarafı bırakılmış olmalı. ember'da kullanılıyor olabilir, kontrol edilmedi |
+| MatMul | fwd/matmul.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul()` (m>1) |
+| Gemv | fwd/gemv.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_with()` (m=1, H6 auto-route) |
+| GemvAdd | fwd/gemv_add.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_add_with()` (m=1) |
+| MatMulTrp | fwd/matmul_trp.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_trp()` |
+| MatMulAdd | fwd/matmul_add.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_add_with()` (m>1, block_pre_attn/block_post_attn own the meta); plain `matmul_add()` is now `#[cfg(test)]`-only |
+| MatMulWeightBwd | bwd/matmul_weight_trp.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_weight_bwd()` |
+| ResidualAdd | add.wgsl | Generic (`ADD`) | ✓ | sequexa `residual_add()` |
+| BwdAddInplace | bwd/bwd_add_inplace.wgsl | Generic (`BWD_ADD_INPLACE`) | ✓ | sequexa `add_inplace_bwd()` |
+| ZeroTensor | zero_tensor.wgsl | Generic (`ZERO_TENSOR`) | ✓ | sequexa `zero()` |
+| AdamW | bwd/adamw.wgsl | Custom → `launch_adamw` | ✓ | sequexa `optim/adamw.rs` |
+| AdamWSchedule | bwd/adamw_schedule.wgsl | Custom → `launch_adamw_schedule` | ✓ | sequexa `optim/adamw.rs` |
+| CausalMask | causal_mask.wgsl | Generic (`CAUSAL_MASK`) | ✓ | **hiçbir sequexa çağıran yok** — sadece wilupgu'nun kendi `backend_parity` testi kullanıyor; H5'te causal attention flash'a taşınınca sequexa tarafı bırakılmış olmalı. ember'da kullanılıyor olabilir, kontrol edilmedi |
 
 Beşi (matmul ailesi) CUDA'da cuBLAS'a gidiyor — B9/decode-cuBLAS'sızlaştırma
 tartışmasının konusu tam bunlar arasından `Gemv`/`GemvAdd` (m=1).
 
-## akasha-core shader'ları (30) — `src/shaders/mod.rs`
+## sequexa-core shader'ları (30) — `src/shaders/mod.rs`
 
 | Shader | wgsl | cuda src | cpu | Meta struct | Emitter (`ops/emit.rs`) |
 |---|---|---|---|---|---|
@@ -63,12 +63,12 @@ tartışmasının konusu tam bunlar arasından `Gemv`/`GemvAdd` (m=1).
 | GradNormScale | bwd/grad_norm_scale.wgsl | ✓ | **yok** | GradNormMeta | `grad_norm_scale()` |
 | GradScale | bwd/grad_scale.wgsl | ✓ | **yok** | ZeroMeta | `grad_scale()` |
 
-`ZeroMeta` ayrıca wilupgu'nun `ZeroTensor`/akasha'nın `zero()` emitter'ında da
+`ZeroMeta` ayrıca wilupgu'nun `ZeroTensor`/sequexa'nın `zero()` emitter'ında da
 kullanılıyor (`len` dışında alan taşımayan tüm kernellerin ortak metası).
 
 ## Notlar
 
-- **CPU boşlukları (14/30 akasha shader'ı):** SiLUBwd, RoPEBwd, RopeQK,
+- **CPU boşlukları (14/30 sequexa shader'ı):** SiLUBwd, RoPEBwd, RopeQK,
   RopeBwdQK, RMSNormBwd, RMSNormWeightBwd, QkvSplit, QkvScatter,
   FlashAttention + iki bwd'si, GradSumSq, GradNormScale, GradScale. Hepsi
   bwd/perf-kritik tarafta — CPU backend şu an tam bir eğitim döngüsünü
@@ -80,8 +80,8 @@ kullanılıyor (`len` dışında alan taşımayan tüm kernellerin ortak metası
   testlerinin bağımsız referans implementasyonu olarak yaşıyorlar
   (`#[cfg(test)]`). Bilinçli, ARCHITECTURE.md'de zaten dokümante ("rope_bwd
   ve head_scatter yalnız #[cfg(test)] yaşar").
-- **wilupgu'da tek ölü builtin:** `CausalMask` — akasha hiç çağırmıyor,
+- **wilupgu'da tek ölü builtin:** `CausalMask` — sequexa hiç çağırmıyor,
   yalnız wilupgu'nun kendi parity testinde var.
 - Meta yok (`—`) demek kernel'in Meta binding'i olmadığı, boyutun yalnız
-  grid'den geldiği anlamına gelir (akasha tablosunda SiLU/SiLUOut/Add).
+  grid'den geldiği anlamına gelir (sequexa tablosunda SiLU/SiLUOut/Add).
   `ZeroTensor`/`GradScale`'in ikisi de aynı `ZeroMeta{len}`'i paylaşır.
