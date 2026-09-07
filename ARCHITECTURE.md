@@ -9,14 +9,14 @@ ekleme checklist'i.
 ## Katman haritası
 
 ```
-callers: akasha-core, ember
+callers: sequexa-core, ember
    │  (Shader statiği + Binding'ler + grid ile node ekler)
    ▼
 ┌─ Shader ('static) ─────────────────────────────────────────────┐
 │ name + layout: &[TensorMode] + wgsl / cpu / cuda kaynakları    │
 └────────────────────────────────────────────────────────────────┘
    │  kod değil VERİ: builtin/ 12 tanesini sağlar, caller kendi
-   │  statiklerini ekleyebilir (akasha-core shaders/ bunu yapar)
+   │  statiklerini ekleyebilir (sequexa-core shaders/ bunu yapar)
    ▼
 ┌─ ComputeGraph<B> ──────────────────────────────────────────────┐
 │ add_node(shader, bindings, grid)                               │
@@ -82,7 +82,7 @@ keşfedildikçe buraya satır eklenir.
 - **wgpu dispatch ekseni ≤ 65535 workgroup.** 16.7M+ elemanlı tensöre düz 1D
   grid atan kernel sessizce eksik çalışır ya da device kaybettirir —
   2D-linearize desen şart (zero_tensor referans deseni; B16'dan beri tüm
-  elementwise builtin'ler — residual_add, bwd_add_inplace — ve akasha'nın
+  elementwise builtin'ler — residual_add, bwd_add_inplace — ve sequexa'nın
   silu/add ailesi de böyle; 1D grid'le çağrılırsa y=1 olduğundan davranış
   eski düz desenle birebir aynıdır).
 - **dispatch_generic kısıtları** (CUDA): en fazla BİR Meta slot ve Meta SON
@@ -178,7 +178,7 @@ için fark yok). CUDA'da üç aşamalı yaşam döngüsü:
 
 Builtin ile downstream kernel arasında mekanizma farkı yoktur — ikisi de bir
 `Shader` statiğidir. Yerleşim: builtin ise `src/builtin/` (+ cpu_kernels /
-cuda_kernels), kendi projense kendi `shaders/` dizinin (akasha-core canlı
+cuda_kernels), kendi projense kendi `shaders/` dizinin (sequexa-core canlı
 örnek). Sonrası ikisi için de aynı:
 
 1. **Layout'u kernel DAVRANIŞINA göre yaz**, niyete göre değil: tam ezme →
@@ -224,5 +224,5 @@ Kurallar:
   derleyeceği CUDA C string'lerini ve gerçek sayıları hâlâ nvidia makinesi
   doğrular.
 - Yeni builtin = backend_parity'ye satır (checklist madde 7); GEMV/GEMV_ADD
-  ve akasha'ya özgü kerneller akasha tarafındaki emit.rs testlerinde yaşar
-  (bkz. akasha-core/ARCHITECTURE.md → Test haritası).
+  ve sequexa'ya özgü kerneller sequexa tarafındaki emit.rs testlerinde yaşar
+  (bkz. sequexa-core/ARCHITECTURE.md → Test haritası).

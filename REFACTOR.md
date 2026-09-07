@@ -1,6 +1,6 @@
 # Bekleyen işler
 
-Kapsam: akasha-core + wilupgu + ember. Yalnız YAPILMAMIŞ maddeler; biten iş
+Kapsam: sequexa-core + wilupgu + ember. Yalnız YAPILMAMIŞ maddeler; biten iş
 buradan silinir (tarihçe git log'da). Sıra: doğruluk → hız → tasarım → feat.
 
 ## 🟠 Hız
@@ -10,7 +10,7 @@ gemm_meta_u32): capture dışında her cuBLAS çağrısı meta'yı device'tan se
 çeker. Decode graph capture edilmiyor → token başına ~61 matmul × bloklayan
 kopya. Decode'un matmul metaları sabit; matmul-family capture dışında da
 cached_meta okusa maliyet kalkar. Dikkat: gerçekten dinamik meta'lı bir cuBLAS
-çağrısı varsa ona opt-out gerekir. **Not:** akasha ARCHITECTURE fikir
+çağrısı varsa ona opt-out gerekir. **Not:** sequexa ARCHITECTURE fikir
 kuyruğundaki "decode'u cuBLAS'sızlaştırma" yapılırsa bu madde kökünden düşer —
 önce onun kararı.
 
@@ -41,18 +41,18 @@ için derleyici tarafından unroll edilemiyor, register yerine VRAM-backed
 scratch belleğe spill oluyordu (RADV hang dump'ında doğrulandı: VGPRs=16,
 Scratch=64KB/wave) — hem ciddi yavaşlık hem de gerçek bir
 `radv/amdgpu: GPU hang` sebebiydi. Fix: üç dosyada da sabit
-`HEAD_DIM: u32 = 64u` (akasha-hall'un tek konfigürasyonu). Bu, hardcode'un
+`HEAD_DIM: u32 = 64u` (sequexa-hall'un tek konfigürasyonu). Bu, hardcode'un
 head_dim≠64 için sessizce yanlış sonuç üretmesine açık kapı bırakmıştı —
-kapatılan asıl kısım bu: akasha-core `ops/emit.rs::assert_flash_head_dim`
+kapatılan asıl kısım bu: sequexa-core `ops/emit.rs::assert_flash_head_dim`
 artık her iki emitter'da (`flash_attention`, `flash_attention_bwd`)
 `head_dim == 64` assert ediyor (tek-head_dim kabulü, shader üretimi değil —
-akasha tek bir modelin motoru, jenerik head_dim ihtiyacı yok). Bu assert
-olmadan zaten 4 akasha testi (gradcheck, batching, prefill, flash attention'ın
+sequexa tek bir modelin motoru, jenerik head_dim ihtiyacı yok). Bu assert
+olmadan zaten 4 sequexa testi (gradcheck, batching, prefill, flash attention'ın
 kendi testi) tiny config'lerde (head_dim=4/8/16) sessizce yanlış sayı
 üretiyordu — testler artık hepsi head_dim=64'e taşındı, ayrıca guard'ın
 gerçekten patladığını kanıtlayan bir `#[should_panic]` testi eklendi. CUDA
 kernel'i hiç etkilenmedi (hâlâ runtime `head_dim` okuyor, `<=128` sınırıyla
-genel). Detaylar: akasha-core git log + wilupgu/SHADERS.md.
+genel). Detaylar: sequexa-core git log + wilupgu/SHADERS.md.
 
 **2) wgpu otomatik senkronizasyon bug'ı — AÇIK, gerçek engel bu.**
 Register-spill fix'i hang'i tam çözmedi: normal (async) çalıştırmada step
