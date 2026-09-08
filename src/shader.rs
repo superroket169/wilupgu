@@ -14,6 +14,7 @@ pub struct Shader {
     pub layout: &'static [TensorMode],
     pub wgpu: Option<&'static str>,
     pub cpu: Option<fn(&[CpuBinding])>,
+    pub rayon: Option<fn(&[CpuBinding])>,
     pub cuda: Option<CudaSpec>,
 }
 
