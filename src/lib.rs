@@ -6,6 +6,8 @@ pub(crate) mod io_log;
 pub(crate) mod pool;
 pub mod shader;
 pub mod tensor;
+pub mod topology;
+pub mod traits;
 
 pub use backend::{Backend, Binding, Dtype, TensorMode};
 pub use backends::WgpuBackend;

@@ -9,13 +9,13 @@ bytemuck = { version = "1.15", features = ["derive", "extern_crate_alloc"] }
 pollster = "0.3"
 futures-intrusive = "0.5"
 cudarc = { version = "0.19", optional = true, features = ["cublas", "nvrtc", "cuda-version-from-build-system", "f16"] }
-half = { version = "2", optional = true, features = ["bytemuck"] }
+half = { version = "2", features = ["bytemuck"] }
 rayon = { version = "1", optional = true }
 
 [features]
 default = []
 vulkan = []
-cuda = ["cudarc", "dep:half"]
+cuda = ["cudarc"]
 cpu = []
 rayon = ["dep:rayon"]
 vulkano = []
