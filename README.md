@@ -10,7 +10,7 @@ implementing the `Backend` trait. Buffers are recycled through an automatic
 pool. On CUDA, f32-storage matmuls can run their compute in bf16 tensor cores
 (`set_bf16_matmul`); full quantized storage (f16/int8/int4) is future work.
 
-Currently used by **sequexa-core** (LLM engine) and **ember** (NNUE engine).
+Currently used by **sequexa-core** (LLM engine).
 
 ## Backends
 
