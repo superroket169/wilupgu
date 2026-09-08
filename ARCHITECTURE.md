@@ -4,7 +4,7 @@
 
 Genel tanıtım [README.md](README.md)'de. Bu dosya iç mimariyi anlatır: katman
 haritası, çekirdek kontratlar, yaşam döngüleri, backend farkları ve kernel
-ekleme checklist'i.
+ekleme checklist'i. Bekleyen işler için [TODO.md](TODO.md).
 
 ## Katman haritası
 
@@ -170,7 +170,7 @@ için fark yok). CUDA'da üç aşamalı yaşam döngüsü:
 | Meta okuma | device'ta, execute anında (hep canlı) | generic: device pointer (canlı); cuBLAS: dispatch'te dtoh, capture'da donuk | host'ta, dispatch anında (canlı) |
 | `execute_captured` | yok → düz execute | CUDA graph (Warmed → Captured) | yok → düz execute |
 | Dtype | yalnız F32 (assert) | F32 / F16 / BF16 (gemm hepsinde; generic kerneller F32) | yalnız F32 (assert) |
-| alloc %4 kuralı | assert YOK (bilinen asimetri — bug listesinde) | `size % 4 == 0` assert; her şey f32 word | assert yok |
+| alloc %4 kuralı | `size % 4 == 0` assert | `size % 4 == 0` assert; her şey f32 word | assert yok |
 | `synchronize` | `Maintain::Wait` + in-flight kuyruğu temizlenir | `stream.synchronize()` | no-op |
 | Backpressure | in-flight ≤ 16, en eski beklenir | yok (stream sıralı) | anında |
 

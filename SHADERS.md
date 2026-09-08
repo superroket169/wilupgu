@@ -65,23 +65,5 @@ tartışmasının konusu tam bunlar arasından `Gemv`/`GemvAdd` (m=1).
 
 `ZeroMeta` ayrıca wilupgu'nun `ZeroTensor`/sequexa'nın `zero()` emitter'ında da
 kullanılıyor (`len` dışında alan taşımayan tüm kernellerin ortak metası).
-
-## Notlar
-
-- **CPU boşlukları (14/30 sequexa shader'ı):** SiLUBwd, RoPEBwd, RopeQK,
-  RopeBwdQK, RMSNormBwd, RMSNormWeightBwd, QkvSplit, QkvScatter,
-  FlashAttention + iki bwd'si, GradSumSq, GradNormScale, GradScale. Hepsi
-  bwd/perf-kritik tarafta — CPU backend şu an tam bir eğitim döngüsünü
-  koşturamaz, yalnız fwd-ağırlıklı testleri. ARCHITECTURE.md "Fikir
-  kuyruğu → test mimarisi" maddesindeki "birkaç bwd kernel'inin CPU impl'i
-  yok" notu, tam liste haline geldi.
-- **Ölü/test-only iki shader:** `RoPEBwd` ve `HeadScatter` gerçek hiçbir
-  fwd/bwd yolunda çağrılmıyor — yalnız `rope_qk`/`qkv_scatter` fusion
-  testlerinin bağımsız referans implementasyonu olarak yaşıyorlar
-  (`#[cfg(test)]`). Bilinçli, ARCHITECTURE.md'de zaten dokümante ("rope_bwd
-  ve head_scatter yalnız #[cfg(test)] yaşar").
-- **wilupgu'da tek ölü builtin:** `CausalMask` — sequexa hiç çağırmıyor,
-  yalnız wilupgu'nun kendi parity testinde var.
-- Meta yok (`—`) demek kernel'in Meta binding'i olmadığı, boyutun yalnız
-  grid'den geldiği anlamına gelir (sequexa tablosunda SiLU/SiLUOut/Add).
-  `ZeroTensor`/`GradScale`'in ikisi de aynı `ZeroMeta{len}`'i paylaşır.
+Meta yok (`—`) demek kernel'in Meta binding'i olmadığı, boyutun yalnız
+grid'den geldiği anlamına gelir (sequexa tablosunda SiLU/SiLUOut/Add).
