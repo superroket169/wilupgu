@@ -56,16 +56,15 @@ impl WgpuBackend {
             limits.max_compute_workgroups_per_dimension,
             limits.max_compute_invocations_per_workgroup,
         );
+
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_limits: limits.clone(),
-                    ..Default::default()
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: limits.clone(),
+                ..Default::default()
+            })
             .await
             .expect("[wgpu] device creation failed");
+
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -144,10 +143,13 @@ impl Backend for WgpuBackend {
         let slice = staging.slice(..);
         let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
         slice.map_async(wgpu::MapMode::Read, move |v| tx.send(v).unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
+
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("[wgpu] poll failed while waiting for buffer map");
         pollster::block_on(async { rx.receive().await.unwrap().unwrap() });
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice.get_mapped_range().unwrap();
         let result = bytemuck::cast_slice::<_, T>(&mapped).to_vec();
         drop(mapped);
         staging.unmap();
@@ -250,8 +252,8 @@ impl Backend for WgpuBackend {
                     .device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: None,
-                        bind_group_layouts: &[&bgl],
-                        push_constant_ranges: &[],
+                        bind_group_layouts: &[Some(&bgl)],
+                        immediate_size: 0,
                     });
 
                 let pipeline = Arc::new(self.device.create_compute_pipeline(
@@ -259,7 +261,9 @@ impl Backend for WgpuBackend {
                         label: Some(shader.name),
                         layout: Some(&pl),
                         module: &module,
-                        entry_point: "main",
+                        entry_point: Some("main"),
+                        compilation_options: Default::default(),
+                        cache: None,
                     },
                 ));
 
@@ -291,14 +295,7 @@ impl Backend for WgpuBackend {
     }
 
     fn execute(&self, nodes: &[WgpuNode]) {
-        // DIAGNOSTIC ONLY (see chat, 2026-08-18 RADV hang investigation):
-        // WILUPGU_FORCE_SYNC=1 submits + waits after every single node instead
-        // of batching them into one compute pass. If this makes an otherwise
-        // corrupting/hanging run correct, it confirms a missing inter-dispatch
-        // barrier (wgpu automatic?) rather than a kernel bug.
-        // Not meant to ship as-is -- extremely slow (one submit+wait per node).
-        //
-        // despite everything its working now :D
+        // force fix
         if std::env::var("WILUPGU_FORCE_SYNC").is_ok() {
             for node in nodes {
                 let mut encoder = self
@@ -310,7 +307,7 @@ impl Backend for WgpuBackend {
                         timestamp_writes: None,
                     });
                     cpass.set_pipeline(&node.pipeline);
-                    cpass.set_bind_group(0, &node.bind_group, &[]);
+                    cpass.set_bind_group(0, node.bind_group.as_ref(), &[]);
                     cpass.dispatch_workgroups(
                         node.workgroups[0],
                         node.workgroups[1],
@@ -318,7 +315,9 @@ impl Backend for WgpuBackend {
                     );
                 }
                 self.queue.submit(Some(encoder.finish()));
-                self.device.poll(wgpu::Maintain::Wait);
+                self.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("[wgpu] poll failed (WILUPGU_FORCE_SYNC path)");
             }
             self.in_flight.lock().unwrap().clear();
             return;
@@ -334,7 +333,7 @@ impl Backend for WgpuBackend {
             });
             for node in nodes {
                 cpass.set_pipeline(&node.pipeline);
-                cpass.set_bind_group(0, &node.bind_group, &[]);
+                cpass.set_bind_group(0, node.bind_group.as_ref(), &[]);
                 cpass.dispatch_workgroups(
                     node.workgroups[0],
                     node.workgroups[1],
@@ -355,16 +354,25 @@ impl Backend for WgpuBackend {
         };
         match oldest {
             Some(i) => {
-                self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(i));
+                self.device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(i),
+                        timeout: None,
+                    })
+                    .expect("[wgpu] poll failed while waiting for submission index");
             }
             None => {
-                self.device.poll(wgpu::Maintain::Poll);
+                self.device
+                    .poll(wgpu::PollType::Poll)
+                    .expect("[wgpu] poll failed");
             }
         }
     }
 
     fn synchronize(&self) {
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("[wgpu] poll failed in synchronize");
         self.in_flight.lock().unwrap().clear();
     }
 }
