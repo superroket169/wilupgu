@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "0.19"
+wgpu = "30"
 bytemuck = { version = "1.15", features = ["derive", "extern_crate_alloc"] }
 pollster = "0.3"
 futures-intrusive = "0.5"

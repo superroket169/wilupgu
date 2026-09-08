@@ -59,4 +59,7 @@ impl<B: Backend> Drop for Tensor<B> {
             self.ctx.recycle(self.size, self.buffer.clone());
         }
     }
+
+    // fn perm_drop() // ileride bir buffer bilerek ve garanti bir şekilde buffer dan atılması için
+    // garnti fonksiyon
 }
