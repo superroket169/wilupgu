@@ -9,7 +9,7 @@ ekleme checklist'i. Bekleyen işler için [TODO.md](TODO.md).
 ## Katman haritası
 
 ```
-callers: sequexa-core, ember
+callers: sequexa-core
    │  (Shader statiği + Binding'ler + grid ile node ekler)
    ▼
 ┌─ Shader ('static) ─────────────────────────────────────────────┐

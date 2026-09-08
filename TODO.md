@@ -1,6 +1,6 @@
 # TODO
 
-Kapsam: sequexa-core + wilupgu + ember ortak bekleyen iş listesi. Yalnız
+Kapsam: sequexa-core + wilupgu ortak bekleyen iş listesi. Yalnız
 YAPILMAMIŞ maddeler — biten iş buradan silinir, tarihçe git log'da.
 
 ## Hız
@@ -48,13 +48,6 @@ YAPILMAMIŞ maddeler — biten iş buradan silinir, tarihçe git log'da.
   bugün `const HEAD_DIM: u32 = 64u` hardcode'lu (register-spill/RADV-hang
   fix). Gerçek genel çözüm WGSL'nin pipeline-overridable constant'ı, ama
   wilupgu'nun `Shader`/pipeline-cache API'sinde bu kavram hiç yok.
-
-## ember
-
-- **ember CUDA shader'ları.**
-- **Quantization** (NNUE int8 ölçekleme) — ember entegrasyonuyla birlikte
-  yapılacak: NNUE zaten quantization-aware eğitim istiyor, zemin oraya
-  kurulur.
 
 ## Küçük
 
