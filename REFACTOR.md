@@ -74,13 +74,105 @@ tarihsel olarak bilinen kırılgan bir köşe (gfx-rs/wgpu #5766, #2659, #6344,
 PR #194, #3181) — upgrade kör bir bahis değil ama büyük bir iş (10 major
 sürümlük API kırılması), bu oturumda başlanmadı.
 
-**Sıradaki adımlar** (öncelik sırasıyla, hiçbiri bu oturumda tamamlanmadı):
+**wgpu 0.19.4 → 30.0.1 upgrade YAPILDI (2026-09-08) — bariyer bug'ını ÇÖZMEDİ.**
+Cargo.toml + backends/wgpu.rs, ~15 satırlık mekanik diff: `request_device`
+tek argümana düştü (trace_path kalktı), `PipelineLayoutDescriptor`'da
+`bind_group_layouts: &[Option<&_>]` + `push_constant_ranges`→`immediate_size`,
+`ComputePipelineDescriptor`'a `compilation_options`/`cache` eklendi +
+`entry_point` artık `Option<&str>`, `Device::poll` artık `Maintain` değil
+`PollType` alıp `Result<PollStatus, PollError>` dönüyor, `get_mapped_range`
+`Result` dönüyor, `ComputePass::set_bind_group` artık `Option<&BindGroup>`
+istiyor. Derlendi; wilupgu 10/10 + sequexa-core 29/30 test gerçek HD620'de
+geçti. **Ama aynı gün FORCE_SYNC'siz gerçek bir training run'ı hâlâ aynı
+imzayla çöktü** (`Parent device is lost`, step ~4 civarı, resume sonrası) —
+upgrade kod tabanını modernize etti ama bariyer davranışını değiştirmedi.
+FORCE_SYNC hâlâ tek çalışan workaround.
+
+**Sıradaki adımlar** (öncelik sırasıyla, hiçbiri bitmedi):
 - Kısa vade: `WILUPGU_FORCE_SYNC=1` ile gerçek bir eğitim koşusu başlat
   (doğru ama yavaş — her node ayrı submit+wait, pipelining tamamen kayboluyor).
 - Orta vade: tüm node'lar yerine sadece gerekli 1-2 sınırda senkron
   (bisection ile minimal bariyer noktasını bul, çoğu hızı geri kazan).
-- Uzun vade: `wgpu` 0.19.4 → 30.0.0 upgrade — muhtemel kalıcı çözüm, ayrı
-  bir oturumluk iş.
+- Uzun vade (GÜNCEL PLAN, 2026-09-08 — wgpu upgrade'in yerini aldı): wgpu'yu
+  bırakıp wilupgu'ya kendi native Vulkan backend'ini eklemek, bkz. aşağıdaki
+  "🎨 Tasarım" bölümü. wgpu'nun opak/otomatik bariyerine bağımlı kalmak yerine
+  node'ların kendi `Binding`/`TensorMode` bilgisinden gerçek hazard'ları
+  çıkarıp elle bariyer basmak.
+
+## 🎨 Tasarım: Büyük Wilupgu Refactoru (planlama, henüz başlanmadı — 2026-09-08)
+
+Kapsam: backend trait'i ve backend setini yeniden düşünmek. Üç ayrı iş:
+
+**1) Native Vulkan backend (`backends/vulkano.rs`, şimdilik boş dosya) —
+wgpu'nun çözemediği bariyer bug'ını çözmek için.**
+- Amaç: WGSL tek doğru shader kaynağı kalsın (ikinci bir shader dili YOK),
+  ama dispatch'ler arası bariyer wgpu'nun otomatiğine değil kendi elimize
+  bağlı olsun.
+- Zincir: `naga::front::wgsl::parse_str` → `naga::valid::Validator` →
+  `naga::back::spv::write_vec` (WGSL→SPIR-V — wgpu'nun içeride zaten yaptığı
+  şey; `naga` wgpu'nun transitive dependency'si olarak elimizde) →
+  `vulkano::shader::ShaderModule::new(device, ShaderModuleCreateInfo::new(&words))`
+  (`unsafe`, doğrulamasız — ama naga zaten doğruladı, sorun değil). Pipeline +
+  layout, wgpu.rs'teki `pipeline_cache` gibi shader başına bir kere kurulup
+  cache'lenir.
+- Bariyer: her node'un `Binding`/`TensorMode` listesi zaten hangi buffer'ı
+  nasıl kullandığını taşıyor (Input/Output/InOut/Accumulate/Meta) — ardışık
+  node'lar arası gerçek RAW/WAW hazard'larını buradan çıkarıp sadece gereken
+  yere `vkCmdPipelineBarrier` basmak FORCE_SYNC'ten hızlı, wgpu'nun
+  otomatiğinden doğru olmalı.
+- **filuplex incelendi (2026-09-08, `~/Documents/Codes/filuplex`), arşivden
+  çıkarılmadı — kod olarak değil, ders olarak faydalı:**
+  - Tekrar kullanılabilir: `Context` (Instance/Device/Queue/allocator
+    kurulumu) temiz ve minimal; ve önemlisi,
+    `ShaderModule::new(device, ShaderModuleCreateInfo::new(words))` ile ham
+    SPIR-V word'lerini runtime'da yüklemenin bu tam donanımda (HD620, vulkano
+    0.35.1) **çalıştığı zaten kanıtlanmış** (`ops.rs::BuiltInShader::load_from_file`,
+    `.spv` dosyasından) — planın en riskli varsayımı baştan doğrulanmış oldu.
+  - Tekrar ETMEYECEĞİMİZ hatalar: (a) `graph.rs::add_operation` her çağrıda
+    pipeline+layout+descriptor-set'i sıfırdan kuruyor, hiç cache yok — gerçek
+    model ölçeğinde (step başına yüzlerce node) bu tek başına performansı
+    öldürür, son commit mesajının ("vulkano bana engel oluyor") sebeplerinden
+    biri muhtemelen bu; (b) bariyer YOK — `ExecutableGraph::execute()` her
+    graph'tan sonra fence wait + `unsafe { device.wait_idle() }` ile TAM
+    senkron oluyor, yani filuplex kendi bariyer sorununu hiç çözmedi, aynı
+    FORCE_SYNC kabalığını graph seviyesinde tekrarladı; (c) shader'lar
+    `vulkano_shaders::shader!` makrosuyla elle GLSL yazılmış (`shaders.rs`) —
+    ikinci bir shader dili bakım yükü, tam da naga ile ortadan kaldırmak
+    istediğimiz şey.
+  - Sonuç: filuplex'ten kodu değil, "SPIR-V runtime yükleme çalışıyor"
+    kanıtını ve "cache'siz + bariyersiz asla hızlı/doğru olmaz" dersini
+    alıyoruz.
+- Durum: sadece boş `backends/vulkano.rs` + `vulkano` feature flag (Cargo.toml,
+  `vulkano` crate henüz dependency olarak eklenmedi) atıldı. İlk gerçek adım:
+  wilupgu'ya hiç dokunmadan, bağımsız bir scratch'te "WGSL string → naga →
+  SPIR-V → vulkano tek dispatch" zincirinin uçtan uca çalıştığını kanıtlamak.
+
+**2) Gerçek paralel CPU backend (`backends/rayon.rs`).**
+- Mevcut `CpuBackend` bilinçli olarak tek-thread (test determinism için) —
+  kalıyor, dokunulmadı.
+- Yeni `RayonBackend`: `CpuBackend` ile birebir aynı buffer/pool mantığı
+  (`CpuBuffer = Arc<Mutex<Vec<u8>>>`), tek fark `build_node`'un `shader.cpu`
+  yerine yeni `shader.rayon: Option<fn(&[CpuBinding])>` alanına bakması.
+  Paralellik node-dispatch seviyesinde değil (node'lar genelde ardışık
+  bağımlı) — her kernel'in KENDİ gövdesi içinde (`par_chunks_mut` vb.) olacak,
+  bu yüzden imza `cpu` ile birebir aynı kalabildi.
+- Durum: iskelet atıldı — `Shader` struct'ına `rayon` alanı + wilupgu'nun 12 +
+  sequexa-core'un 30 static'ine `rayon: None,` eklendi, `RayonBackend` tam
+  `Backend` impl'i ama her kernel şu an `panic!("no rayon impl yet")` veriyor.
+  Gerçek paralel kernel gövdeleri (matmul, adamw, vb.) tek tek, ayrı işler
+  olarak eklenecek — 200+ çekirdekli sunucularda gerçek kazanç burada olacak.
+
+**3) Backend trait genişletmesi + CUDA'nın ikiye bölünmesi (henüz
+tasarlanmadı, sadece niyet).**
+- `cuda.rs` (1189 satır) `wgpu.rs`'ten (370 satır) çok şişkin çünkü ikisi aynı
+  işi yapmıyor: cuBLAS GEMM/GEMM_EX entegrasyonu + CUDA graph capture/replay +
+  dtype-generic `Gemm<T>` hepsi `cuda.rs`'te, `wgpu.rs`'te hiçbiri yok (matmul
+  elle WGSL). Plan: `cuda.rs`'i `wgpu.rs` kadar ince, BLAS'sız, generic
+  dispatch'e indirmek; BLAS'lı yol ayrı bir `cuda-blas.rs` backend'i olsun —
+  iki backend, aynı CUDA runtime, farklı matmul stratejisi.
+- Backend trait'inin kendisinin de "daha dinamikleştirilebilir" olduğu
+  düşünülüyor — somut madde yok, `backend.rs`'i birlikte açıp geçtiğimizde
+  netleşecek.
 
 ## 🔵 Feat'ler
 

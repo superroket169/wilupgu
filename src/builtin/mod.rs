@@ -17,6 +17,7 @@ pub static MATMUL: Shader = Shader {
     layout: &[Input, Input, Output, Meta],
     wgpu: Some(include_str!("../shaders/fwd/matmul.wgsl")),
     cpu: Some(cpu::matmul),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -32,6 +33,7 @@ pub static GEMV: Shader = Shader {
     layout: &[Input, Input, Output, Meta],
     wgpu: Some(include_str!("../shaders/fwd/gemv.wgsl")),
     cpu: Some(cpu::matmul),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -47,6 +49,7 @@ pub static GEMV_ADD: Shader = Shader {
     layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/fwd/gemv_add.wgsl")),
     cpu: Some(cpu::matmul_add),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -62,6 +65,7 @@ pub static MATMUL_TRP: Shader = Shader {
     layout: &[Input, Input, Output, Meta],
     wgpu: Some(include_str!("../shaders/fwd/matmul_trp.wgsl")),
     cpu: Some(cpu::matmul_trp),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -77,6 +81,7 @@ pub static MATMUL_ADD: Shader = Shader {
     layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/fwd/matmul_add.wgsl")),
     cpu: Some(cpu::matmul_add),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -94,6 +99,7 @@ pub static MATMUL_WEIGHT_BWD: Shader = Shader {
     layout: &[Input, Input, Accumulate, Meta],
     wgpu: Some(include_str!("../shaders/bwd/matmul_weight_trp.wgsl")),
     cpu: Some(cpu::matmul_weight_bwd),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -109,6 +115,7 @@ pub static RESIDUAL_ADD: Shader = Shader {
     layout: &[Accumulate, Input],
     wgpu: Some(include_str!("../shaders/add.wgsl")),
     cpu: Some(cpu::residual_add),
+    rayon: None,
     cuda: Some(CudaSpec {
         src: k::ADD,
         entry: "add_kernel",
@@ -125,6 +132,7 @@ pub static BWD_ADD_INPLACE: Shader = Shader {
     layout: &[Accumulate, Input],
     wgpu: Some(include_str!("../shaders/bwd/bwd_add_inplace.wgsl")),
     cpu: Some(cpu::residual_add),
+    rayon: None,
     cuda: Some(CudaSpec {
         src: k::BWD_ADD_INPLACE,
         entry: "bwd_add_inplace_kernel",
@@ -141,6 +149,7 @@ pub static ZERO_TENSOR: Shader = Shader {
     layout: &[Output, Meta],
     wgpu: Some(include_str!("../shaders/zero_tensor.wgsl")),
     cpu: Some(cpu::zero_tensor),
+    rayon: None,
     cuda: Some(CudaSpec {
         src: k::ZERO_TENSOR,
         entry: "zero_tensor_kernel",
@@ -157,6 +166,7 @@ pub static ADAMW: Shader = Shader {
     layout: &[InOut, Input, InOut, InOut, Meta, Input, Meta],
     wgpu: Some(include_str!("../shaders/bwd/adamw.wgsl")),
     cpu: Some(cpu::adamw),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -172,6 +182,7 @@ pub static ADAMW_SCHEDULE: Shader = Shader {
     layout: &[InOut, Meta],
     wgpu: Some(include_str!("../shaders/bwd/adamw_schedule.wgsl")),
     cpu: Some(cpu::adamw_schedule),
+    rayon: None,
     #[cfg(feature = "cuda")]
     cuda: Some(CudaSpec {
         src: "",
@@ -187,6 +198,7 @@ pub static CAUSAL_MASK: Shader = Shader {
     layout: &[InOut, Meta],
     wgpu: Some(include_str!("../shaders/causal_mask.wgsl")),
     cpu: Some(cpu::causal_mask),
+    rayon: None,
     cuda: Some(CudaSpec {
         src: k::CAUSAL_MASK,
         entry: "causal_mask_kernel",
