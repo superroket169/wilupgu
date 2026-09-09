@@ -3,42 +3,66 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+/// The role a single binding slot plays in a kernel's argument list -- NOT a
+/// property of a Tensor itself (the same Tensor can be bound as Input in one
+/// dispatch and InOut in another).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TensorMode {
+pub enum BindingRole {
     Input,
     Output,
     InOut,
     Accumulate,
-    Meta(&'static [MetaField]),
-}
-
-impl TensorMode {
-    pub const META: TensorMode = TensorMode::Meta(&[]);
+    /// `dynamic`: this call's meta buffer changes value between dispatches of
+    /// the *same* captured graph (e.g. decode's advancing position), so a
+    /// backend must not bake its contents into a cached/captured dispatch.
+    Meta {
+        fields: MetaSlot,
+        dynamic: bool,
+    },
 }
 
 pub struct Binding<'a, Buf> {
     pub slot: u32,
     pub buffer: &'a Buf,
-    pub mode: TensorMode,
+    pub mode: BindingRole,
 }
 
 impl<'a, Buf> Binding<'a, Buf> {
     #[inline]
-    pub fn new(slot: u32, buffer: &'a Buf, mode: TensorMode) -> Self {
+    pub fn new(slot: u32, buffer: &'a Buf, mode: BindingRole) -> Self {
         Self { slot, buffer, mode }
     }
 }
 
 pub struct Shader {
     pub name: &'static str,
-    pub layout: &'static [TensorMode],
+    pub layout: &'static [BindingRole],
     pub dispatch: &'static [BackendDispatch],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MetaField {
-    U32,
-    F32,
+    Uint,
+    Float,
+}
+
+pub type MetaSlot = &'static [MetaField];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Workgroups {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+impl Workgroups {
+    pub const fn linear(n: u32) -> Self {
+        Self { x: n, y: 1, z: 1 }
+    }
+
+    fn dims(self) -> [u32; 3] {
+        [self.x, self.y, self.z]
+    }
 }
 
 pub trait DataType: Copy + Send + Sync + 'static {
@@ -92,10 +116,10 @@ pub trait Node: Clone + Send + Sync + 'static {
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
     fn shader(&self) -> &'static Shader;
-    fn workgroups(&self) -> [u32; 3];
+    fn workgroups(&self) -> Workgroups;
 
-    fn validate_workgroups(wg: [u32; 3]) -> Result<(), String> {
-        if wg.iter().all(|&d| d <= Self::MAX_WORKGROUPS_PER_DIM) {
+    fn validate_workgroups(wg: Workgroups) -> Result<(), String> {
+        if wg.dims().iter().all(|&d| d <= Self::MAX_WORKGROUPS_PER_DIM) {
             Ok(())
         } else {
             Err(format!(
@@ -119,7 +143,7 @@ pub trait Backend: Send + Sync + 'static {
         &self,
         shader: &'static Shader,
         bindings: &[Binding<Self::Buffer>],
-        workgroups: [u32; 3],
+        workgroups: Workgroups,
     ) -> Self::Node;
     fn execute(&self, nodes: &[Self::Node]);
     fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
@@ -165,15 +189,33 @@ impl<B: SupportsDType<D>, D: DataType> Tensor<B, D> {
         }
     }
 
+    fn host_words(&self) -> usize {
+        self.elem_count.div_ceil(D::ELEMS_PER_HOST_WORD as usize)
+    }
+
     pub fn copy_from_cpu(&self, data: &[D::HostRepr]) {
+        assert_eq!(
+            data.len(),
+            self.host_words(),
+            "Tensor::copy_from_cpu: buffer holds {} host word(s) but {} were given",
+            self.host_words(),
+            data.len()
+        );
         self.ctx.upload(&self.buffer, data);
     }
 
     pub fn to_cpu(&self) -> Vec<D::HostRepr> {
-        let host_words = self.elem_count.div_ceil(D::ELEMS_PER_HOST_WORD as usize);
         let mut v = self.ctx.download(&self.buffer);
-        v.truncate(host_words);
+        v.truncate(self.host_words());
         v
+    }
+
+    pub fn perm_drop(self) {
+        let this = std::mem::ManuallyDrop::new(self);
+
+        let ctx = unsafe { std::ptr::read(&this.ctx) };
+        let buffer = unsafe { std::ptr::read(&this.buffer) };
+        ctx.free_buffer(buffer);
     }
 }
 
@@ -206,10 +248,14 @@ impl<B: Backend> ComputeGraph<B> {
         &mut self,
         shader: &'static Shader,
         bindings: &[Binding<B::Buffer>],
-        workgroups: [u32; 3],
+        workgroups: Workgroups,
     ) {
+        B::Node::validate_workgroups(workgroups)
+            .unwrap_or_else(|e| panic!("kernel `{}`: {e}", shader.name));
+
         let layout = shader.layout;
         let name = shader.name;
+        let mut covered = vec![false; layout.len()];
         for b in bindings {
             let expected = layout.get(b.slot as usize).unwrap_or_else(|| {
                 panic!(
@@ -226,7 +272,14 @@ impl<B: Backend> ComputeGraph<B> {
                 expected,
                 b.mode
             );
+            covered[b.slot as usize] = true;
         }
+        assert!(
+            covered.iter().all(|&c| c),
+            "Tensor Mode Mismatch: kernel `{name}` expects {} binding(s), only {} were supplied",
+            layout.len(),
+            covered.iter().filter(|&&c| c).count()
+        );
 
         let node = self.ctx.build_node(shader, bindings, workgroups);
         self.nodes.push(node);
@@ -290,8 +343,8 @@ mod smoke {
         fn shader(&self) -> &'static Shader {
             &TOY_SHADER
         }
-        fn workgroups(&self) -> [u32; 3] {
-            [1, 1, 1]
+        fn workgroups(&self) -> Workgroups {
+            Workgroups::linear(1)
         }
     }
 
@@ -308,7 +361,7 @@ mod smoke {
             &self,
             _s: &'static Shader,
             _b: &[Binding<Self::Buffer>],
-            _wg: [u32; 3],
+            _wg: Workgroups,
         ) -> Self::Node {
             ToyNode
         }
