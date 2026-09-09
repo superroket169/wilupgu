@@ -20,3 +20,21 @@ pub use rayon::RayonBackend;
 
 #[cfg(feature = "vulkano")]
 pub mod vulkano;
+
+pub type CpuBuffer = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
+#[derive(Clone)]
+pub struct CpuBinding {
+    pub slot: u32,
+    pub buffer: CpuBuffer,
+}
+
+pub enum BackendDispatch {
+    Wgpu(&'static str),
+    #[cfg(feature = "cpu")]
+    Cpu(fn(&[CpuBinding])),
+    #[cfg(feature = "rayon")]
+    Rayon(fn(&[CpuBinding])),
+    #[cfg(feature = "cuda")]
+    Cuda(cuda::CudaDispatch),
+}
