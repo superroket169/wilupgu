@@ -1,7 +1,7 @@
 use crate::backend::{Backend, Binding, Dtype, TensorMode};
 use crate::builtin::cuda_kernels as k;
 use crate::pool::BufferPool;
-use crate::shader::{CudaShape, MetaField, Shader};
+use crate::shader::{MetaField, Shader};
 use cudarc::cublas::sys::{
     cublasMath_t, cublasOperation_t, cublasSetMathMode, cublasSetWorkspace_v2, cublasStatus_t,
 };
@@ -14,6 +14,20 @@ use cudarc::driver::{
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+pub struct CudaDispatch {
+    pub src: &'static str,
+    pub entry: &'static str,
+    pub shape: CudaShape,
+}
+
+pub enum CudaShape {
+    Generic {
+        block_dim: (u32, u32, u32),
+        append_len: bool,
+    },
+    Custom(fn(&'static crate::traits::Shader, &CudaBackend, &[CudaBinding], [u32; 3])),
+}
 
 #[derive(Clone)]
 pub enum CudaBuffer {
@@ -562,7 +576,7 @@ impl CudaBackend {
             .unwrap_or_else(|| panic!("[cuda] shader `{}` has no cuda impl", node.shader.name));
 
         match &spec.shape {
-            CudaShape::Generic {
+            crate::shader::CudaShape::Generic {
                 meta_fields,
                 block_dim,
                 append_len,
@@ -576,7 +590,7 @@ impl CudaBackend {
                 b,
                 wg,
             ),
-            CudaShape::Custom(f) => f(node.shader, self, b, wg),
+            crate::shader::CudaShape::Custom(f) => f(node.shader, self, b, wg),
         }
     }
 

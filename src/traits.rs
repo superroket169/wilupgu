@@ -1,5 +1,6 @@
-use crate::shader::Shader;
+use crate::backends::BackendDispatch;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,7 +9,11 @@ pub enum TensorMode {
     Output,
     InOut,
     Accumulate,
-    Meta,
+    Meta(&'static [MetaField]),
+}
+
+impl TensorMode {
+    pub const META: TensorMode = TensorMode::Meta(&[]);
 }
 
 pub struct Binding<'a, Buf> {
@@ -22,6 +27,18 @@ impl<'a, Buf> Binding<'a, Buf> {
     pub fn new(slot: u32, buffer: &'a Buf, mode: TensorMode) -> Self {
         Self { slot, buffer, mode }
     }
+}
+
+pub struct Shader {
+    pub name: &'static str,
+    pub layout: &'static [TensorMode],
+    pub dispatch: &'static [BackendDispatch],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MetaField {
+    U32,
+    F32,
 }
 
 pub trait DataType: Copy + Send + Sync + 'static {
@@ -74,6 +91,7 @@ pub trait Buffer: Clone + Send + Sync + 'static {
 pub trait Node: Clone + Send + Sync + 'static {
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
+    fn shader(&self) -> &'static Shader;
     fn workgroups(&self) -> [u32; 3];
 
     fn validate_workgroups(wg: [u32; 3]) -> Result<(), String> {
@@ -167,6 +185,83 @@ impl<B: SupportsDType<D>, D: DataType> Drop for Tensor<B, D> {
     }
 }
 
+static NEXT_GRAPH_ID: AtomicUsize = AtomicUsize::new(0);
+
+pub struct ComputeGraph<B: Backend> {
+    ctx: Arc<B>,
+    id: usize,
+    nodes: Vec<B::Node>,
+}
+
+impl<B: Backend> ComputeGraph<B> {
+    pub fn new(ctx: Arc<B>) -> Self {
+        Self {
+            ctx,
+            id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
+            nodes: Vec::new(),
+        }
+    }
+
+    pub fn add_node(
+        &mut self,
+        shader: &'static Shader,
+        bindings: &[Binding<B::Buffer>],
+        workgroups: [u32; 3],
+    ) {
+        let layout = shader.layout;
+        let name = shader.name;
+        for b in bindings {
+            let expected = layout.get(b.slot as usize).unwrap_or_else(|| {
+                panic!(
+                    "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects {} bindings)",
+                    b.slot,
+                    layout.len()
+                )
+            });
+            assert_eq!(
+                std::mem::discriminant(expected),
+                std::mem::discriminant(&b.mode),
+                "Tensor Mode Mismatch: kernel `{name}` slot {} expects {:?}, got {:?}",
+                b.slot,
+                expected,
+                b.mode
+            );
+        }
+
+        let node = self.ctx.build_node(shader, bindings, workgroups);
+        self.nodes.push(node);
+    }
+
+    pub fn execute(&self) {
+        self.ctx.execute(&self.nodes);
+    }
+
+    pub fn execute_captured(&self) {
+        self.ctx.execute_captured(self.id, &self.nodes);
+    }
+}
+
+impl<B: Backend> Drop for ComputeGraph<B> {
+    fn drop(&mut self) {
+        self.ctx.release_captured(self.id);
+    }
+}
+
+pub fn fuse_compute_graphs<B: Backend>(
+    ctx: Arc<B>,
+    graphs: &[&ComputeGraph<B>],
+) -> ComputeGraph<B> {
+    let nodes = graphs
+        .iter()
+        .flat_map(|g| g.nodes.iter().cloned())
+        .collect();
+    ComputeGraph {
+        ctx,
+        id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
+        nodes,
+    }
+}
+
 #[cfg(test)]
 mod smoke {
     use super::*;
@@ -183,9 +278,18 @@ mod smoke {
         }
     }
 
+    static TOY_SHADER: Shader = Shader {
+        name: "Toy",
+        layout: &[],
+        dispatch: &[],
+    };
+
     #[derive(Clone)]
     struct ToyNode;
     impl Node for ToyNode {
+        fn shader(&self) -> &'static Shader {
+            &TOY_SHADER
+        }
         fn workgroups(&self) -> [u32; 3] {
             [1, 1, 1]
         }
@@ -200,7 +304,12 @@ mod smoke {
         }
         fn free_buffer(&self, _buf: Self::Buffer) {}
         fn recycle(&self, _buf: Self::Buffer) {}
-        fn build_node(&self, _s: &'static Shader, _b: &[Binding<Self::Buffer>], _wg: [u32; 3]) -> Self::Node {
+        fn build_node(
+            &self,
+            _s: &'static Shader,
+            _b: &[Binding<Self::Buffer>],
+            _wg: [u32; 3],
+        ) -> Self::Node {
             ToyNode
         }
         fn execute(&self, _nodes: &[Self::Node]) {}
