@@ -1,15 +1,36 @@
 use crate::backends::BackendDispatch;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingRole {
-    Input,
-    Output,
-    InOut,
-    Accumulate,
+    Input(DataKind),
+    Output(DataKind),
+    InOut(DataKind),
+    Accumulate(DataKind),
     Meta { fields: MetaSlot, kind: MetaKind },
+}
+
+impl BindingRole {
+    fn accepts(&self, actual: &BindingRole) -> bool {
+        match (self, actual) {
+            (BindingRole::Input(a), BindingRole::Input(b)) => a == b,
+            (BindingRole::Output(a), BindingRole::Output(b)) => a == b,
+            (BindingRole::InOut(a), BindingRole::InOut(b)) => a == b,
+            (BindingRole::Accumulate(a), BindingRole::Accumulate(b)) => a == b,
+            (BindingRole::Meta { .. }, BindingRole::Meta { .. }) => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataKind {
+    F32,
+    F16,
+    Bf16,
+    Int8,
+    Int4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +87,7 @@ pub trait DataType: Copy + Send + Sync + 'static {
     type HostRepr: bytemuck::Pod + Default + Clone;
     const BITS_PER_ELEM: u32;
     const ELEMS_PER_HOST_WORD: u32 = 1;
+    const KIND: DataKind;
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +95,7 @@ pub struct F32;
 impl DataType for F32 {
     type HostRepr = f32;
     const BITS_PER_ELEM: u32 = 32;
+    const KIND: DataKind = DataKind::F32;
 }
 
 #[derive(Clone, Copy)]
@@ -80,6 +103,7 @@ pub struct F16;
 impl DataType for F16 {
     type HostRepr = half::f16;
     const BITS_PER_ELEM: u32 = 16;
+    const KIND: DataKind = DataKind::F16;
 }
 
 #[derive(Clone, Copy)]
@@ -87,6 +111,7 @@ pub struct Bf16;
 impl DataType for Bf16 {
     type HostRepr = half::bf16;
     const BITS_PER_ELEM: u32 = 16;
+    const KIND: DataKind = DataKind::Bf16;
 }
 
 #[derive(Clone, Copy)]
@@ -94,6 +119,7 @@ pub struct Int8;
 impl DataType for Int8 {
     type HostRepr = u8;
     const BITS_PER_ELEM: u32 = 8;
+    const KIND: DataKind = DataKind::Int8;
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +128,7 @@ impl DataType for Int4 {
     type HostRepr = u32;
     const BITS_PER_ELEM: u32 = 4;
     const ELEMS_PER_HOST_WORD: u32 = 8;
+    const KIND: DataKind = DataKind::Int4;
 }
 
 pub trait Buffer: Clone + Send + Sync + 'static {
@@ -127,14 +154,13 @@ pub trait Node: Clone + Send + Sync + 'static {
     }
 }
 
-pub trait Backend: Send + Sync + 'static {
+pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
+    fn drop_buffer(&self, buf: Self::Buffer);
+}
+
+pub trait Dispatch: Storage {
     type Node: Node;
-
-    fn name(&self) -> &'static str;
-
-    fn free_buffer(&self, buf: Self::Buffer);
-    fn recycle(&self, buf: Self::Buffer);
 
     fn build_node(
         &self,
@@ -143,14 +169,18 @@ pub trait Backend: Send + Sync + 'static {
         workgroups: Workgroups,
     ) -> Self::Node;
     fn execute(&self, nodes: &[Self::Node]);
-    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
-        self.execute(nodes);
-    }
-    fn release_captured(&self, _key: usize) {}
     fn synchronize(&self);
 }
 
-pub trait SupportsDType<D: DataType>: Backend {
+pub trait Backend: Dispatch {}
+impl<T: Dispatch> Backend for T {}
+
+pub trait Capturable: Dispatch {
+    fn execute_captured(&self, key: usize, nodes: &[Self::Node]);
+    fn release_captured(&self, key: usize);
+}
+
+pub trait SupportsDType<D: DataType>: Storage {
     fn alloc(&self, elem_count: usize) -> Self::Buffer;
     fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
     fn download(&self, buf: &Self::Buffer) -> Vec<D::HostRepr>;
@@ -206,29 +236,18 @@ impl<B: SupportsDType<D>, D: DataType> Tensor<B, D> {
         v.truncate(self.host_words());
         v
     }
-
-    pub fn perm_drop(self) {
-        let this = std::mem::ManuallyDrop::new(self);
-
-        let ctx = unsafe { std::ptr::read(&this.ctx) };
-        let buffer = unsafe { std::ptr::read(&this.buffer) };
-        ctx.free_buffer(buffer);
-    }
 }
 
 impl<B: SupportsDType<D>, D: DataType> Drop for Tensor<B, D> {
     fn drop(&mut self) {
         if self.buffer.is_sole_owner() {
-            self.ctx.recycle(self.buffer.clone());
+            self.ctx.drop_buffer(self.buffer.clone());
         }
     }
 }
 
-static NEXT_GRAPH_ID: AtomicUsize = AtomicUsize::new(0);
-
 pub struct ComputeGraph<B: Backend> {
     ctx: Arc<B>,
-    id: usize,
     nodes: Vec<B::Node>,
     has_dynamic_meta: bool,
 }
@@ -237,7 +256,6 @@ impl<B: Backend> ComputeGraph<B> {
     pub fn new(ctx: Arc<B>) -> Self {
         Self {
             ctx,
-            id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
             nodes: Vec::new(),
             has_dynamic_meta: false,
         }
@@ -263,9 +281,8 @@ impl<B: Backend> ComputeGraph<B> {
                     layout.len()
                 )
             });
-            assert_eq!(
-                std::mem::discriminant(expected),
-                std::mem::discriminant(&b.mode),
+            assert!(
+                expected.accepts(&b.mode),
                 "Tensor Mode Mismatch: kernel `{name}` slot {} expects {:?}, got {:?}",
                 b.slot,
                 expected,
@@ -295,19 +312,19 @@ impl<B: Backend> ComputeGraph<B> {
     pub fn execute(&self) {
         self.ctx.execute(&self.nodes);
     }
+}
 
-    pub fn execute_captured(&self) {
+impl<B: Capturable> ComputeGraph<B> {
+    pub fn execute_captured(&self, key: usize) {
         assert!(
             !self.has_dynamic_meta,
             "ComputeGraph: cannot capture a graph containing a Dynamic Meta"
         );
-        self.ctx.execute_captured(self.id, &self.nodes);
+        self.ctx.execute_captured(key, &self.nodes);
     }
-}
 
-impl<B: Backend> Drop for ComputeGraph<B> {
-    fn drop(&mut self) {
-        self.ctx.release_captured(self.id);
+    pub fn release_captured(&self, key: usize) {
+        self.ctx.release_captured(key);
     }
 }
 
@@ -323,7 +340,6 @@ pub fn fuse_compute_graphs<B: Backend>(
 
     ComputeGraph {
         ctx,
-        id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
         nodes,
         has_dynamic_meta,
     }
@@ -363,14 +379,12 @@ mod smoke {
     }
 
     struct ToyBackend;
-    impl Backend for ToyBackend {
+    impl Storage for ToyBackend {
         type Buffer = ToyBuffer;
+        fn drop_buffer(&self, _buf: Self::Buffer) {}
+    }
+    impl Dispatch for ToyBackend {
         type Node = ToyNode;
-        fn name(&self) -> &'static str {
-            "toy"
-        }
-        fn free_buffer(&self, _buf: Self::Buffer) {}
-        fn recycle(&self, _buf: Self::Buffer) {}
         fn build_node(
             &self,
             _s: &'static Shader,
@@ -381,6 +395,13 @@ mod smoke {
         }
         fn execute(&self, _nodes: &[Self::Node]) {}
         fn synchronize(&self) {}
+    }
+
+    impl Capturable for ToyBackend {
+        fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
+            self.execute(nodes);
+        }
+        fn release_captured(&self, _key: usize) {}
     }
 
     // ToyBackend only ever implements SupportsDType<F32> -- on purpose.
@@ -413,7 +434,7 @@ mod smoke {
     };
 
     #[test]
-    #[should_panic(expected = "Dynamic Meta binding")]
+    #[should_panic(expected = "Dynamic Meta")]
     fn dynamic_meta_cannot_be_captured() {
         let ctx = StdArc::new(ToyBackend);
         let meta = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
@@ -430,7 +451,7 @@ mod smoke {
             )],
             Workgroups::linear(1),
         );
-        graph.execute_captured();
+        graph.execute_captured(0);
     }
 
     #[test]
@@ -450,7 +471,26 @@ mod smoke {
             )],
             Workgroups::linear(1),
         );
-        graph.execute_captured();
+        graph.execute_captured(0);
+    }
+
+    static F32_INPUT_SHADER: Shader = Shader {
+        name: "F32Input",
+        layout: &[BindingRole::Input(DataKind::F32)],
+        dispatch: &[],
+    };
+
+    #[test]
+    #[should_panic(expected = "Tensor Mode Mismatch")]
+    fn wrong_dtype_binding_is_rejected() {
+        let ctx = StdArc::new(ToyBackend);
+        let buf = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let mut graph = ComputeGraph::new(ctx);
+        graph.add_node(
+            &F32_INPUT_SHADER,
+            &[Binding::new(0, &buf, BindingRole::Input(DataKind::Int8))],
+            Workgroups::linear(1),
+        );
     }
 
     // Uncommenting this must NOT compile -- ToyBackend never implements
