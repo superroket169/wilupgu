@@ -154,6 +154,19 @@ pub trait Node: Clone + Send + Sync + 'static {
     }
 }
 
+pub trait Device: Clone + std::fmt::Debug + Send + Sync + 'static {
+    fn label(&self) -> String;
+    fn total_memory_bytes(&self) -> u64;
+}
+
+pub trait Topology: Sized + Send + Sync + 'static {
+    type Device: Device;
+
+    fn choosable_devices() -> Vec<Self::Device>;
+    fn attach(device: Self::Device) -> Result<Self, String>;
+    fn name(&self) -> &'static str;
+}
+
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
     fn drop_buffer(&self, buf: Self::Buffer);
@@ -184,6 +197,22 @@ pub trait SupportsDType<D: DataType>: Storage {
     fn alloc(&self, elem_count: usize) -> Self::Buffer;
     fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
     fn download(&self, buf: &Self::Buffer) -> Vec<D::HostRepr>;
+}
+
+pub trait Area: Send + Sync + 'static {
+    fn size_bytes(&self) -> u64;
+    fn remaining_bytes(&self) -> u64;
+}
+
+pub trait Areable: Storage {
+    type Area: Area;
+
+    fn reserve(&self, total_bytes: u64) -> Self::Area;
+    fn release(&self, area: Self::Area);
+}
+
+pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
+    fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
 }
 
 pub struct Tensor<B: SupportsDType<D>, D: DataType> {
@@ -422,6 +451,73 @@ mod smoke {
         let ctx = StdArc::new(ToyBackend);
         let t: Tensor<ToyBackend, F32> = Tensor::init_from_cpu(ctx, &[1.0, 2.0, 3.0]);
         assert_eq!(t.to_cpu(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[derive(Clone, Debug)]
+    struct ToyDevice(u32);
+
+    impl Device for ToyDevice {
+        fn label(&self) -> String {
+            format!("toy-device-{}", self.0)
+        }
+        fn total_memory_bytes(&self) -> u64 {
+            1024
+        }
+    }
+
+    impl Topology for ToyBackend {
+        type Device = ToyDevice;
+        fn choosable_devices() -> Vec<Self::Device> {
+            vec![ToyDevice(0), ToyDevice(1)]
+        }
+        fn attach(_device: Self::Device) -> Result<Self, String> {
+            Ok(ToyBackend)
+        }
+        fn name(&self) -> &'static str {
+            "toy"
+        }
+    }
+
+    #[test]
+    fn topology_enumerate_then_attach() {
+        let devices = ToyBackend::choosable_devices();
+        assert_eq!(devices.len(), 2);
+        let backend = ToyBackend::attach(devices[0].clone()).unwrap();
+        assert_eq!(backend.name(), "toy");
+    }
+
+    struct ToyArea;
+
+    impl Area for ToyArea {
+        fn size_bytes(&self) -> u64 {
+            1024
+        }
+        fn remaining_bytes(&self) -> u64 {
+            1024
+        }
+    }
+
+    impl Areable for ToyBackend {
+        type Area = ToyArea;
+        fn reserve(&self, _total_bytes: u64) -> Self::Area {
+            ToyArea
+        }
+        fn release(&self, _area: Self::Area) {}
+    }
+
+    impl SupportsCarve<F32> for ToyBackend {
+        fn carve(&self, _area: &mut Self::Area, elem_count: usize) -> Self::Buffer {
+            ToyBuffer(StdArc::new(Mutex::new(vec![0u8; elem_count * 4])))
+        }
+    }
+
+    #[test]
+    fn carve_from_area() {
+        let ctx = StdArc::new(ToyBackend);
+        let mut area = ctx.reserve(1024);
+        let buf = ctx.carve(&mut area, 4);
+        assert_eq!(buf.size_bytes(), 16);
+        ctx.release(area);
     }
 
     static META_SHADER: Shader = Shader {
