@@ -3,22 +3,19 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// The role a single binding slot plays in a kernel's argument list -- NOT a
-/// property of a Tensor itself (the same Tensor can be bound as Input in one
-/// dispatch and InOut in another).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingRole {
     Input,
     Output,
     InOut,
     Accumulate,
-    /// `dynamic`: this call's meta buffer changes value between dispatches of
-    /// the *same* captured graph (e.g. decode's advancing position), so a
-    /// backend must not bake its contents into a cached/captured dispatch.
-    Meta {
-        fields: MetaSlot,
-        dynamic: bool,
-    },
+    Meta { fields: MetaSlot, kind: MetaKind },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetaKind {
+    Static,
+    Dynamic,
 }
 
 pub struct Binding<'a, Buf> {
@@ -233,6 +230,7 @@ pub struct ComputeGraph<B: Backend> {
     ctx: Arc<B>,
     id: usize,
     nodes: Vec<B::Node>,
+    has_dynamic_meta: bool,
 }
 
 impl<B: Backend> ComputeGraph<B> {
@@ -241,6 +239,7 @@ impl<B: Backend> ComputeGraph<B> {
             ctx,
             id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
             nodes: Vec::new(),
+            has_dynamic_meta: false,
         }
     }
 
@@ -273,6 +272,14 @@ impl<B: Backend> ComputeGraph<B> {
                 b.mode
             );
             covered[b.slot as usize] = true;
+
+            if let BindingRole::Meta {
+                kind: MetaKind::Dynamic,
+                ..
+            } = b.mode
+            {
+                self.has_dynamic_meta = true;
+            }
         }
         assert!(
             covered.iter().all(|&c| c),
@@ -290,6 +297,10 @@ impl<B: Backend> ComputeGraph<B> {
     }
 
     pub fn execute_captured(&self) {
+        assert!(
+            !self.has_dynamic_meta,
+            "ComputeGraph: cannot capture a graph containing a Dynamic Meta"
+        );
         self.ctx.execute_captured(self.id, &self.nodes);
     }
 }
@@ -308,10 +319,13 @@ pub fn fuse_compute_graphs<B: Backend>(
         .iter()
         .flat_map(|g| g.nodes.iter().cloned())
         .collect();
+    let has_dynamic_meta = graphs.iter().any(|g| g.has_dynamic_meta);
+
     ComputeGraph {
         ctx,
         id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
         nodes,
+        has_dynamic_meta,
     }
 }
 
@@ -387,6 +401,56 @@ mod smoke {
         let ctx = StdArc::new(ToyBackend);
         let t: Tensor<ToyBackend, F32> = Tensor::init_from_cpu(ctx, &[1.0, 2.0, 3.0]);
         assert_eq!(t.to_cpu(), vec![1.0, 2.0, 3.0]);
+    }
+
+    static META_SHADER: Shader = Shader {
+        name: "MetaOnly",
+        layout: &[BindingRole::Meta {
+            fields: &[],
+            kind: MetaKind::Static,
+        }],
+        dispatch: &[],
+    };
+
+    #[test]
+    #[should_panic(expected = "Dynamic Meta binding")]
+    fn dynamic_meta_cannot_be_captured() {
+        let ctx = StdArc::new(ToyBackend);
+        let meta = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let mut graph = ComputeGraph::new(ctx);
+        graph.add_node(
+            &META_SHADER,
+            &[Binding::new(
+                0,
+                &meta,
+                BindingRole::Meta {
+                    fields: &[],
+                    kind: MetaKind::Dynamic,
+                },
+            )],
+            Workgroups::linear(1),
+        );
+        graph.execute_captured();
+    }
+
+    #[test]
+    fn static_meta_can_be_captured() {
+        let ctx = StdArc::new(ToyBackend);
+        let meta = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let mut graph = ComputeGraph::new(ctx);
+        graph.add_node(
+            &META_SHADER,
+            &[Binding::new(
+                0,
+                &meta,
+                BindingRole::Meta {
+                    fields: &[],
+                    kind: MetaKind::Static,
+                },
+            )],
+            Workgroups::linear(1),
+        );
+        graph.execute_captured();
     }
 
     // Uncommenting this must NOT compile -- ToyBackend never implements
