@@ -129,9 +129,13 @@ impl DataType for Int4 {
     const KIND: DataKind = DataKind::Int4;
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BufferId(pub u64);
+
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
     fn is_sole_owner(&self) -> bool;
+    fn id(&self) -> BufferId;
 }
 
 pub trait Node: Clone + Send + Sync + 'static {
@@ -213,6 +217,129 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
     fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
 }
 
+pub struct NodeSpec<'a, Buf> {
+    pub shader: &'static Shader,
+    pub bindings: &'a [Binding<'a, Buf>],
+    pub workgroups: Workgroups,
+}
+
+fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
+    N::validate_workgroups(spec.workgroups)
+        .map_err(|e| format!("kernel `{}`: {e}", spec.shader.name))?;
+
+    let layout = spec.shader.layout;
+    let name = spec.shader.name;
+    let mut covered = vec![false; layout.len()];
+    let mut has_dynamic_meta = false;
+
+    for b in spec.bindings {
+        let expected = layout.get(b.slot as usize).ok_or_else(|| {
+            format!(
+                "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects {} bindings)",
+                b.slot,
+                layout.len()
+            )
+        })?;
+        if !expected.accepts(&b.mode) {
+            return Err(format!(
+                "Tensor Mode Mismatch: kernel `{name}` slot {} expects {:?}, got {:?}",
+                b.slot, expected, b.mode
+            ));
+        }
+
+        covered[b.slot as usize] = true;
+        if let BindingRole::Meta {
+            kind: MetaKind::Dynamic,
+            ..
+        } = b.mode
+        {
+            has_dynamic_meta = true;
+        }
+    }
+
+    if !covered.iter().all(|&c| c) {
+        return Err(format!(
+            "Tensor Mode Mismatch: kernel `{name}` expects {} binding(s), only {} were supplied",
+            layout.len(),
+            covered.iter().filter(|&&c| c).count()
+        ));
+    }
+    Ok(has_dynamic_meta)
+}
+
+fn check_hazards<Buf: Buffer>(specs: &[NodeSpec<Buf>]) -> Result<(), String> {
+    let mut last_write: std::collections::HashMap<BufferId, usize> =
+        std::collections::HashMap::new();
+
+    for (i, spec) in specs.iter().enumerate() {
+        for b in spec.bindings {
+            let id = b.buffer.id();
+
+            match b.mode {
+                BindingRole::Output(_) | BindingRole::InOut(_) => {
+                    if let Some(&prev) = last_write.get(&id) {
+                        return Err(format!(
+                            "Buffer hazard: dispatch {i} writes a buffer already written by \
+                             dispatch {prev} with nothing establishing their order"
+                        ));
+                    }
+                    last_write.insert(id, i);
+                }
+                BindingRole::Accumulate(_) => {
+                    last_write.insert(id, i);
+                }
+                BindingRole::Input(_) | BindingRole::Meta { .. } => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+pub enum DispatchPlan {
+    Captured {
+        key: usize,
+        nodes: std::ops::Range<usize>,
+    },
+    Streamed {
+        nodes: std::ops::Range<usize>,
+    },
+}
+
+pub struct Graph<B: Backend> {
+    ctx: std::sync::Arc<B>,
+    nodes: Vec<B::Node>,
+    plan: Vec<DispatchPlan>,
+}
+
+impl<B: Backend> Graph<B> {
+    pub fn build(ctx: std::sync::Arc<B>, specs: &[NodeSpec<B::Buffer>]) -> Result<Self, String> {
+        for spec in specs {
+            validate_spec::<B::Node, _>(spec)?;
+        }
+        check_hazards(specs)?;
+
+        let nodes: Vec<B::Node> = specs
+            .iter()
+            .map(|s| ctx.build_node(s.shader, s.bindings, s.workgroups))
+            .collect();
+        let plan = vec![DispatchPlan::Streamed {
+            nodes: 0..nodes.len(),
+        }];
+
+        Ok(Self { ctx, nodes, plan })
+    }
+
+    pub fn run(&self) {
+        for segment in &self.plan {
+            match segment {
+                DispatchPlan::Streamed { nodes } => self.ctx.execute(&self.nodes[nodes.clone()]),
+                DispatchPlan::Captured { .. } => {
+                    unreachable!("base Graph::build never produces a Captured segment")
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod smoke {
@@ -227,6 +354,9 @@ mod smoke {
         }
         fn is_sole_owner(&self) -> bool {
             StdArc::strong_count(&self.0) == 1
+        }
+        fn id(&self) -> BufferId {
+            BufferId(StdArc::as_ptr(&self.0) as u64)
         }
     }
 
@@ -353,4 +483,59 @@ mod smoke {
         ctx.release(area);
     }
 
+    static COPY_SHADER: Shader = Shader {
+        name: "Copy",
+        layout: &[
+            BindingRole::Input(DataKind::F32),
+            BindingRole::Output(DataKind::F32),
+        ],
+        dispatch: &[],
+    };
+
+    #[test]
+    fn graph_build_and_run() {
+        let ctx = StdArc::new(ToyBackend);
+        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let bindings = [
+            Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
+        ];
+        let specs = [NodeSpec {
+            shader: &COPY_SHADER,
+            bindings: &bindings,
+            workgroups: Workgroups::linear(1),
+        }];
+        let graph = Graph::build(ctx, &specs).unwrap();
+        graph.run();
+    }
+
+    #[test]
+    fn graph_build_rejects_unordered_double_write() {
+        let ctx = StdArc::new(ToyBackend);
+        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let bindings1 = [
+            Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
+        ];
+        let bindings2 = [
+            Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
+        ];
+        let specs = [
+            NodeSpec {
+                shader: &COPY_SHADER,
+                bindings: &bindings1,
+                workgroups: Workgroups::linear(1),
+            },
+            NodeSpec {
+                shader: &COPY_SHADER,
+                bindings: &bindings2,
+                workgroups: Workgroups::linear(1),
+            },
+        ];
+        let err = Graph::build(ctx, &specs).err().unwrap();
+        assert!(err.contains("Buffer hazard"), "unexpected error: {err}");
+    }
 }
