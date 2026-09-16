@@ -139,6 +139,35 @@ pub struct BufferId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct DeviceId(pub u64);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TensorSpecId(u64);
+
+impl TensorSpecId {
+    fn next() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+pub enum TensorSize {
+    Fixed(u32),
+    /// this thing maximizes shaders tensors size, as per device can do
+    /// but per shader (thats at other devices) dont know others. independent
+    Maximize {
+        tag: SizeTag,
+        multiplier: u32,
+        coefficient: u32,
+    },
+    /// similar but different with Maximize
+    /// all shaders at all devices knows theys, and coefficient is common for all of them
+    Partition {
+        tag: SizeTag,
+        multiplier: u32,
+        coefficient: u32,
+    },
+}
+
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
     fn is_sole_owner(&self) -> bool;
