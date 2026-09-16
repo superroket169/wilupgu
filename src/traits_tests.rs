@@ -332,3 +332,22 @@ fn tensor_spec_ids_are_distinct() {
     let b = TensorSpec::<F32>::blank(TensorSize::Fixed(4));
     assert_ne!(a.id(), b.id());
 }
+
+#[test]
+fn supports_p2p_defaults_to_false() {
+    let ctx = ToyBackend(0);
+    assert!(!ctx.supports_p2p(DeviceId(1)));
+}
+
+#[test]
+fn copy_to_round_trips_through_host() {
+    let src = ToyBackend(0);
+    let dest = ToyBackend(1);
+    let buf = src.alloc(4);
+    src.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
+
+    let copied = src.copy_to(&buf, &dest);
+
+    assert_eq!(copied.owner(), DeviceId(1));
+    assert_eq!(dest.download(&copied), vec![1.0, 2.0, 3.0, 4.0]);
+}

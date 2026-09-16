@@ -269,6 +269,11 @@ pub trait Dispatch: Storage {
         self.execute(nodes);
     }
     fn release_captured(&self, _key: usize) {}
+
+    fn supports_p2p(&self, other: DeviceId) -> bool {
+        let _ = other;
+        false
+    }
 }
 
 pub trait Backend: Dispatch {}
@@ -278,6 +283,13 @@ pub trait SupportsDType<D: DataType>: Storage {
     fn alloc(&self, elem_count: usize) -> Self::Buffer;
     fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
     fn download(&self, buf: &Self::Buffer) -> Vec<D::HostRepr>;
+
+    fn copy_to(&self, buf: &Self::Buffer, dest: &Self) -> Self::Buffer {
+        let data = self.download(buf);
+        let new_buf = dest.alloc(data.len());
+        dest.upload(&new_buf, &data);
+        new_buf
+    }
 }
 
 pub trait Area: Send + Sync + 'static {
