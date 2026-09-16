@@ -1,6 +1,6 @@
 use crate::backends::BackendDispatch;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingRole {
     Input(DataKind),
     Output(DataKind),
@@ -31,10 +31,14 @@ pub enum DataKind {
     Int4,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SizeTag(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetaKind {
     Static,
     Dynamic,
+    Maximized(SizeTag),
 }
 
 pub struct Binding<'a, Buf> {
@@ -222,10 +226,23 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
     fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndependentKind {
+    Replicate,
+    Partition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Distribution {
+    Independent(IndependentKind),
+    Dependent,
+}
+
 pub struct NodeSpec<'a, Buf> {
     pub shader: &'static Shader,
     pub bindings: &'a [Binding<'a, Buf>],
     pub workgroups: Workgroups,
+    pub distribution: Distribution,
 }
 
 fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
@@ -256,7 +273,7 @@ fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
         if let BindingRole::Meta {
             kind: MetaKind::Dynamic,
             ..
-        } = b.mode
+        } = &b.mode
         {
             has_dynamic_meta = true;
         }
@@ -297,7 +314,7 @@ fn check_hazards<Buf: Buffer>(specs: &[NodeSpec<Buf>]) -> Result<(), String> {
         for b in spec.bindings {
             let id = b.buffer.id();
 
-            match b.mode {
+            match &b.mode {
                 BindingRole::Output(_) | BindingRole::InOut(_) => {
                     if let Some(&prev) = last_write.get(&id) {
                         return Err(format!(
@@ -554,6 +571,39 @@ mod smoke {
         dispatch: &[],
     };
 
+    static META_SHADER: Shader = Shader {
+        name: "MetaEcho",
+        layout: &[BindingRole::Meta {
+            fields: &[MetaField::Uint],
+            kind: MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
+        }],
+        dispatch: &[],
+    };
+
+    #[test]
+    fn maximized_meta_is_not_flagged_dynamic() {
+        let m = ToyBuffer::new(DeviceId(0), 4);
+        let bindings = [Binding::new(
+            0,
+            &m,
+            BindingRole::Meta {
+                fields: &[MetaField::Uint],
+                kind: MetaKind::Maximized(SizeTag("batch_size".to_string())),
+            },
+        )];
+        let spec = NodeSpec {
+            shader: &META_SHADER,
+            bindings: &bindings,
+            workgroups: Workgroups::linear(1),
+            distribution: Distribution::Independent(IndependentKind::Replicate),
+        };
+        let has_dynamic_meta = validate_spec::<ToyNode, _>(&spec).unwrap();
+        assert!(
+            !has_dynamic_meta,
+            "Maximized must not be treated as Dynamic"
+        );
+    }
+
     #[test]
     fn graph_build_and_run() {
         let ctx = StdArc::new(ToyBackend(0));
@@ -567,6 +617,7 @@ mod smoke {
             shader: &COPY_SHADER,
             bindings: &bindings,
             workgroups: Workgroups::linear(1),
+            distribution: Distribution::Independent(IndependentKind::Replicate),
         }];
         let graph = Graph::build(ctx, &specs).unwrap();
         graph.run();
@@ -585,6 +636,7 @@ mod smoke {
             shader: &COPY_SHADER,
             bindings: &bindings,
             workgroups: Workgroups::linear(1),
+            distribution: Distribution::Independent(IndependentKind::Replicate),
         }];
         let mut graph = Graph::build(ctx, &specs).unwrap();
         graph.capture(7, 0..1);
@@ -613,11 +665,13 @@ mod smoke {
                 shader: &COPY_SHADER,
                 bindings: &bindings1,
                 workgroups: Workgroups::linear(1),
+                distribution: Distribution::Independent(IndependentKind::Replicate),
             },
             NodeSpec {
                 shader: &COPY_SHADER,
                 bindings: &bindings2,
                 workgroups: Workgroups::linear(1),
+                distribution: Distribution::Independent(IndependentKind::Replicate),
             },
         ];
         let err = Graph::build(ctx, &specs).err().unwrap();
@@ -637,6 +691,7 @@ mod smoke {
             shader: &COPY_SHADER,
             bindings: &bindings,
             workgroups: Workgroups::linear(1),
+            distribution: Distribution::Independent(IndependentKind::Replicate),
         }];
         let err = Graph::build(ctx, &specs).err().unwrap();
         assert!(
