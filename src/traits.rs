@@ -132,10 +132,14 @@ impl DataType for Int4 {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct BufferId(pub u64);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct DeviceId(pub u64);
+
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
     fn is_sole_owner(&self) -> bool;
     fn id(&self) -> BufferId;
+    fn owner(&self) -> DeviceId;
 }
 
 pub trait Node: Clone + Send + Sync + 'static {
@@ -171,6 +175,7 @@ pub trait Topology: Sized + Send + Sync + 'static {
 
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
+    fn device_id(&self) -> DeviceId;
     fn drop_buffer(&self, buf: Self::Buffer);
 }
 
@@ -267,6 +272,23 @@ fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
     Ok(has_dynamic_meta)
 }
 
+fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec<B::Buffer>]) -> Result<(), String> {
+    let owner = ctx.device_id();
+    for (i, spec) in specs.iter().enumerate() {
+        for b in spec.bindings {
+            let actual = b.buffer.owner();
+            if actual != owner {
+                return Err(format!(
+                    "Buffer ownership mismatch: dispatch {i} (kernel `{}`) binding slot {} \
+                     belongs to device {actual:?}, but this Graph runs on {owner:?}",
+                    spec.shader.name, b.slot
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_hazards<Buf: Buffer>(specs: &[NodeSpec<Buf>]) -> Result<(), String> {
     let mut last_write: std::collections::HashMap<BufferId, usize> =
         std::collections::HashMap::new();
@@ -316,6 +338,7 @@ impl<B: Backend> Graph<B> {
         for spec in specs {
             validate_spec::<B::Node, _>(spec)?;
         }
+        check_ownership(ctx.as_ref(), specs)?;
         check_hazards(specs)?;
 
         let nodes: Vec<B::Node> = specs
@@ -379,7 +402,12 @@ mod smoke {
     use std::sync::{Arc as StdArc, Mutex};
 
     #[derive(Clone)]
-    struct ToyBuffer(StdArc<Mutex<Vec<u8>>>);
+    struct ToyBuffer(StdArc<Mutex<Vec<u8>>>, DeviceId);
+    impl ToyBuffer {
+        fn new(owner: DeviceId, bytes: usize) -> Self {
+            Self(StdArc::new(Mutex::new(vec![0u8; bytes])), owner)
+        }
+    }
     impl Buffer for ToyBuffer {
         fn size_bytes(&self) -> u64 {
             self.0.lock().unwrap().len() as u64
@@ -389,6 +417,9 @@ mod smoke {
         }
         fn id(&self) -> BufferId {
             BufferId(StdArc::as_ptr(&self.0) as u64)
+        }
+        fn owner(&self) -> DeviceId {
+            self.1
         }
     }
 
@@ -409,9 +440,12 @@ mod smoke {
         }
     }
 
-    struct ToyBackend;
+    struct ToyBackend(u64);
     impl Storage for ToyBackend {
         type Buffer = ToyBuffer;
+        fn device_id(&self) -> DeviceId {
+            DeviceId(self.0)
+        }
         fn drop_buffer(&self, _buf: Self::Buffer) {}
     }
     impl Dispatch for ToyBackend {
@@ -434,7 +468,7 @@ mod smoke {
     // ToyBackend only ever implements SupportsDType<F32> -- on purpose.
     impl SupportsDType<F32> for ToyBackend {
         fn alloc(&self, elem_count: usize) -> Self::Buffer {
-            ToyBuffer(StdArc::new(Mutex::new(vec![0u8; elem_count * 4])))
+            ToyBuffer::new(self.device_id(), elem_count * 4)
         }
         fn upload(&self, buf: &Self::Buffer, data: &[f32]) {
             *buf.0.lock().unwrap() = bytemuck::cast_slice(data).to_vec();
@@ -461,8 +495,8 @@ mod smoke {
         fn choosable_devices() -> Vec<Self::Device> {
             vec![ToyDevice(0), ToyDevice(1)]
         }
-        fn attach(_device: Self::Device) -> Result<Self, String> {
-            Ok(ToyBackend)
+        fn attach(device: Self::Device) -> Result<Self, String> {
+            Ok(ToyBackend(device.0 as u64))
         }
         fn name(&self) -> &'static str {
             "toy"
@@ -498,13 +532,13 @@ mod smoke {
 
     impl SupportsCarve<F32> for ToyBackend {
         fn carve(&self, _area: &mut Self::Area, elem_count: usize) -> Self::Buffer {
-            ToyBuffer(StdArc::new(Mutex::new(vec![0u8; elem_count * 4])))
+            ToyBuffer::new(self.device_id(), elem_count * 4)
         }
     }
 
     #[test]
     fn carve_from_area() {
-        let ctx = StdArc::new(ToyBackend);
+        let ctx = StdArc::new(ToyBackend(0));
         let mut area = ctx.reserve(1024);
         let buf = ctx.carve(&mut area, 4);
         assert_eq!(buf.size_bytes(), 16);
@@ -522,9 +556,9 @@ mod smoke {
 
     #[test]
     fn graph_build_and_run() {
-        let ctx = StdArc::new(ToyBackend);
-        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
-        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let ctx = StdArc::new(ToyBackend(0));
+        let a = ToyBuffer::new(DeviceId(0), 4);
+        let b = ToyBuffer::new(DeviceId(0), 4);
         let bindings = [
             Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
             Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -540,9 +574,9 @@ mod smoke {
 
     #[test]
     fn graph_capture_falls_back_to_execute() {
-        let ctx = StdArc::new(ToyBackend);
-        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
-        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let ctx = StdArc::new(ToyBackend(0));
+        let a = ToyBuffer::new(DeviceId(0), 4);
+        let b = ToyBuffer::new(DeviceId(0), 4);
         let bindings = [
             Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
             Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -563,9 +597,9 @@ mod smoke {
 
     #[test]
     fn graph_build_rejects_unordered_double_write() {
-        let ctx = StdArc::new(ToyBackend);
-        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
-        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let ctx = StdArc::new(ToyBackend(0));
+        let a = ToyBuffer::new(DeviceId(0), 4);
+        let b = ToyBuffer::new(DeviceId(0), 4);
         let bindings1 = [
             Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
             Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -588,5 +622,26 @@ mod smoke {
         ];
         let err = Graph::build(ctx, &specs).err().unwrap();
         assert!(err.contains("Buffer hazard"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn graph_build_rejects_foreign_buffer() {
+        let ctx = StdArc::new(ToyBackend(0));
+        let a = ToyBuffer::new(DeviceId(0), 4);
+        let b = ToyBuffer::new(DeviceId(1), 4); // allocated on a different "device"
+        let bindings = [
+            Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
+        ];
+        let specs = [NodeSpec {
+            shader: &COPY_SHADER,
+            bindings: &bindings,
+            workgroups: Workgroups::linear(1),
+        }];
+        let err = Graph::build(ctx, &specs).err().unwrap();
+        assert!(
+            err.contains("Buffer ownership mismatch"),
+            "unexpected error: {err}"
+        );
     }
 }
