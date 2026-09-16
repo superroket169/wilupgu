@@ -282,3 +282,28 @@ fn graph_build_rejects_foreign_buffer() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn tensor_spec_id_is_unique() {
+    let a = TensorSpecId::next();
+    let b = TensorSpecId::next();
+    assert_ne!(a, b);
+}
+
+#[test]
+fn tensor_size_variants_construct() {
+    let fixed = TensorSize::Fixed(128);
+    let max = TensorSize::Maximize {
+        tag: SizeTag("batch_size".to_string()),
+        multiplier: 64,
+        coefficient: 1,
+    };
+    let part = TensorSize::Partition {
+        tag: SizeTag("rows".to_string()),
+        multiplier: 64,
+        coefficient: 1,
+    };
+    assert!(matches!(fixed, TensorSize::Fixed(128)));
+    assert!(matches!(max, TensorSize::Maximize { .. }));
+    assert!(matches!(part, TensorSize::Partition { .. }));
+}
