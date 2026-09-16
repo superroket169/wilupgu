@@ -307,3 +307,28 @@ fn tensor_size_variants_construct() {
     assert!(matches!(max, TensorSize::Maximize { .. }));
     assert!(matches!(part, TensorSize::Partition { .. }));
 }
+
+#[test]
+fn tensor_spec_blank_has_no_init() {
+    let spec = TensorSpec::<F32>::blank(TensorSize::Fixed(4));
+    assert!(spec.init().is_none());
+}
+
+#[test]
+fn tensor_spec_seeded_carries_its_init() {
+    let spec = TensorSpec::<F32>::seeded(
+        TensorSize::Fixed(4),
+        InitRecipe::UploadFromHost(vec![1.0, 2.0, 3.0, 4.0]),
+    );
+    assert!(matches!(
+        spec.init(),
+        Some(InitRecipe::UploadFromHost(data)) if data.len() == 4
+    ));
+}
+
+#[test]
+fn tensor_spec_ids_are_distinct() {
+    let a = TensorSpec::<F32>::blank(TensorSize::Fixed(4));
+    let b = TensorSpec::<F32>::blank(TensorSize::Fixed(4));
+    assert_ne!(a.id(), b.id());
+}
