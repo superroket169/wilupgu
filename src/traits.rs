@@ -185,15 +185,15 @@ pub trait Dispatch: Storage {
     ) -> Self::Node;
     fn execute(&self, nodes: &[Self::Node]);
     fn synchronize(&self);
+
+    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
+        self.execute(nodes);
+    }
+    fn release_captured(&self, _key: usize) {}
 }
 
 pub trait Backend: Dispatch {}
 impl<T: Dispatch> Backend for T {}
-
-pub trait Capturable: Dispatch {
-    fn execute_captured(&self, key: usize, nodes: &[Self::Node]);
-    fn release_captured(&self, key: usize);
-}
 
 pub trait SupportsDType<D: DataType>: Storage {
     fn alloc(&self, elem_count: usize) -> Self::Buffer;
@@ -333,11 +333,43 @@ impl<B: Backend> Graph<B> {
         for segment in &self.plan {
             match segment {
                 DispatchPlan::Streamed { nodes } => self.ctx.execute(&self.nodes[nodes.clone()]),
-                DispatchPlan::Captured { .. } => {
-                    unreachable!("base Graph::build never produces a Captured segment")
+                DispatchPlan::Captured { key, nodes } => {
+                    self.ctx.execute_captured(*key, &self.nodes[nodes.clone()])
                 }
             }
         }
+    }
+
+    pub fn capture(&mut self, key: usize, range: std::ops::Range<usize>) {
+        let mut new_plan = Vec::with_capacity(self.plan.len() + 2);
+        for segment in std::mem::take(&mut self.plan) {
+            match segment {
+                DispatchPlan::Streamed { nodes } => {
+                    let overlap_start = nodes.start.max(range.start);
+                    let overlap_end = nodes.end.min(range.end);
+                    if overlap_start >= overlap_end {
+                        new_plan.push(DispatchPlan::Streamed { nodes });
+                        continue;
+                    }
+                    if nodes.start < overlap_start {
+                        new_plan.push(DispatchPlan::Streamed {
+                            nodes: nodes.start..overlap_start,
+                        });
+                    }
+                    new_plan.push(DispatchPlan::Captured {
+                        key,
+                        nodes: overlap_start..overlap_end,
+                    });
+                    if overlap_end < nodes.end {
+                        new_plan.push(DispatchPlan::Streamed {
+                            nodes: overlap_end..nodes.end,
+                        });
+                    }
+                }
+                already_captured => new_plan.push(already_captured),
+            }
+        }
+        self.plan = new_plan;
     }
 }
 
@@ -396,12 +428,8 @@ mod smoke {
         fn synchronize(&self) {}
     }
 
-    impl Capturable for ToyBackend {
-        fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
-            self.execute(nodes);
-        }
-        fn release_captured(&self, _key: usize) {}
-    }
+    // ToyBackend never overrides execute_captured/release_captured --
+    // exercises Dispatch's default (runtime-fallback) bodies.
 
     // ToyBackend only ever implements SupportsDType<F32> -- on purpose.
     impl SupportsDType<F32> for ToyBackend {
@@ -508,6 +536,29 @@ mod smoke {
         }];
         let graph = Graph::build(ctx, &specs).unwrap();
         graph.run();
+    }
+
+    #[test]
+    fn graph_capture_falls_back_to_execute() {
+        let ctx = StdArc::new(ToyBackend);
+        let a = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let b = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; 4])));
+        let bindings = [
+            Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
+        ];
+        let specs = [NodeSpec {
+            shader: &COPY_SHADER,
+            bindings: &bindings,
+            workgroups: Workgroups::linear(1),
+        }];
+        let mut graph = Graph::build(ctx, &specs).unwrap();
+        graph.capture(7, 0..1);
+        assert!(matches!(
+            graph.plan.as_slice(),
+            [DispatchPlan::Captured { key: 7, .. }]
+        ));
+        graph.run(); // ToyBackend has no real capture support, runs via the default fallback
     }
 
     #[test]
