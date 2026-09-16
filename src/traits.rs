@@ -168,6 +168,47 @@ pub enum TensorSize {
     },
 }
 
+pub enum InitRecipe<D: DataType> {
+    UploadFromHost(Vec<D::HostRepr>),
+    Zero,
+}
+
+pub struct TensorSpec<D: DataType> {
+    id: TensorSpecId,
+    size: TensorSize,
+    init: Option<InitRecipe<D>>,
+}
+
+impl<D: DataType> TensorSpec<D> {
+    pub fn blank(size: TensorSize) -> Self {
+        Self {
+            id: TensorSpecId::next(),
+            size,
+            init: None,
+        }
+    }
+
+    pub fn seeded(size: TensorSize, init: InitRecipe<D>) -> Self {
+        Self {
+            id: TensorSpecId::next(),
+            size,
+            init: Some(init),
+        }
+    }
+
+    pub fn id(&self) -> TensorSpecId {
+        self.id
+    }
+
+    pub fn size(&self) -> &TensorSize {
+        &self.size
+    }
+
+    pub fn init(&self) -> Option<&InitRecipe<D>> {
+        self.init.as_ref()
+    }
+}
+
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
     fn is_sole_owner(&self) -> bool;
