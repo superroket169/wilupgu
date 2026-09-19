@@ -10,7 +10,7 @@ implementing the `Backend` trait. Buffers are recycled through an automatic
 pool. On CUDA, f32-storage matmuls can run their compute in bf16 tensor cores
 (`set_bf16_matmul`); full quantized storage (f16/int8/int4) is future work.
 
-Currently used by **sequexa-core** (LLM engine).
+Currently used by **sequexa-core** (sequential model engine).
 
 ## Backends
 
@@ -57,4 +57,10 @@ sequexa-core's own shaders.
 
 ## License
 
-No license file is currently present in this repository.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.

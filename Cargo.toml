@@ -2,6 +2,13 @@
 name = "wilupgu"
 version = "0.4.2"
 edition = "2021"
+description = "Backend-independent tensor/dispatch library for Rust: GPU math on low-end hardware (wgpu / CUDA / CPU) with no autograd and no shape system."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/superroket169/wilupgu"
+readme = "README.md"
+keywords = ["gpu", "wgpu", "cuda", "tensor", "compute"]
+categories = ["science", "hardware-support"]
+include = ["src/**", "Cargo.toml", "LICENSE-*", "README.md"]
 
 [dependencies]
 wgpu = "30"
