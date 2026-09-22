@@ -1,5 +1,6 @@
 use super::*;
 use crate::mesh::Parallelity;
+use crate::resolver::Resolvable;
 use std::sync::{Arc as StdArc, Mutex};
 
 #[derive(Clone)]
@@ -172,7 +173,7 @@ fn maximized_meta_is_not_flagged_dynamic() {
         &m,
         BindingRole::Meta {
             fields: &[MetaField::Uint],
-            kind: MetaKind::Maximized(SizeTag("batch_size".to_string())),
+            kind: MetaKind::Maximized(Resolvable::new()),
         },
     )];
     let spec = NodeSpec {
@@ -294,19 +295,37 @@ fn tensor_spec_id_is_unique() {
 #[test]
 fn tensor_size_variants_construct() {
     let fixed = TensorSize::Fixed(128);
-    let max = TensorSize::Maximize {
-        tag: SizeTag("batch_size".to_string()),
-        multiplier: 64,
-        coefficient: 1,
-    };
-    let part = TensorSize::Partition {
-        tag: SizeTag("rows".to_string()),
+    let resolvable = TensorSize::Resolvable {
+        size: Resolvable::new(),
         multiplier: 64,
         coefficient: 1,
     };
     assert!(matches!(fixed, TensorSize::Fixed(128)));
-    assert!(matches!(max, TensorSize::Maximize { .. }));
-    assert!(matches!(part, TensorSize::Partition { .. }));
+    assert!(matches!(resolvable, TensorSize::Resolvable { .. }));
+}
+
+#[test]
+fn tensor_size_resolvable_groups_by_shared_clone() {
+    let size = Resolvable::new();
+    let a = TensorSize::Resolvable {
+        size: size.clone(),
+        multiplier: 64,
+        coefficient: 1,
+    };
+    let b = TensorSize::Resolvable {
+        size: size.clone(),
+        multiplier: 64,
+        coefficient: 1,
+    };
+    size.resolver().resolve(256);
+    let TensorSize::Resolvable { size: a_size, .. } = a else {
+        unreachable!()
+    };
+    let TensorSize::Resolvable { size: b_size, .. } = b else {
+        unreachable!()
+    };
+    assert_eq!(*a_size.value(), 256);
+    assert_eq!(*b_size.value(), 256);
 }
 
 #[test]
