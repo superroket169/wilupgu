@@ -1,6 +1,6 @@
 [package]
 name = "wilupgu"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 description = "Backend-independent tensor/dispatch library for Rust: GPU math on low-end hardware (wgpu / CUDA / CPU) with no autograd and no shape system."
 license = "MIT OR Apache-2.0"
