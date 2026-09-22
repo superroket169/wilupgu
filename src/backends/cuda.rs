@@ -121,7 +121,8 @@ pub struct CudaBackend {
 impl CudaBackend {
     pub fn new(ordinal: usize) -> Result<Self, DriverError> {
         let device = CuDevice::new(ordinal)?;
-        device.set_blocking_synchronize()?; // cpu stress fix
+        device.set_blocking_synchronize()?;
+        unsafe { device.disable_event_tracking() }; // <-- that makes cuda capture usable
         let stream = device.new_stream()?;
 
         let blas = CudaBlas::new(stream.clone()).map_err(|e| {
@@ -402,7 +403,13 @@ impl CudaBackend {
         bytemuck::cast_slice::<f32, u32>(&f32s).to_vec()
     }
 
-    fn gemm_matmul(&self, shader_name: &str, bindings: &[CudaBinding], transpose_b: bool, beta: f32) {
+    fn gemm_matmul(
+        &self,
+        shader_name: &str,
+        bindings: &[CudaBinding],
+        transpose_b: bool,
+        beta: f32,
+    ) {
         let a = find(bindings, 0);
         let b = find(bindings, 1);
         let c = find(bindings, 2);
