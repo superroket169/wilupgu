@@ -1,6 +1,7 @@
 use crate::backends::BackendDispatch;
+use crate::resolver::Resolvable;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum BindingRole {
     Input(DataKind),
     Output(DataKind),
@@ -31,14 +32,11 @@ pub enum DataKind {
     Int4,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SizeTag(pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum MetaKind {
     Static,
     Dynamic,
-    Maximized(SizeTag),
+    Maximized(Resolvable<u32>),
 }
 
 pub struct Binding<'a, Buf> {
@@ -152,17 +150,10 @@ impl TensorSpecId {
 
 pub enum TensorSize {
     Fixed(u32),
-    /// this thing maximizes shaders tensors size, as per device can do
-    /// but per shader (thats at other devices) dont know others. independent
-    Maximize {
-        tag: SizeTag,
-        multiplier: u32,
-        coefficient: u32,
-    },
-    /// similar but different with Maximize
-    /// all shaders at all devices knows theys, and coefficient is common for all of them
-    Partition {
-        tag: SizeTag,
+    /// Not known in compile time
+    /// whoever resolves it decides HOW based on the owning NodeSpec's `Parallelity`
+    Resolvable {
+        size: Resolvable<u32>,
         multiplier: u32,
         coefficient: u32,
     },
