@@ -54,6 +54,15 @@ impl<T> Default for Resolvable<T> {
     }
 }
 
+impl<T: std::fmt::Debug> std::fmt::Debug for Resolvable<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.slot.value.get() {
+            Some(v) => f.debug_tuple("Resolvable").field(v).finish(),
+            None => f.write_str("Resolvable(<unresolved>)"),
+        }
+    }
+}
+
 pub struct Resolver<T> {
     slot: Arc<Slot<T>>,
 }
