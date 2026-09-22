@@ -1,4 +1,5 @@
 use super::*;
+use crate::mesh::Parallelity;
 use std::sync::{Arc as StdArc, Mutex};
 
 #[derive(Clone)]
@@ -178,7 +179,7 @@ fn maximized_meta_is_not_flagged_dynamic() {
         shader: &META_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
-        distribution: Distribution::Independent(IndependentKind::Replicate),
+        parallelity: Parallelity::Data,
     };
     let has_dynamic_meta = validate_spec::<ToyNode, _>(&spec).unwrap();
     assert!(
@@ -200,7 +201,7 @@ fn graph_build_and_run() {
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
-        distribution: Distribution::Independent(IndependentKind::Replicate),
+        parallelity: Parallelity::Data,
     }];
     let graph = Graph::build(ctx, &specs).unwrap();
     graph.run();
@@ -219,7 +220,7 @@ fn graph_capture_falls_back_to_execute() {
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
-        distribution: Distribution::Independent(IndependentKind::Replicate),
+        parallelity: Parallelity::Data,
     }];
     let mut graph = Graph::build(ctx, &specs).unwrap();
     graph.capture(7, 0..1);
@@ -248,13 +249,13 @@ fn graph_build_rejects_unordered_double_write() {
             shader: &COPY_SHADER,
             bindings: &bindings1,
             workgroups: Workgroups::linear(1),
-            distribution: Distribution::Independent(IndependentKind::Replicate),
+            parallelity: Parallelity::Data,
         },
         NodeSpec {
             shader: &COPY_SHADER,
             bindings: &bindings2,
             workgroups: Workgroups::linear(1),
-            distribution: Distribution::Independent(IndependentKind::Replicate),
+            parallelity: Parallelity::Data,
         },
     ];
     let err = Graph::build(ctx, &specs).err().unwrap();
@@ -274,7 +275,7 @@ fn graph_build_rejects_foreign_buffer() {
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
-        distribution: Distribution::Independent(IndependentKind::Replicate),
+        parallelity: Parallelity::Data,
     }];
     let err = Graph::build(ctx, &specs).err().unwrap();
     assert!(
