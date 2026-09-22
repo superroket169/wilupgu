@@ -34,14 +34,21 @@ const MAX_IN_FLIGHT: usize = 16;
 
 impl WgpuBackend {
     pub async fn new() -> Self {
-        let instance = wgpu::Instance::default();
+        // PRIMARY only (Vulkan/Metal/DX12): the GL fallback's compute path doesnt works
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::PRIMARY.with_env();
+
+        let instance = wgpu::Instance::new(desc);
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
             .await
-            .expect("[wgpu] no adapter");
+            .expect(
+                "[wgpu] no Vulkan/Metal/DX12 adapter; on Linux make sure the Vulkan \
+                 loader is installed (libvulkan.so, e.g. `vulkan-icd-loader`)",
+            );
 
         let info = adapter.get_info();
         let limits = adapter.limits();
