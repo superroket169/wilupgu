@@ -308,23 +308,11 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
     fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndependentKind {
-    Replicate,
-    Partition,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Distribution {
-    Independent(IndependentKind),
-    Dependent,
-}
-
 pub struct NodeSpec<'a, Buf> {
     pub shader: &'static Shader,
     pub bindings: &'a [Binding<'a, Buf>],
     pub workgroups: Workgroups,
-    pub distribution: Distribution,
+    pub parallelity: crate::mesh::Parallelity,
 }
 
 fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {

@@ -3,18 +3,20 @@ pub mod backends;
 pub mod builtin;
 pub mod graph;
 pub(crate) mod io_log;
+pub mod mesh;
 pub(crate) mod pool;
+pub mod resolver;
 pub mod shader;
 pub mod tensor;
 pub mod topology;
 pub mod traits;
 
 pub use backend::{Backend, Binding, Dtype, TensorMode};
-pub use backends::WgpuBackend;
-#[cfg(feature = "cuda")]
-pub use backends::CudaBackend;
 #[cfg(feature = "cpu")]
 pub use backends::CpuBackend;
+#[cfg(feature = "cuda")]
+pub use backends::CudaBackend;
+pub use backends::WgpuBackend;
 pub use graph::{fuse_compute_graphs, ComputeGraph};
 pub use shader::{CpuBinding, CudaShape, CudaSpec, MetaField, Shader};
 pub use tensor::Tensor;
