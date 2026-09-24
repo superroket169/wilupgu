@@ -1,4 +1,5 @@
 use super::*;
+use crate::id::GlobalId;
 use crate::mesh::Parallelity;
 use crate::resolver::Resolvable;
 use std::sync::{Arc as StdArc, Mutex};
@@ -177,6 +178,7 @@ fn maximized_meta_is_not_flagged_dynamic() {
         },
     )];
     let spec = NodeSpec {
+        id: GlobalId::new(),
         shader: &META_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
@@ -199,6 +201,7 @@ fn graph_build_and_run() {
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
     let specs = [NodeSpec {
+        id: GlobalId::new(),
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
@@ -218,6 +221,7 @@ fn graph_capture_falls_back_to_execute() {
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
     let specs = [NodeSpec {
+        id: GlobalId::new(),
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
@@ -247,12 +251,14 @@ fn graph_build_rejects_unordered_double_write() {
     ];
     let specs = [
         NodeSpec {
+            id: GlobalId::new(),
             shader: &COPY_SHADER,
             bindings: &bindings1,
             workgroups: Workgroups::linear(1),
             parallelity: Parallelity::Data,
         },
         NodeSpec {
+            id: GlobalId::new(),
             shader: &COPY_SHADER,
             bindings: &bindings2,
             workgroups: Workgroups::linear(1),
@@ -273,6 +279,7 @@ fn graph_build_rejects_foreign_buffer() {
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
     let specs = [NodeSpec {
+        id: GlobalId::new(),
         shader: &COPY_SHADER,
         bindings: &bindings,
         workgroups: Workgroups::linear(1),
@@ -286,9 +293,9 @@ fn graph_build_rejects_foreign_buffer() {
 }
 
 #[test]
-fn tensor_spec_id_is_unique() {
-    let a = TensorSpecId::next();
-    let b = TensorSpecId::next();
+fn global_id_is_unique() {
+    let a = GlobalId::new();
+    let b = GlobalId::new();
     assert_ne!(a, b);
 }
 
