@@ -6,7 +6,7 @@ use crate::traits::{DeviceId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {
-    pub nodes: HashMap<GlobalId, Vec<DeviceId>>,
+    nodes: HashMap<GlobalId, Vec<DeviceId>>,
 }
 
 impl Placement {
@@ -14,47 +14,53 @@ impl Placement {
         Self::default()
     }
 
-    pub fn assign(&mut self, node: GlobalId, devices: Vec<DeviceId>) {
-        self.nodes.insert(node, devices);
+    /// The only way to add a node
+    pub fn assign<Buf>(
+        &mut self,
+        node: &NodeSpec<Buf>,
+        devices: Vec<DeviceId>,
+    ) -> Result<(), String> {
+        let name = node.shader.name;
+        if devices.is_empty() {
+            return Err(format!(
+                "node {:?} (`{name}`) is placed on no device",
+                node.id
+            ));
+        }
+        for (i, d) in devices.iter().enumerate() {
+            if devices[..i].contains(d) {
+                return Err(format!(
+                    "node {:?} (`{name}`) lists device {d:?} twice",
+                    node.id
+                ));
+            }
+        }
+        if node.parallelity == Parallelity::Pipeline && devices.len() != 1 {
+            return Err(format!(
+                "node {:?} (`{name}`) is Pipeline but placed on {} devices, needs exactly 1",
+                node.id,
+                devices.len()
+            ));
+        }
+        self.nodes.insert(node.id, devices);
+        Ok(())
     }
 
     pub fn devices(&self, node: GlobalId) -> Option<&[DeviceId]> {
         self.nodes.get(&node).map(Vec::as_slice)
     }
 
-    pub fn validate<Buf>(&self, specs: &[NodeSpec<Buf>]) -> Result<(), String> {
+    /// validates a whole node spec list
+    /// do NOT add this to HashMap, just for verify it
+    pub(crate) fn validate<Buf>(&self, specs: &[NodeSpec<Buf>]) -> Result<(), String> {
         for spec in specs {
-            let devices = self.devices(spec.id).ok_or_else(|| {
-                format!(
+            if !self.nodes.contains_key(&spec.id) {
+                return Err(format!(
                     "node {:?} (`{}`) has no placement",
                     spec.id, spec.shader.name
-                )
-            })?;
-
-            if devices.is_empty() {
-                return Err(format!(
-                    "node {:?} (`{}`) is placed on no device",
-                    spec.id, spec.shader.name
-                ));
-            }
-            for (i, d) in devices.iter().enumerate() {
-                if devices[..i].contains(d) {
-                    return Err(format!(
-                        "node {:?} (`{}`) lists device {d:?} twice",
-                        spec.id, spec.shader.name
-                    ));
-                }
-            }
-            if spec.parallelity == Parallelity::Pipeline && devices.len() != 1 {
-                return Err(format!(
-                    "node {:?} (`{}`) is Pipeline but placed on {} devices, needs exactly 1",
-                    spec.id,
-                    spec.shader.name,
-                    devices.len()
                 ));
             }
         }
-
         for id in self.nodes.keys() {
             if !specs.iter().any(|s| s.id == *id) {
                 return Err(format!(
@@ -91,42 +97,57 @@ mod tests {
     fn accepts_a_complete_placement() {
         let specs = [spec(Parallelity::Data), spec(Parallelity::Pipeline)];
         let mut p = Placement::new();
-        p.assign(specs[0].id, vec![DeviceId(0), DeviceId(1)]);
-        p.assign(specs[1].id, vec![DeviceId(1)]);
+        p.assign(&specs[0], vec![DeviceId(0), DeviceId(1)]).unwrap();
+        p.assign(&specs[1], vec![DeviceId(1)]).unwrap();
         assert!(p.validate(&specs).is_ok());
     }
 
     #[test]
-    fn rejects_unplaced_node() {
+    fn assign_rejects_no_device() {
+        let err = Placement::new()
+            .assign(&spec(Parallelity::Data), vec![])
+            .unwrap_err();
+        assert!(err.contains("no device"), "{err}");
+    }
+
+    #[test]
+    fn assign_rejects_pipeline_on_two_devices() {
+        let err = Placement::new()
+            .assign(&spec(Parallelity::Pipeline), vec![DeviceId(0), DeviceId(1)])
+            .unwrap_err();
+        assert!(err.contains("needs exactly 1"), "{err}");
+    }
+
+    #[test]
+    fn assign_rejects_duplicate_device() {
+        let err = Placement::new()
+            .assign(&spec(Parallelity::Tensor), vec![DeviceId(0), DeviceId(0)])
+            .unwrap_err();
+        assert!(err.contains("twice"), "{err}");
+    }
+
+    #[test]
+    fn rejected_assign_leaves_nothing_behind() {
+        let s = spec(Parallelity::Pipeline);
+        let mut p = Placement::new();
+        let _ = p.assign(&s, vec![DeviceId(0), DeviceId(1)]);
+        assert!(p.devices(s.id).is_none());
+    }
+
+    #[test]
+    fn validate_rejects_unplaced_node() {
         let specs = [spec(Parallelity::Data)];
         let err = Placement::new().validate(&specs).unwrap_err();
         assert!(err.contains("has no placement"), "{err}");
     }
 
     #[test]
-    fn rejects_pipeline_on_two_devices() {
-        let specs = [spec(Parallelity::Pipeline)];
-        let mut p = Placement::new();
-        p.assign(specs[0].id, vec![DeviceId(0), DeviceId(1)]);
-        let err = p.validate(&specs).unwrap_err();
-        assert!(err.contains("needs exactly 1"), "{err}");
-    }
-
-    #[test]
-    fn rejects_duplicate_device() {
-        let specs = [spec(Parallelity::Tensor)];
-        let mut p = Placement::new();
-        p.assign(specs[0].id, vec![DeviceId(0), DeviceId(0)]);
-        let err = p.validate(&specs).unwrap_err();
-        assert!(err.contains("twice"), "{err}");
-    }
-
-    #[test]
-    fn rejects_unknown_node() {
+    fn validate_rejects_node_outside_the_list() {
         let specs = [spec(Parallelity::Data)];
+        let stranger = spec(Parallelity::Data);
         let mut p = Placement::new();
-        p.assign(specs[0].id, vec![DeviceId(0)]);
-        p.assign(GlobalId::new(), vec![DeviceId(0)]);
+        p.assign(&specs[0], vec![DeviceId(0)]).unwrap();
+        p.assign(&stranger, vec![DeviceId(0)]).unwrap();
         let err = p.validate(&specs).unwrap_err();
         assert!(err.contains("isn't in the spec list"), "{err}");
     }
