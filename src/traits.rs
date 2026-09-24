@@ -1,4 +1,5 @@
 use crate::backends::BackendDispatch;
+use crate::id::GlobalId;
 use crate::resolver::Resolvable;
 
 #[derive(Debug, Clone)]
@@ -137,17 +138,6 @@ pub struct BufferId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct DeviceId(pub u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TensorSpecId(u64);
-
-impl TensorSpecId {
-    fn next() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        Self(NEXT.fetch_add(1, Ordering::Relaxed))
-    }
-}
-
 pub enum TensorSize {
     Fixed(u32),
     /// Not known in compile time
@@ -165,7 +155,7 @@ pub enum InitRecipe<D: DataType> {
 }
 
 pub struct TensorSpec<D: DataType> {
-    id: TensorSpecId,
+    id: GlobalId,
     size: TensorSize,
     init: Option<InitRecipe<D>>,
 }
@@ -173,7 +163,7 @@ pub struct TensorSpec<D: DataType> {
 impl<D: DataType> TensorSpec<D> {
     pub fn blank(size: TensorSize) -> Self {
         Self {
-            id: TensorSpecId::next(),
+            id: GlobalId::new(),
             size,
             init: None,
         }
@@ -181,13 +171,13 @@ impl<D: DataType> TensorSpec<D> {
 
     pub fn seeded(size: TensorSize, init: InitRecipe<D>) -> Self {
         Self {
-            id: TensorSpecId::next(),
+            id: GlobalId::new(),
             size,
             init: Some(init),
         }
     }
 
-    pub fn id(&self) -> TensorSpecId {
+    pub fn id(&self) -> GlobalId {
         self.id
     }
 
@@ -300,6 +290,7 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
 }
 
 pub struct NodeSpec<'a, Buf> {
+    pub id: GlobalId,
     pub shader: &'static Shader,
     pub bindings: &'a [Binding<'a, Buf>],
     pub workgroups: Workgroups,
