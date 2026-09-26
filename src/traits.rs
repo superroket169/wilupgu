@@ -238,6 +238,10 @@ pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
     fn device_id(&self) -> DeviceId;
     fn drop_buffer(&self, buf: Self::Buffer);
+
+    /// Runtime counterpart of `SupportsDType<D>::alloc`
+    /// for the mesh level
+    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String>;
 }
 
 pub trait Dispatch: Storage {
