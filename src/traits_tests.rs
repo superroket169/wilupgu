@@ -43,11 +43,16 @@ impl Node for ToyNode {
     }
 }
 
-struct ToyBackend(u64);
+struct ToyBackend(DeviceId);
+impl ToyBackend {
+    fn new() -> Self {
+        Self(DeviceId::new())
+    }
+}
 impl Storage for ToyBackend {
     type Buffer = ToyBuffer;
     fn device_id(&self) -> DeviceId {
-        DeviceId(self.0)
+        self.0
     }
     fn drop_buffer(&self, _buf: Self::Buffer) {}
 }
@@ -84,7 +89,7 @@ impl SupportsDType<F32> for ToyBackend {
 #[derive(Clone, Debug)]
 struct ToyDevice(u32);
 
-impl Device for ToyDevice {
+impl DeviceInfo for ToyDevice {
     fn label(&self) -> String {
         format!("toy-device-{}", self.0)
     }
@@ -94,12 +99,12 @@ impl Device for ToyDevice {
 }
 
 impl Topology for ToyBackend {
-    type Device = ToyDevice;
-    fn choosable_devices() -> Vec<Self::Device> {
+    type Info = ToyDevice;
+    fn choosable_devices() -> Vec<Self::Info> {
         vec![ToyDevice(0), ToyDevice(1)]
     }
-    fn attach(device: Self::Device) -> Result<Self, String> {
-        Ok(ToyBackend(device.0 as u64))
+    fn attach(_info: Self::Info) -> Result<Self, String> {
+        Ok(ToyBackend::new())
     }
     fn name(&self) -> &'static str {
         "toy"
@@ -141,7 +146,7 @@ impl SupportsCarve<F32> for ToyBackend {
 
 #[test]
 fn carve_from_area() {
-    let ctx = StdArc::new(ToyBackend(0));
+    let ctx = StdArc::new(ToyBackend::new());
     let mut area = ctx.reserve(1024);
     let buf = ctx.carve(&mut area, 4);
     assert_eq!(buf.size_bytes(), 16);
@@ -168,7 +173,7 @@ static META_SHADER: Shader = Shader {
 
 #[test]
 fn maximized_meta_is_not_flagged_dynamic() {
-    let m = ToyBuffer::new(DeviceId(0), 4);
+    let m = ToyBuffer::new(DeviceId::new(), 4);
     let bindings = [Binding::new(
         0,
         &m,
@@ -193,9 +198,9 @@ fn maximized_meta_is_not_flagged_dynamic() {
 
 #[test]
 fn graph_build_and_run() {
-    let ctx = StdArc::new(ToyBackend(0));
-    let a = ToyBuffer::new(DeviceId(0), 4);
-    let b = ToyBuffer::new(DeviceId(0), 4);
+    let ctx = StdArc::new(ToyBackend::new());
+    let a = ToyBuffer::new(ctx.device_id(), 4);
+    let b = ToyBuffer::new(ctx.device_id(), 4);
     let bindings = [
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -213,9 +218,9 @@ fn graph_build_and_run() {
 
 #[test]
 fn graph_capture_falls_back_to_execute() {
-    let ctx = StdArc::new(ToyBackend(0));
-    let a = ToyBuffer::new(DeviceId(0), 4);
-    let b = ToyBuffer::new(DeviceId(0), 4);
+    let ctx = StdArc::new(ToyBackend::new());
+    let a = ToyBuffer::new(ctx.device_id(), 4);
+    let b = ToyBuffer::new(ctx.device_id(), 4);
     let bindings = [
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -238,9 +243,9 @@ fn graph_capture_falls_back_to_execute() {
 
 #[test]
 fn graph_build_rejects_unordered_double_write() {
-    let ctx = StdArc::new(ToyBackend(0));
-    let a = ToyBuffer::new(DeviceId(0), 4);
-    let b = ToyBuffer::new(DeviceId(0), 4);
+    let ctx = StdArc::new(ToyBackend::new());
+    let a = ToyBuffer::new(ctx.device_id(), 4);
+    let b = ToyBuffer::new(ctx.device_id(), 4);
     let bindings1 = [
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -271,9 +276,9 @@ fn graph_build_rejects_unordered_double_write() {
 
 #[test]
 fn graph_build_rejects_foreign_buffer() {
-    let ctx = StdArc::new(ToyBackend(0));
-    let a = ToyBuffer::new(DeviceId(0), 4);
-    let b = ToyBuffer::new(DeviceId(1), 4); // allocated on a different "device"
+    let ctx = StdArc::new(ToyBackend::new());
+    let a = ToyBuffer::new(ctx.device_id(), 4);
+    let b = ToyBuffer::new(DeviceId::new(), 4); // allocated on a different "device"
     let bindings = [
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
@@ -362,19 +367,19 @@ fn tensor_spec_ids_are_distinct() {
 
 #[test]
 fn supports_p2p_defaults_to_false() {
-    let ctx = ToyBackend(0);
-    assert!(!ctx.supports_p2p(DeviceId(1)));
+    let ctx = ToyBackend::new();
+    assert!(!ctx.supports_p2p(DeviceId::new()));
 }
 
 #[test]
 fn copy_to_round_trips_through_host() {
-    let src = ToyBackend(0);
-    let dest = ToyBackend(1);
+    let src = ToyBackend::new();
+    let dest = ToyBackend::new();
     let buf = src.alloc(4);
     src.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
 
     let copied = src.copy_to(&buf, &dest);
 
-    assert_eq!(copied.owner(), DeviceId(1));
+    assert_eq!(copied.owner(), dest.device_id());
     assert_eq!(dest.download(&copied), vec![1.0, 2.0, 3.0, 4.0]);
 }

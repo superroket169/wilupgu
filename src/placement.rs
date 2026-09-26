@@ -96,9 +96,10 @@ mod tests {
     #[test]
     fn accepts_a_complete_placement() {
         let specs = [spec(Parallelity::Data), spec(Parallelity::Pipeline)];
+        let (d0, d1) = (DeviceId::new(), DeviceId::new());
         let mut p = Placement::new();
-        p.assign(&specs[0], vec![DeviceId(0), DeviceId(1)]).unwrap();
-        p.assign(&specs[1], vec![DeviceId(1)]).unwrap();
+        p.assign(&specs[0], vec![d0, d1]).unwrap();
+        p.assign(&specs[1], vec![d1]).unwrap();
         assert!(p.validate(&specs).is_ok());
     }
 
@@ -113,7 +114,10 @@ mod tests {
     #[test]
     fn assign_rejects_pipeline_on_two_devices() {
         let err = Placement::new()
-            .assign(&spec(Parallelity::Pipeline), vec![DeviceId(0), DeviceId(1)])
+            .assign(
+                &spec(Parallelity::Pipeline),
+                vec![DeviceId::new(), DeviceId::new()],
+            )
             .unwrap_err();
         assert!(err.contains("needs exactly 1"), "{err}");
     }
@@ -121,7 +125,10 @@ mod tests {
     #[test]
     fn assign_rejects_duplicate_device() {
         let err = Placement::new()
-            .assign(&spec(Parallelity::Tensor), vec![DeviceId(0), DeviceId(0)])
+            .assign(&spec(Parallelity::Tensor), {
+                let d = DeviceId::new();
+                vec![d, d]
+            })
             .unwrap_err();
         assert!(err.contains("twice"), "{err}");
     }
@@ -130,7 +137,7 @@ mod tests {
     fn rejected_assign_leaves_nothing_behind() {
         let s = spec(Parallelity::Pipeline);
         let mut p = Placement::new();
-        let _ = p.assign(&s, vec![DeviceId(0), DeviceId(1)]);
+        let _ = p.assign(&s, vec![DeviceId::new(), DeviceId::new()]);
         assert!(p.devices(s.id).is_none());
     }
 
@@ -146,8 +153,9 @@ mod tests {
         let specs = [spec(Parallelity::Data)];
         let stranger = spec(Parallelity::Data);
         let mut p = Placement::new();
-        p.assign(&specs[0], vec![DeviceId(0)]).unwrap();
-        p.assign(&stranger, vec![DeviceId(0)]).unwrap();
+        let d = DeviceId::new();
+        p.assign(&specs[0], vec![d]).unwrap();
+        p.assign(&stranger, vec![d]).unwrap();
         let err = p.validate(&specs).unwrap_err();
         assert!(err.contains("isn't in the spec list"), "{err}");
     }
