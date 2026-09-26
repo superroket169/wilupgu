@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use crate::id::GlobalId;
 use crate::mesh::Parallelity;
-use crate::traits::{DeviceId, NodeSpec};
+use crate::traits::{DeviceId, NodeId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {
-    nodes: HashMap<GlobalId, Vec<DeviceId>>,
+    nodes: HashMap<NodeId, Vec<DeviceId>>,
 }
 
 impl Placement {
@@ -24,29 +23,29 @@ impl Placement {
         if devices.is_empty() {
             return Err(format!(
                 "node {:?} (`{name}`) is placed on no device",
-                node.id
+                node.id()
             ));
         }
         for (i, d) in devices.iter().enumerate() {
             if devices[..i].contains(d) {
                 return Err(format!(
                     "node {:?} (`{name}`) lists device {d:?} twice",
-                    node.id
+                    node.id()
                 ));
             }
         }
         if node.parallelity == Parallelity::Pipeline && devices.len() != 1 {
             return Err(format!(
                 "node {:?} (`{name}`) is Pipeline but placed on {} devices, needs exactly 1",
-                node.id,
+                node.id(),
                 devices.len()
             ));
         }
-        self.nodes.insert(node.id, devices);
+        self.nodes.insert(node.id(), devices);
         Ok(())
     }
 
-    pub fn devices(&self, node: GlobalId) -> Option<&[DeviceId]> {
+    pub fn devices(&self, node: NodeId) -> Option<&[DeviceId]> {
         self.nodes.get(&node).map(Vec::as_slice)
     }
 
@@ -54,15 +53,16 @@ impl Placement {
     /// do NOT add this to HashMap, just for verify it
     pub(crate) fn validate<Buf>(&self, specs: &[NodeSpec<Buf>]) -> Result<(), String> {
         for spec in specs {
-            if !self.nodes.contains_key(&spec.id) {
+            if !self.nodes.contains_key(&spec.id()) {
                 return Err(format!(
                     "node {:?} (`{}`) has no placement",
-                    spec.id, spec.shader.name
+                    spec.id(),
+                    spec.shader.name
                 ));
             }
         }
         for id in self.nodes.keys() {
-            if !specs.iter().any(|s| s.id == *id) {
+            if !specs.iter().any(|s| s.id() == *id) {
                 return Err(format!(
                     "placement names node {id:?}, which isn't in the spec list"
                 ));
@@ -84,13 +84,7 @@ mod tests {
     };
 
     fn spec(parallelity: Parallelity) -> NodeSpec<'static, ()> {
-        NodeSpec {
-            id: GlobalId::new(),
-            shader: &EMPTY,
-            bindings: &[],
-            workgroups: Workgroups::linear(1),
-            parallelity,
-        }
+        NodeSpec::new(&EMPTY, &[], Workgroups::linear(1), parallelity)
     }
 
     #[test]
@@ -138,7 +132,7 @@ mod tests {
         let s = spec(Parallelity::Pipeline);
         let mut p = Placement::new();
         let _ = p.assign(&s, vec![DeviceId::new(), DeviceId::new()]);
-        assert!(p.devices(s.id).is_none());
+        assert!(p.devices(s.id()).is_none());
     }
 
     #[test]

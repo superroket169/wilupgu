@@ -182,14 +182,13 @@ impl HostData {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct BufferId(pub u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct DeviceId(GlobalId);
+/// Stand-in tag until the mesh-level `Device` enum exists
+/// then `DeviceId` becomes `GlobalId<Device>`.
+pub enum DeviceTag {}
 
-impl DeviceId {
-    pub(crate) fn new() -> Self {
-        Self(GlobalId::new())
-    }
-}
+pub type DeviceId = GlobalId<DeviceTag>;
+pub type TensorId = GlobalId<TensorSpec>;
+pub type NodeId = GlobalId<NodeSpec<'static, ()>>;
 
 pub enum TensorSize {
     Fixed(u32),
@@ -208,7 +207,7 @@ pub enum InitRecipe {
 }
 
 pub struct TensorSpec {
-    id: GlobalId,
+    id: TensorId,
     kind: DataKind,
     size: TensorSize,
     init: Option<InitRecipe>,
@@ -236,7 +235,7 @@ impl TensorSpec {
         }
     }
 
-    pub fn id(&self) -> GlobalId {
+    pub fn id(&self) -> TensorId {
         self.id
     }
 
@@ -357,11 +356,34 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
 }
 
 pub struct NodeSpec<'a, Buf> {
-    pub id: GlobalId,
+    id: NodeId,
     pub shader: &'static Shader,
     pub bindings: &'a [Binding<'a, Buf>],
     pub workgroups: Workgroups,
     pub parallelity: crate::mesh::Parallelity,
+}
+
+impl<'a, Buf> NodeSpec<'a, Buf> {
+    /// The only way to get a node id
+    /// `id` is private so two specs can't be handed the same one.
+    pub fn new(
+        shader: &'static Shader,
+        bindings: &'a [Binding<'a, Buf>],
+        workgroups: Workgroups,
+        parallelity: crate::mesh::Parallelity,
+    ) -> Self {
+        Self {
+            id: GlobalId::new(),
+            shader,
+            bindings,
+            workgroups,
+            parallelity,
+        }
+    }
+
+    pub fn id(&self) -> NodeId {
+        self.id
+    }
 }
 
 fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {

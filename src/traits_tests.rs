@@ -1,5 +1,4 @@
 use super::*;
-use crate::id::GlobalId;
 use crate::mesh::Parallelity;
 use crate::resolver::Resolvable;
 use std::sync::{Arc as StdArc, Mutex};
@@ -189,13 +188,12 @@ fn maximized_meta_is_not_flagged_dynamic() {
             kind: MetaKind::Maximized(Resolvable::new()),
         },
     )];
-    let spec = NodeSpec {
-        id: GlobalId::new(),
-        shader: &META_SHADER,
-        bindings: &bindings,
-        workgroups: Workgroups::linear(1),
-        parallelity: Parallelity::Data,
-    };
+    let spec = NodeSpec::new(
+        &META_SHADER,
+        &bindings,
+        Workgroups::linear(1),
+        Parallelity::Data,
+    );
     let has_dynamic_meta = validate_spec::<ToyNode, _>(&spec).unwrap();
     assert!(
         !has_dynamic_meta,
@@ -212,13 +210,12 @@ fn graph_build_and_run() {
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
-    let specs = [NodeSpec {
-        id: GlobalId::new(),
-        shader: &COPY_SHADER,
-        bindings: &bindings,
-        workgroups: Workgroups::linear(1),
-        parallelity: Parallelity::Data,
-    }];
+    let specs = [NodeSpec::new(
+        &COPY_SHADER,
+        &bindings,
+        Workgroups::linear(1),
+        Parallelity::Data,
+    )];
     let graph = Graph::build(ctx, &specs).unwrap();
     graph.run();
 }
@@ -232,13 +229,12 @@ fn graph_capture_falls_back_to_execute() {
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
-    let specs = [NodeSpec {
-        id: GlobalId::new(),
-        shader: &COPY_SHADER,
-        bindings: &bindings,
-        workgroups: Workgroups::linear(1),
-        parallelity: Parallelity::Data,
-    }];
+    let specs = [NodeSpec::new(
+        &COPY_SHADER,
+        &bindings,
+        Workgroups::linear(1),
+        Parallelity::Data,
+    )];
     let mut graph = Graph::build(ctx, &specs).unwrap();
     graph.capture(7, 0..1);
     assert!(matches!(
@@ -262,20 +258,18 @@ fn graph_build_rejects_unordered_double_write() {
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
     let specs = [
-        NodeSpec {
-            id: GlobalId::new(),
-            shader: &COPY_SHADER,
-            bindings: &bindings1,
-            workgroups: Workgroups::linear(1),
-            parallelity: Parallelity::Data,
-        },
-        NodeSpec {
-            id: GlobalId::new(),
-            shader: &COPY_SHADER,
-            bindings: &bindings2,
-            workgroups: Workgroups::linear(1),
-            parallelity: Parallelity::Data,
-        },
+        NodeSpec::new(
+            &COPY_SHADER,
+            &bindings1,
+            Workgroups::linear(1),
+            Parallelity::Data,
+        ),
+        NodeSpec::new(
+            &COPY_SHADER,
+            &bindings2,
+            Workgroups::linear(1),
+            Parallelity::Data,
+        ),
     ];
     let err = Graph::build(ctx, &specs).err().unwrap();
     assert!(err.contains("Buffer hazard"), "unexpected error: {err}");
@@ -290,13 +284,12 @@ fn graph_build_rejects_foreign_buffer() {
         Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
         Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
     ];
-    let specs = [NodeSpec {
-        id: GlobalId::new(),
-        shader: &COPY_SHADER,
-        bindings: &bindings,
-        workgroups: Workgroups::linear(1),
-        parallelity: Parallelity::Data,
-    }];
+    let specs = [NodeSpec::new(
+        &COPY_SHADER,
+        &bindings,
+        Workgroups::linear(1),
+        Parallelity::Data,
+    )];
     let err = Graph::build(ctx, &specs).err().unwrap();
     assert!(
         err.contains("Buffer ownership mismatch"),
@@ -306,8 +299,8 @@ fn graph_build_rejects_foreign_buffer() {
 
 #[test]
 fn global_id_is_unique() {
-    let a = GlobalId::new();
-    let b = GlobalId::new();
+    let a = TensorId::new();
+    let b = TensorId::new();
     assert_ne!(a, b);
 }
 
