@@ -55,6 +55,13 @@ impl Storage for ToyBackend {
         self.0
     }
     fn drop_buffer(&self, _buf: Self::Buffer) {}
+
+    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String> {
+        match kind {
+            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, elem_count)),
+            _ => Err(format!("toy does not support {kind:?}")),
+        }
+    }
 }
 impl Dispatch for ToyBackend {
     type Node = ToyNode;
@@ -382,4 +389,20 @@ fn copy_to_round_trips_through_host() {
 
     assert_eq!(copied.owner(), dest.device_id());
     assert_eq!(dest.download(&copied), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn alloc_kind_uses_the_matching_impl() {
+    let ctx = ToyBackend::new();
+    let buf = ctx.alloc_kind(DataKind::F32, 4).unwrap();
+    assert_eq!(buf.size_bytes(), 16);
+    assert_eq!(buf.owner(), ctx.device_id());
+}
+
+#[test]
+fn alloc_kind_rejects_an_unsupported_kind() {
+    let Err(err) = ToyBackend::new().alloc_kind(DataKind::Int4, 4) else {
+        panic!("Int4 should be rejected");
+    };
+    assert!(err.contains("Int4"), "{err}");
 }
