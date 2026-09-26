@@ -1,4 +1,4 @@
-use crate::backends::BackendDispatch;
+use crate::backends::ShaderCode;
 use crate::id::GlobalId;
 use crate::resolver::Resolvable;
 
@@ -56,7 +56,7 @@ impl<'a, Buf> Binding<'a, Buf> {
 pub struct Shader {
     pub name: &'static str,
     pub layout: &'static [BindingRole],
-    pub dispatch: &'static [BackendDispatch],
+    pub dispatch: &'static [ShaderCode],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

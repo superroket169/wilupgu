@@ -29,12 +29,14 @@ pub struct CpuBinding {
     pub buffer: CpuBuffer,
 }
 
-pub enum BackendDispatch {
-    Wgpu(&'static str),
-    #[cfg(feature = "cpu")]
-    Cpu(fn(&[CpuBinding])),
-    #[cfg(feature = "rayon")]
-    Rayon(fn(&[CpuBinding])),
+/// A shader's code, keyed by code format rather than by backend
+///
+/// wgpu and vulkano both take `Wgsl`
+/// cpu and rayon both take `Native`.
+pub enum ShaderCode {
+    Wgsl(&'static str),
+    #[cfg(any(feature = "cpu", feature = "rayon"))]
+    Native(fn(&[CpuBinding])),
     #[cfg(feature = "cuda")]
     Cuda(cuda::CudaDispatch),
 }
