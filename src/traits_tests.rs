@@ -1,27 +1,17 @@
 use super::*;
 use crate::mesh::Parallelity;
 use crate::resolver::Resolvable;
+use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex};
 
 #[derive(Clone)]
-struct ToyBuffer(StdArc<Mutex<Vec<u8>>>, DeviceId);
-impl ToyBuffer {
-    fn new(owner: DeviceId, bytes: usize) -> Self {
-        Self(StdArc::new(Mutex::new(vec![0u8; bytes])), owner)
-    }
-}
+struct ToyBuffer(StdArc<Mutex<Vec<u8>>>);
 impl Buffer for ToyBuffer {
     fn size_bytes(&self) -> u64 {
         self.0.lock().unwrap().len() as u64
     }
     fn is_sole_owner(&self) -> bool {
         StdArc::strong_count(&self.0) == 1
-    }
-    fn id(&self) -> BufferId {
-        BufferId(StdArc::as_ptr(&self.0) as u64)
-    }
-    fn owner(&self) -> DeviceId {
-        self.1
     }
 }
 
@@ -42,34 +32,64 @@ impl Node for ToyNode {
     }
 }
 
-struct ToyBackend(DeviceId);
+struct ToyBackend {
+    id: DeviceId,
+    table: Mutex<HashMap<TensorId, ToyBuffer>>,
+}
 impl ToyBackend {
     fn new() -> Self {
-        Self(DeviceId::new())
+        Self {
+            id: DeviceId::new(),
+            table: Mutex::new(HashMap::new()),
+        }
+    }
+    fn insert(&self, id: TensorId, bytes: usize) {
+        let buf = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; bytes])));
+        self.table.lock().unwrap().insert(id, buf);
+    }
+    fn get(&self, id: TensorId) -> ToyBuffer {
+        self.table
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .expect("tensor not on this device")
     }
 }
 impl Storage for ToyBackend {
     type Buffer = ToyBuffer;
     fn device_id(&self) -> DeviceId {
-        self.0
+        self.id
     }
-    fn drop_buffer(&self, _buf: Self::Buffer) {}
+    fn contains(&self, id: TensorId) -> bool {
+        self.table.lock().unwrap().contains_key(&id)
+    }
+    fn drop_buffer(&self, id: TensorId) {
+        self.table.lock().unwrap().remove(&id);
+    }
 
-    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String> {
+    fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String> {
         match kind {
-            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, elem_count)),
+            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, id, elem_count)),
+            _ => Err(format!("toy does not support {kind:?}")),
+        }
+    }
+    fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String> {
+        match data {
+            HostData::F32(v) => Ok(SupportsDType::<F32>::upload(self, id, v)),
+            _ => Err(format!("toy does not support {:?}", data.kind())),
+        }
+    }
+    fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String> {
+        match kind {
+            DataKind::F32 => Ok(F32::wrap(SupportsDType::<F32>::download(self, id))),
             _ => Err(format!("toy does not support {kind:?}")),
         }
     }
 }
 impl Dispatch for ToyBackend {
     type Node = ToyNode;
-    fn build_node(
-        &self,
-        _s: &'static Shader,
-        _b: &[Binding<Self::Buffer>],
-        _wg: Workgroups,
-    ) -> Self::Node {
+    fn build_node(&self, _s: &'static Shader, _b: &[Binding], _wg: Workgroups) -> Self::Node {
         ToyNode
     }
     fn execute(&self, _nodes: &[Self::Node]) {}
@@ -81,14 +101,14 @@ impl Dispatch for ToyBackend {
 
 // ToyBackend only ever implements SupportsDType<F32> -- on purpose.
 impl SupportsDType<F32> for ToyBackend {
-    fn alloc(&self, elem_count: usize) -> Self::Buffer {
-        ToyBuffer::new(self.device_id(), elem_count * 4)
+    fn alloc(&self, id: TensorId, elem_count: usize) {
+        self.insert(id, elem_count * 4);
     }
-    fn upload(&self, buf: &Self::Buffer, data: &[f32]) {
-        *buf.0.lock().unwrap() = bytemuck::cast_slice(data).to_vec();
+    fn upload(&self, id: TensorId, data: &[f32]) {
+        *self.get(id).0.lock().unwrap() = bytemuck::cast_slice(data).to_vec();
     }
-    fn download(&self, buf: &Self::Buffer) -> Vec<f32> {
-        bytemuck::cast_slice(&buf.0.lock().unwrap()).to_vec()
+    fn download(&self, id: TensorId) -> Vec<f32> {
+        bytemuck::cast_slice(&self.get(id).0.lock().unwrap()).to_vec()
     }
 }
 
@@ -145,17 +165,18 @@ impl Areable for ToyBackend {
 }
 
 impl SupportsCarve<F32> for ToyBackend {
-    fn carve(&self, _area: &mut Self::Area, elem_count: usize) -> Self::Buffer {
-        ToyBuffer::new(self.device_id(), elem_count * 4)
+    fn carve(&self, _area: &mut Self::Area, id: TensorId, elem_count: usize) {
+        self.insert(id, elem_count * 4);
     }
 }
 
 #[test]
 fn carve_from_area() {
-    let ctx = StdArc::new(ToyBackend::new());
+    let ctx = ToyBackend::new();
+    let id = TensorId::new();
     let mut area = ctx.reserve(1024);
-    let buf = ctx.carve(&mut area, 4);
-    assert_eq!(buf.size_bytes(), 16);
+    ctx.carve(&mut area, id, 4);
+    assert_eq!(ctx.download(id).len(), 4);
     ctx.release(area);
 }
 
@@ -177,24 +198,44 @@ static META_SHADER: Shader = Shader {
     dispatch: &[],
 };
 
+fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
+    NodeSpec::new(
+        &COPY_SHADER,
+        vec![
+            Binding::new(0, from, BindingRole::Input(DataKind::F32)),
+            Binding::new(1, to, BindingRole::Output(DataKind::F32)),
+        ],
+        Workgroups::linear(1),
+        Parallelity::Data,
+    )
+}
+
+/// A device with `n` fresh one-element F32 tensors on it.
+fn device_with(n: usize) -> (StdArc<ToyBackend>, Vec<TensorId>) {
+    let ctx = ToyBackend::new();
+    let ids: Vec<TensorId> = (0..n).map(|_| TensorId::new()).collect();
+    for &id in &ids {
+        ctx.alloc(id, 1);
+    }
+    (StdArc::new(ctx), ids)
+}
+
 #[test]
 fn maximized_meta_is_not_flagged_dynamic() {
-    let m = ToyBuffer::new(DeviceId::new(), 4);
-    let bindings = [Binding::new(
-        0,
-        &m,
-        BindingRole::Meta {
-            fields: &[MetaField::Uint],
-            kind: MetaKind::Maximized(Resolvable::new()),
-        },
-    )];
     let spec = NodeSpec::new(
         &META_SHADER,
-        &bindings,
+        vec![Binding::new(
+            0,
+            TensorId::new(),
+            BindingRole::Meta {
+                fields: &[MetaField::Uint],
+                kind: MetaKind::Maximized(Resolvable::new()),
+            },
+        )],
         Workgroups::linear(1),
         Parallelity::Data,
     );
-    let has_dynamic_meta = validate_spec::<ToyNode, _>(&spec).unwrap();
+    let has_dynamic_meta = validate_spec::<ToyNode>(&spec).unwrap();
     assert!(
         !has_dynamic_meta,
         "Maximized must not be treated as Dynamic"
@@ -203,39 +244,15 @@ fn maximized_meta_is_not_flagged_dynamic() {
 
 #[test]
 fn graph_build_and_run() {
-    let ctx = StdArc::new(ToyBackend::new());
-    let a = ToyBuffer::new(ctx.device_id(), 4);
-    let b = ToyBuffer::new(ctx.device_id(), 4);
-    let bindings = [
-        Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
-        Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
-    ];
-    let specs = [NodeSpec::new(
-        &COPY_SHADER,
-        &bindings,
-        Workgroups::linear(1),
-        Parallelity::Data,
-    )];
-    let graph = Graph::build(ctx, &specs).unwrap();
+    let (ctx, ids) = device_with(2);
+    let graph = Graph::build(ctx, &[copy_node(ids[0], ids[1])]).unwrap();
     graph.run();
 }
 
 #[test]
 fn graph_capture_falls_back_to_execute() {
-    let ctx = StdArc::new(ToyBackend::new());
-    let a = ToyBuffer::new(ctx.device_id(), 4);
-    let b = ToyBuffer::new(ctx.device_id(), 4);
-    let bindings = [
-        Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
-        Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
-    ];
-    let specs = [NodeSpec::new(
-        &COPY_SHADER,
-        &bindings,
-        Workgroups::linear(1),
-        Parallelity::Data,
-    )];
-    let mut graph = Graph::build(ctx, &specs).unwrap();
+    let (ctx, ids) = device_with(2);
+    let mut graph = Graph::build(ctx, &[copy_node(ids[0], ids[1])]).unwrap();
     graph.capture(7, 0..1);
     assert!(matches!(
         graph.plan.as_slice(),
@@ -246,51 +263,19 @@ fn graph_capture_falls_back_to_execute() {
 
 #[test]
 fn graph_build_rejects_unordered_double_write() {
-    let ctx = StdArc::new(ToyBackend::new());
-    let a = ToyBuffer::new(ctx.device_id(), 4);
-    let b = ToyBuffer::new(ctx.device_id(), 4);
-    let bindings1 = [
-        Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
-        Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
-    ];
-    let bindings2 = [
-        Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
-        Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
-    ];
-    let specs = [
-        NodeSpec::new(
-            &COPY_SHADER,
-            &bindings1,
-            Workgroups::linear(1),
-            Parallelity::Data,
-        ),
-        NodeSpec::new(
-            &COPY_SHADER,
-            &bindings2,
-            Workgroups::linear(1),
-            Parallelity::Data,
-        ),
-    ];
+    let (ctx, ids) = device_with(2);
+    let specs = [copy_node(ids[0], ids[1]), copy_node(ids[0], ids[1])];
     let err = Graph::build(ctx, &specs).err().unwrap();
     assert!(err.contains("Buffer hazard"), "unexpected error: {err}");
 }
 
 #[test]
 fn graph_build_rejects_foreign_buffer() {
-    let ctx = StdArc::new(ToyBackend::new());
-    let a = ToyBuffer::new(ctx.device_id(), 4);
-    let b = ToyBuffer::new(DeviceId::new(), 4); // allocated on a different "device"
-    let bindings = [
-        Binding::new(0, &a, BindingRole::Input(DataKind::F32)),
-        Binding::new(1, &b, BindingRole::Output(DataKind::F32)),
-    ];
-    let specs = [NodeSpec::new(
-        &COPY_SHADER,
-        &bindings,
-        Workgroups::linear(1),
-        Parallelity::Data,
-    )];
-    let err = Graph::build(ctx, &specs).err().unwrap();
+    let (ctx, ids) = device_with(1);
+    let (_other, foreign) = device_with(1); // allocated on a different device
+    let err = Graph::build(ctx, &[copy_node(ids[0], foreign[0])])
+        .err()
+        .unwrap();
     assert!(
         err.contains("Buffer ownership mismatch"),
         "unexpected error: {err}"
@@ -396,27 +381,66 @@ fn supports_p2p_defaults_to_false() {
 fn copy_to_round_trips_through_host() {
     let src = ToyBackend::new();
     let dest = ToyBackend::new();
-    let buf = src.alloc(4);
-    src.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
+    let id = TensorId::new();
+    src.alloc(id, 4);
+    src.upload(id, &[1.0, 2.0, 3.0, 4.0]);
 
-    let copied = src.copy_to(&buf, &dest);
+    src.copy_to(id, &dest);
 
-    assert_eq!(copied.owner(), dest.device_id());
-    assert_eq!(dest.download(&copied), vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(dest.download(id), vec![1.0, 2.0, 3.0, 4.0]);
+    assert!(src.contains(id), "the source copy stays");
+}
+
+#[test]
+fn drop_buffer_removes_it_from_the_table() {
+    let ctx = ToyBackend::new();
+    let id = TensorId::new();
+    ctx.alloc(id, 1);
+    ctx.drop_buffer(id);
+    assert!(!ctx.contains(id));
 }
 
 #[test]
 fn alloc_kind_uses_the_matching_impl() {
     let ctx = ToyBackend::new();
-    let buf = ctx.alloc_kind(DataKind::F32, 4).unwrap();
-    assert_eq!(buf.size_bytes(), 16);
-    assert_eq!(buf.owner(), ctx.device_id());
+    let id = TensorId::new();
+    ctx.alloc_kind(id, DataKind::F32, 4).unwrap();
+    assert!(ctx.contains(id));
+    assert_eq!(ctx.download(id).len(), 4);
 }
 
 #[test]
 fn alloc_kind_rejects_an_unsupported_kind() {
-    let Err(err) = ToyBackend::new().alloc_kind(DataKind::Int4, 4) else {
-        panic!("Int4 should be rejected");
-    };
+    let err = ToyBackend::new()
+        .alloc_kind(TensorId::new(), DataKind::Int4, 4)
+        .unwrap_err();
     assert!(err.contains("Int4"), "{err}");
+}
+
+#[test]
+fn host_data_round_trips_through_the_kind_api() {
+    let ctx = ToyBackend::new();
+    let id = TensorId::new();
+    ctx.alloc_kind(id, DataKind::F32, 3).unwrap();
+    ctx.upload_kind(id, &HostData::F32(vec![1.0, 2.0, 3.0]))
+        .unwrap();
+    let back = ctx.download_kind(id, DataKind::F32).unwrap();
+    assert!(matches!(back, HostData::F32(v) if v == vec![1.0, 2.0, 3.0]));
+}
+
+#[test]
+fn upload_kind_rejects_an_unsupported_kind() {
+    let ctx = ToyBackend::new();
+    let id = TensorId::new();
+    ctx.alloc_kind(id, DataKind::F32, 1).unwrap();
+    let err = ctx
+        .upload_kind(id, &HostData::F16(vec![half::f16::ZERO]))
+        .unwrap_err();
+    assert!(err.contains("F16"), "{err}");
+}
+
+#[test]
+fn unwrap_is_the_inverse_of_wrap() {
+    assert_eq!(F32::unwrap(F32::wrap(vec![1.0, 2.0])), Some(vec![1.0, 2.0]));
+    assert_eq!(F32::unwrap(F16::wrap(vec![])), None);
 }

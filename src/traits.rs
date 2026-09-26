@@ -40,16 +40,17 @@ pub enum MetaKind {
     Maximized(Resolvable<u32>),
 }
 
-pub struct Binding<'a, Buf> {
+#[derive(Debug, Clone)]
+pub struct Binding {
     pub slot: u32,
-    pub buffer: &'a Buf,
+    pub tensor: TensorId,
     pub mode: BindingRole,
 }
 
-impl<'a, Buf> Binding<'a, Buf> {
+impl Binding {
     #[inline]
-    pub fn new(slot: u32, buffer: &'a Buf, mode: BindingRole) -> Self {
-        Self { slot, buffer, mode }
+    pub fn new(slot: u32, tensor: TensorId, mode: BindingRole) -> Self {
+        Self { slot, tensor, mode }
     }
 }
 
@@ -91,6 +92,8 @@ pub trait DataType: Copy + Send + Sync + 'static {
     const KIND: DataKind;
 
     fn wrap(data: Vec<Self::HostRepr>) -> HostData;
+    /// `None` if `data` holds a different kind.
+    fn unwrap(data: HostData) -> Option<Vec<Self::HostRepr>>;
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +105,13 @@ impl DataType for F32 {
 
     fn wrap(data: Vec<f32>) -> HostData {
         HostData::F32(data)
+    }
+
+    fn unwrap(data: HostData) -> Option<Vec<f32>> {
+        match data {
+            HostData::F32(v) => Some(v),
+            _ => None,
+        }
     }
 }
 
@@ -115,6 +125,13 @@ impl DataType for F16 {
     fn wrap(data: Vec<half::f16>) -> HostData {
         HostData::F16(data)
     }
+
+    fn unwrap(data: HostData) -> Option<Vec<half::f16>> {
+        match data {
+            HostData::F16(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -126,6 +143,13 @@ impl DataType for Bf16 {
 
     fn wrap(data: Vec<half::bf16>) -> HostData {
         HostData::Bf16(data)
+    }
+
+    fn unwrap(data: HostData) -> Option<Vec<half::bf16>> {
+        match data {
+            HostData::Bf16(v) => Some(v),
+            _ => None,
+        }
     }
 }
 
@@ -139,6 +163,13 @@ impl DataType for Int8 {
     fn wrap(data: Vec<u8>) -> HostData {
         HostData::Int8(data)
     }
+
+    fn unwrap(data: HostData) -> Option<Vec<u8>> {
+        match data {
+            HostData::Int8(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +182,13 @@ impl DataType for Int4 {
 
     fn wrap(data: Vec<u32>) -> HostData {
         HostData::Int4(data)
+    }
+
+    fn unwrap(data: HostData) -> Option<Vec<u32>> {
+        match data {
+            HostData::Int4(v) => Some(v),
+            _ => None,
+        }
     }
 }
 
@@ -179,16 +217,13 @@ impl HostData {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct BufferId(pub u64);
-
 /// Stand-in tag until the mesh-level `Device` enum exists
 /// then `DeviceId` becomes `GlobalId<Device>`.
 pub enum DeviceTag {}
 
 pub type DeviceId = GlobalId<DeviceTag>;
 pub type TensorId = GlobalId<TensorSpec>;
-pub type NodeId = GlobalId<NodeSpec<'static, ()>>;
+pub type NodeId = GlobalId<NodeSpec>;
 
 pub enum TensorSize {
     Fixed(u32),
@@ -255,8 +290,6 @@ impl TensorSpec {
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
     fn is_sole_owner(&self) -> bool;
-    fn id(&self) -> BufferId;
-    fn owner(&self) -> DeviceId;
 }
 
 pub trait Node: Clone + Send + Sync + 'static {
@@ -293,11 +326,15 @@ pub trait Topology: Sized + Send + Sync + 'static {
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
     fn device_id(&self) -> DeviceId;
-    fn drop_buffer(&self, buf: Self::Buffer);
+    fn contains(&self, id: TensorId) -> bool;
+    fn drop_buffer(&self, id: TensorId);
 
-    /// Runtime counterpart of `SupportsDType<D>::alloc`
-    /// for the mesh level
-    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String>;
+    /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
+    /// the dtype is only known at runtime. Each backend matches the kinds it
+    /// has a `SupportsDType` impl for -- a default body can't see which exist.
+    fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String>;
+    fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String>;
+    fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String>;
 }
 
 pub trait Dispatch: Storage {
@@ -306,7 +343,7 @@ pub trait Dispatch: Storage {
     fn build_node(
         &self,
         shader: &'static Shader,
-        bindings: &[Binding<Self::Buffer>],
+        bindings: &[Binding],
         workgroups: Workgroups,
     ) -> Self::Node;
     fn execute(&self, nodes: &[Self::Node]);
@@ -327,15 +364,15 @@ pub trait Backend: Dispatch {}
 impl<T: Dispatch> Backend for T {}
 
 pub trait SupportsDType<D: DataType>: Storage {
-    fn alloc(&self, elem_count: usize) -> Self::Buffer;
-    fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
-    fn download(&self, buf: &Self::Buffer) -> Vec<D::HostRepr>;
+    fn alloc(&self, id: TensorId, elem_count: usize);
+    fn upload(&self, id: TensorId, data: &[D::HostRepr]);
+    fn download(&self, id: TensorId) -> Vec<D::HostRepr>;
 
-    fn copy_to(&self, buf: &Self::Buffer, dest: &Self) -> Self::Buffer {
-        let data = self.download(buf);
-        let new_buf = dest.alloc(data.len());
-        dest.upload(&new_buf, &data);
-        new_buf
+    /// Allocates the same id on `dest`; the copy on `self` stays.
+    fn copy_to(&self, id: TensorId, dest: &Self) {
+        let data = self.download(id);
+        dest.alloc(id, data.len());
+        dest.upload(id, &data);
     }
 }
 
@@ -352,23 +389,23 @@ pub trait Areable: Storage {
 }
 
 pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
-    fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
+    fn carve(&self, area: &mut Self::Area, id: TensorId, elem_count: usize);
 }
 
-pub struct NodeSpec<'a, Buf> {
+pub struct NodeSpec {
     id: NodeId,
     pub shader: &'static Shader,
-    pub bindings: &'a [Binding<'a, Buf>],
+    pub bindings: Vec<Binding>,
     pub workgroups: Workgroups,
     pub parallelity: crate::mesh::Parallelity,
 }
 
-impl<'a, Buf> NodeSpec<'a, Buf> {
+impl NodeSpec {
     /// The only way to get a node id
     /// `id` is private so two specs can't be handed the same one.
     pub fn new(
         shader: &'static Shader,
-        bindings: &'a [Binding<'a, Buf>],
+        bindings: Vec<Binding>,
         workgroups: Workgroups,
         parallelity: crate::mesh::Parallelity,
     ) -> Self {
@@ -386,7 +423,7 @@ impl<'a, Buf> NodeSpec<'a, Buf> {
     }
 }
 
-fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
+fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<bool, String> {
     N::validate_workgroups(spec.workgroups)
         .map_err(|e| format!("kernel `{}`: {e}", spec.shader.name))?;
 
@@ -395,7 +432,7 @@ fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
     let mut covered = vec![false; layout.len()];
     let mut has_dynamic_meta = false;
 
-    for b in spec.bindings {
+    for b in &spec.bindings {
         let expected = layout.get(b.slot as usize).ok_or_else(|| {
             format!(
                 "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects {} bindings)",
@@ -430,16 +467,17 @@ fn validate_spec<N: Node, Buf>(spec: &NodeSpec<Buf>) -> Result<bool, String> {
     Ok(has_dynamic_meta)
 }
 
-fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec<B::Buffer>]) -> Result<(), String> {
-    let owner = ctx.device_id();
+fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result<(), String> {
     for (i, spec) in specs.iter().enumerate() {
-        for b in spec.bindings {
-            let actual = b.buffer.owner();
-            if actual != owner {
+        for b in &spec.bindings {
+            if !ctx.contains(b.tensor) {
                 return Err(format!(
                     "Buffer ownership mismatch: dispatch {i} (kernel `{}`) binding slot {} \
-                     belongs to device {actual:?}, but this Graph runs on {owner:?}",
-                    spec.shader.name, b.slot
+                     names tensor {:?}, which isn't allocated on device {:?}",
+                    spec.shader.name,
+                    b.slot,
+                    b.tensor,
+                    ctx.device_id()
                 ));
             }
         }
@@ -447,13 +485,13 @@ fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec<B::Buffer>]) -> Result
     Ok(())
 }
 
-fn check_hazards<Buf: Buffer>(specs: &[NodeSpec<Buf>]) -> Result<(), String> {
-    let mut last_write: std::collections::HashMap<BufferId, usize> =
+fn check_hazards(specs: &[NodeSpec]) -> Result<(), String> {
+    let mut last_write: std::collections::HashMap<TensorId, usize> =
         std::collections::HashMap::new();
 
     for (i, spec) in specs.iter().enumerate() {
-        for b in spec.bindings {
-            let id = b.buffer.id();
+        for b in &spec.bindings {
+            let id = b.tensor;
 
             match &b.mode {
                 BindingRole::Output(_) | BindingRole::InOut(_) => {
@@ -492,16 +530,16 @@ pub struct Graph<B: Backend> {
 }
 
 impl<B: Backend> Graph<B> {
-    pub fn build(ctx: std::sync::Arc<B>, specs: &[NodeSpec<B::Buffer>]) -> Result<Self, String> {
+    pub fn build(ctx: std::sync::Arc<B>, specs: &[NodeSpec]) -> Result<Self, String> {
         for spec in specs {
-            validate_spec::<B::Node, _>(spec)?;
+            validate_spec::<B::Node>(spec)?;
         }
         check_ownership(ctx.as_ref(), specs)?;
         check_hazards(specs)?;
 
         let nodes: Vec<B::Node> = specs
             .iter()
-            .map(|s| ctx.build_node(s.shader, s.bindings, s.workgroups))
+            .map(|s| ctx.build_node(s.shader, &s.bindings, s.workgroups))
             .collect();
         let plan = vec![DispatchPlan::Streamed {
             nodes: 0..nodes.len(),

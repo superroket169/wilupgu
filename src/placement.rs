@@ -14,11 +14,7 @@ impl Placement {
     }
 
     /// The only way to add a node
-    pub fn assign<Buf>(
-        &mut self,
-        node: &NodeSpec<Buf>,
-        devices: Vec<DeviceId>,
-    ) -> Result<(), String> {
+    pub fn assign(&mut self, node: &NodeSpec, devices: Vec<DeviceId>) -> Result<(), String> {
         let name = node.shader.name;
         if devices.is_empty() {
             return Err(format!(
@@ -51,7 +47,7 @@ impl Placement {
 
     /// validates a whole node spec list
     /// do NOT add this to HashMap, just for verify it
-    pub(crate) fn validate<Buf>(&self, specs: &[NodeSpec<Buf>]) -> Result<(), String> {
+    pub(crate) fn validate(&self, specs: &[NodeSpec]) -> Result<(), String> {
         for spec in specs {
             if !self.nodes.contains_key(&spec.id()) {
                 return Err(format!(
@@ -83,8 +79,8 @@ mod tests {
         dispatch: &[],
     };
 
-    fn spec(parallelity: Parallelity) -> NodeSpec<'static, ()> {
-        NodeSpec::new(&EMPTY, &[], Workgroups::linear(1), parallelity)
+    fn spec(parallelity: Parallelity) -> NodeSpec {
+        NodeSpec::new(&EMPTY, vec![], Workgroups::linear(1), parallelity)
     }
 
     #[test]
