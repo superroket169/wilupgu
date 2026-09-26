@@ -136,7 +136,13 @@ impl DataType for Int4 {
 pub struct BufferId(pub u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct DeviceId(pub u64);
+pub struct DeviceId(GlobalId);
+
+impl DeviceId {
+    pub(crate) fn new() -> Self {
+        Self(GlobalId::new())
+    }
+}
 
 pub enum TensorSize {
     Fixed(u32),
@@ -215,16 +221,16 @@ pub trait Node: Clone + Send + Sync + 'static {
     }
 }
 
-pub trait Device: Clone + std::fmt::Debug + Send + Sync + 'static {
+pub trait DeviceInfo: Clone + std::fmt::Debug + Send + Sync + 'static {
     fn label(&self) -> String;
     fn total_memory_bytes(&self) -> u64;
 }
 
 pub trait Topology: Sized + Send + Sync + 'static {
-    type Device: Device;
+    type Info: DeviceInfo;
 
-    fn choosable_devices() -> Vec<Self::Device>;
-    fn attach(device: Self::Device) -> Result<Self, String>;
+    fn choosable_devices() -> Vec<Self::Info>;
+    fn attach(info: Self::Info) -> Result<Self, String>;
     fn name(&self) -> &'static str;
 }
 
