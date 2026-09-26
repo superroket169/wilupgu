@@ -89,6 +89,8 @@ pub trait DataType: Copy + Send + Sync + 'static {
     const BITS_PER_ELEM: u32;
     const ELEMS_PER_HOST_WORD: u32 = 1;
     const KIND: DataKind;
+
+    fn wrap(data: Vec<Self::HostRepr>) -> HostData;
 }
 
 #[derive(Clone, Copy)]
@@ -97,6 +99,10 @@ impl DataType for F32 {
     type HostRepr = f32;
     const BITS_PER_ELEM: u32 = 32;
     const KIND: DataKind = DataKind::F32;
+
+    fn wrap(data: Vec<f32>) -> HostData {
+        HostData::F32(data)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +111,10 @@ impl DataType for F16 {
     type HostRepr = half::f16;
     const BITS_PER_ELEM: u32 = 16;
     const KIND: DataKind = DataKind::F16;
+
+    fn wrap(data: Vec<half::f16>) -> HostData {
+        HostData::F16(data)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +123,10 @@ impl DataType for Bf16 {
     type HostRepr = half::bf16;
     const BITS_PER_ELEM: u32 = 16;
     const KIND: DataKind = DataKind::Bf16;
+
+    fn wrap(data: Vec<half::bf16>) -> HostData {
+        HostData::Bf16(data)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -121,6 +135,10 @@ impl DataType for Int8 {
     type HostRepr = u8;
     const BITS_PER_ELEM: u32 = 8;
     const KIND: DataKind = DataKind::Int8;
+
+    fn wrap(data: Vec<u8>) -> HostData {
+        HostData::Int8(data)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -130,6 +148,35 @@ impl DataType for Int4 {
     const BITS_PER_ELEM: u32 = 4;
     const ELEMS_PER_HOST_WORD: u32 = 8;
     const KIND: DataKind = DataKind::Int4;
+
+    fn wrap(data: Vec<u32>) -> HostData {
+        HostData::Int4(data)
+    }
+}
+
+/// Host-side values of one tensor
+/// one tag for the whole vector
+/// so kinds can't mix and upload is a plain byte cast.
+#[derive(Debug, Clone)]
+pub enum HostData {
+    F32(Vec<f32>),
+    F16(Vec<half::f16>),
+    Bf16(Vec<half::bf16>),
+    Int8(Vec<u8>),
+    /// Packed, 8 values per word.
+    Int4(Vec<u32>),
+}
+
+impl HostData {
+    pub fn kind(&self) -> DataKind {
+        match self {
+            HostData::F32(_) => DataKind::F32,
+            HostData::F16(_) => DataKind::F16,
+            HostData::Bf16(_) => DataKind::Bf16,
+            HostData::Int8(_) => DataKind::Int8,
+            HostData::Int4(_) => DataKind::Int4,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -155,31 +202,37 @@ pub enum TensorSize {
     },
 }
 
-pub enum InitRecipe<D: DataType> {
-    UploadFromHost(Vec<D::HostRepr>),
+pub enum InitRecipe {
+    UploadFromHost(HostData),
     Zero,
 }
 
-pub struct TensorSpec<D: DataType> {
+pub struct TensorSpec {
     id: GlobalId,
+    kind: DataKind,
     size: TensorSize,
-    init: Option<InitRecipe<D>>,
+    init: Option<InitRecipe>,
 }
 
-impl<D: DataType> TensorSpec<D> {
-    pub fn blank(size: TensorSize) -> Self {
-        Self {
-            id: GlobalId::new(),
-            size,
-            init: None,
-        }
+impl TensorSpec {
+    pub fn blank<D: DataType>(size: TensorSize) -> Self {
+        Self::with::<D>(size, None)
     }
 
-    pub fn seeded(size: TensorSize, init: InitRecipe<D>) -> Self {
+    pub fn seeded<D: DataType>(size: TensorSize, data: Vec<D::HostRepr>) -> Self {
+        Self::with::<D>(size, Some(InitRecipe::UploadFromHost(D::wrap(data))))
+    }
+
+    pub fn zeroed<D: DataType>(size: TensorSize) -> Self {
+        Self::with::<D>(size, Some(InitRecipe::Zero))
+    }
+
+    fn with<D: DataType>(size: TensorSize, init: Option<InitRecipe>) -> Self {
         Self {
             id: GlobalId::new(),
+            kind: D::KIND,
             size,
-            init: Some(init),
+            init,
         }
     }
 
@@ -187,11 +240,15 @@ impl<D: DataType> TensorSpec<D> {
         self.id
     }
 
+    pub fn kind(&self) -> DataKind {
+        self.kind
+    }
+
     pub fn size(&self) -> &TensorSize {
         &self.size
     }
 
-    pub fn init(&self) -> Option<&InitRecipe<D>> {
+    pub fn init(&self) -> Option<&InitRecipe> {
         self.init.as_ref()
     }
 }
