@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::mesh::Parallelity;
-use crate::traits::{DeviceId, NodeId, NodeSpec};
+use crate::specs::{NodeId, NodeSpec};
+use crate::traits::DeviceId;
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {
@@ -15,7 +16,7 @@ impl Placement {
 
     /// The only way to add a node
     pub fn assign(&mut self, node: &NodeSpec, devices: Vec<DeviceId>) -> Result<(), String> {
-        let name = node.shader.name;
+        let name = node.shader().name;
         if devices.is_empty() {
             return Err(format!(
                 "node {:?} (`{name}`) is placed on no device",
@@ -30,7 +31,7 @@ impl Placement {
                 ));
             }
         }
-        if node.parallelity == Parallelity::Pipeline && devices.len() != 1 {
+        if node.parallelity() == Parallelity::Pipeline && devices.len() != 1 {
             return Err(format!(
                 "node {:?} (`{name}`) is Pipeline but placed on {} devices, needs exactly 1",
                 node.id(),
@@ -53,7 +54,7 @@ impl Placement {
                 return Err(format!(
                     "node {:?} (`{}`) has no placement",
                     spec.id(),
-                    spec.shader.name
+                    spec.shader().name
                 ));
             }
         }
@@ -76,7 +77,7 @@ mod tests {
     static EMPTY: Shader = Shader {
         name: "Empty",
         layout: &[],
-        dispatch: &[],
+        shader_code: &[],
     };
 
     fn spec(parallelity: Parallelity) -> NodeSpec {

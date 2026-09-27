@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::device::Device;
-use crate::traits::{DataType, TensorId};
+use crate::specs::TensorId;
+use crate::traits::DataType;
 
 /// A live tensor on one device: just a handle (device + id)
 /// the buffer itself lives in the device's own table.

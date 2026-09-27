@@ -1,6 +1,7 @@
 use super::*;
 use crate::mesh::Parallelity;
 use crate::resolver::Resolvable;
+use crate::specs::*;
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex};
 
@@ -18,7 +19,7 @@ impl Buffer for ToyBuffer {
 static TOY_SHADER: Shader = Shader {
     name: "Toy",
     layout: &[],
-    dispatch: &[],
+    shader_code: &[],
 };
 
 #[derive(Clone)]
@@ -186,7 +187,7 @@ static COPY_SHADER: Shader = Shader {
         BindingRole::Input(DataKind::F32),
         BindingRole::Output(DataKind::F32),
     ],
-    dispatch: &[],
+    shader_code: &[],
 };
 
 static META_SHADER: Shader = Shader {
@@ -195,7 +196,7 @@ static META_SHADER: Shader = Shader {
         fields: &[MetaField::Uint],
         kind: MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
     }],
-    dispatch: &[],
+    shader_code: &[],
 };
 
 fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {

@@ -1,6 +1,7 @@
 use crate::backends::ShaderCode;
 use crate::id::GlobalId;
 use crate::resolver::Resolvable;
+use crate::specs::{Binding, NodeSpec, TensorId};
 
 #[derive(Debug, Clone)]
 pub enum BindingRole {
@@ -40,24 +41,10 @@ pub enum MetaKind {
     Maximized(Resolvable<u32>),
 }
 
-#[derive(Debug, Clone)]
-pub struct Binding {
-    pub slot: u32,
-    pub tensor: TensorId,
-    pub mode: BindingRole,
-}
-
-impl Binding {
-    #[inline]
-    pub fn new(slot: u32, tensor: TensorId, mode: BindingRole) -> Self {
-        Self { slot, tensor, mode }
-    }
-}
-
 pub struct Shader {
     pub name: &'static str,
     pub layout: &'static [BindingRole],
-    pub dispatch: &'static [ShaderCode],
+    pub shader_code: &'static [ShaderCode],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -222,70 +209,6 @@ impl HostData {
 pub enum DeviceTag {}
 
 pub type DeviceId = GlobalId<DeviceTag>;
-pub type TensorId = GlobalId<TensorSpec>;
-pub type NodeId = GlobalId<NodeSpec>;
-
-pub enum TensorSize {
-    Fixed(u32),
-    /// Not known in compile time
-    /// whoever resolves it decides HOW based on the owning NodeSpec's `Parallelity`
-    Resolvable {
-        size: Resolvable<u32>,
-        multiplier: u32,
-        coefficient: u32,
-    },
-}
-
-pub enum InitRecipe {
-    UploadFromHost(HostData),
-    Zero,
-}
-
-pub struct TensorSpec {
-    id: TensorId,
-    kind: DataKind,
-    size: TensorSize,
-    init: Option<InitRecipe>,
-}
-
-impl TensorSpec {
-    pub fn blank<D: DataType>(size: TensorSize) -> Self {
-        Self::with::<D>(size, None)
-    }
-
-    pub fn seeded<D: DataType>(size: TensorSize, data: Vec<D::HostRepr>) -> Self {
-        Self::with::<D>(size, Some(InitRecipe::UploadFromHost(D::wrap(data))))
-    }
-
-    pub fn zeroed<D: DataType>(size: TensorSize) -> Self {
-        Self::with::<D>(size, Some(InitRecipe::Zero))
-    }
-
-    fn with<D: DataType>(size: TensorSize, init: Option<InitRecipe>) -> Self {
-        Self {
-            id: GlobalId::new(),
-            kind: D::KIND,
-            size,
-            init,
-        }
-    }
-
-    pub fn id(&self) -> TensorId {
-        self.id
-    }
-
-    pub fn kind(&self) -> DataKind {
-        self.kind
-    }
-
-    pub fn size(&self) -> &TensorSize {
-        &self.size
-    }
-
-    pub fn init(&self) -> Option<&InitRecipe> {
-        self.init.as_ref()
-    }
-}
 
 pub trait Buffer: Clone + Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
@@ -392,47 +315,16 @@ pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
     fn carve(&self, area: &mut Self::Area, id: TensorId, elem_count: usize);
 }
 
-pub struct NodeSpec {
-    id: NodeId,
-    pub shader: &'static Shader,
-    pub bindings: Vec<Binding>,
-    pub workgroups: Workgroups,
-    pub parallelity: crate::mesh::Parallelity,
-}
-
-impl NodeSpec {
-    /// The only way to get a node id
-    /// `id` is private so two specs can't be handed the same one.
-    pub fn new(
-        shader: &'static Shader,
-        bindings: Vec<Binding>,
-        workgroups: Workgroups,
-        parallelity: crate::mesh::Parallelity,
-    ) -> Self {
-        Self {
-            id: GlobalId::new(),
-            shader,
-            bindings,
-            workgroups,
-            parallelity,
-        }
-    }
-
-    pub fn id(&self) -> NodeId {
-        self.id
-    }
-}
-
 fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<bool, String> {
-    N::validate_workgroups(spec.workgroups)
-        .map_err(|e| format!("kernel `{}`: {e}", spec.shader.name))?;
+    N::validate_workgroups(spec.workgroups())
+        .map_err(|e| format!("kernel `{}`: {e}", spec.shader().name))?;
 
-    let layout = spec.shader.layout;
-    let name = spec.shader.name;
+    let layout = spec.shader().layout;
+    let name = spec.shader().name;
     let mut covered = vec![false; layout.len()];
     let mut has_dynamic_meta = false;
 
-    for b in &spec.bindings {
+    for b in spec.bindings() {
         let expected = layout.get(b.slot as usize).ok_or_else(|| {
             format!(
                 "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects {} bindings)",
@@ -469,12 +361,12 @@ fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<bool, String> {
 
 fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result<(), String> {
     for (i, spec) in specs.iter().enumerate() {
-        for b in &spec.bindings {
+        for b in spec.bindings() {
             if !ctx.contains(b.tensor) {
                 return Err(format!(
                     "Buffer ownership mismatch: dispatch {i} (kernel `{}`) binding slot {} \
                      names tensor {:?}, which isn't allocated on device {:?}",
-                    spec.shader.name,
+                    spec.shader().name,
                     b.slot,
                     b.tensor,
                     ctx.device_id()
@@ -490,7 +382,7 @@ fn check_hazards(specs: &[NodeSpec]) -> Result<(), String> {
         std::collections::HashMap::new();
 
     for (i, spec) in specs.iter().enumerate() {
-        for b in &spec.bindings {
+        for b in spec.bindings() {
             let id = b.tensor;
 
             match &b.mode {
@@ -539,7 +431,7 @@ impl<B: Backend> Graph<B> {
 
         let nodes: Vec<B::Node> = specs
             .iter()
-            .map(|s| ctx.build_node(s.shader, &s.bindings, s.workgroups))
+            .map(|s| ctx.build_node(s.shader(), s.bindings(), s.workgroups()))
             .collect();
         let plan = vec![DispatchPlan::Streamed {
             nodes: 0..nodes.len(),

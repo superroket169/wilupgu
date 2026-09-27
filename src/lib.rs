@@ -11,6 +11,7 @@ pub mod placement;
 pub(crate) mod pool;
 pub mod resolver;
 pub mod shader;
+pub mod specs;
 pub mod tensor;
 pub mod topology;
 pub mod traits;

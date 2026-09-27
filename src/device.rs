@@ -7,7 +7,8 @@ use crate::backends::CudaBackend;
 #[cfg(feature = "rayon")]
 use crate::backends::RayonBackend;
 use crate::backends::WgpuBackend;
-use crate::traits::{DataKind, DeviceId, Dispatch, Graph, HostData, NodeSpec, Storage, TensorId};
+use crate::specs::{NodeSpec, TensorId};
+use crate::traits::{DataKind, DeviceId, Dispatch, Graph, HostData, Storage};
 
 /// One live device, whatever its backend
 /// It only dispatches on which backend it is
