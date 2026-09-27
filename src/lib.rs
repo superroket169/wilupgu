@@ -1,6 +1,8 @@
 pub mod backend;
 pub mod backends;
 pub mod builtin;
+pub mod device;
+pub mod device_tensor;
 pub mod graph;
 pub mod id;
 pub(crate) mod io_log;
