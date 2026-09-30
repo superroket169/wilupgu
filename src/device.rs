@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::backend::{Dispatch, Storage};
 #[cfg(feature = "cpu")]
 use crate::backends::CpuBackend;
 #[cfg(feature = "cuda")]
@@ -7,8 +8,16 @@ use crate::backends::CudaBackend;
 #[cfg(feature = "rayon")]
 use crate::backends::RayonBackend;
 use crate::backends::WgpuBackend;
-use crate::specs::{NodeSpec, TensorId};
-use crate::traits::{DataKind, DeviceId, Dispatch, Graph, HostData, Storage};
+use crate::dtype::{DataKind, HostData};
+use crate::graph::Graph;
+use crate::id::GlobalId;
+use crate::node::NodeSpec;
+use crate::tensor::TensorId;
+
+/// Stand-in tag until each backend has its own concrete device-id source.
+pub enum DeviceTag {}
+
+pub type DeviceId = GlobalId<DeviceTag>;
 
 /// One live device, whatever its backend
 /// It only dispatches on which backend it is

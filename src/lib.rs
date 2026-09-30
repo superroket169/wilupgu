@@ -1,10 +1,14 @@
+pub mod backend;
 pub mod backends;
 pub mod device;
-pub mod device_tensor;
+pub mod dtype;
+pub mod graph;
 pub mod id;
 pub(crate) mod io_log;
 pub mod mesh;
+pub mod node;
 pub mod placement;
 pub mod resolver;
-pub mod specs;
-pub mod traits;
+pub(crate) mod rules;
+pub mod shader;
+pub mod tensor;

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::specs::{NodeId, NodeSpec};
-use crate::traits::DeviceId;
+use crate::device::DeviceId;
+use crate::node::{NodeId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {
@@ -64,7 +64,7 @@ impl Placement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{Shader, Workgroups};
+    use crate::shader::{Shader, Workgroups};
 
     static EMPTY: Shader = Shader {
         name: "Empty",

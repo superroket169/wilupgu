@@ -1,6 +1,82 @@
-use crate::device::Device;
-use crate::specs::{TensorId, TensorSize, TensorSpec};
-use crate::traits::{DataKind, DataType, DeviceId, ResolvedSize};
+//! A tensor, blueprint and live: what it will be before any buffer exists,
+//! and the handle to it once one does. Kept together on purpose -- a
+//! `SpreadSpec` genuinely needs both.
+
+use crate::device::{Device, DeviceId};
+use crate::dtype::{DataKind, DataType, HostData};
+use crate::id::GlobalId;
+use crate::shader::ResolvedSize;
+
+pub type TensorId = GlobalId<TensorSpec>;
+
+#[derive(Clone)]
+pub enum TensorSize {
+    Fixed(u32),
+    /// Not known at compile time
+    Resolvable(ResolvedSize),
+}
+
+impl TensorSize {
+    /// # Panics
+    /// If it's `Resolvable` and hasn't been resolved yet.
+    pub fn resolved(&self) -> u32 {
+        match self {
+            TensorSize::Fixed(n) => *n,
+            TensorSize::Resolvable(r) => r.size.value() * r.multiplier + r.coefficient,
+        }
+    }
+}
+
+pub enum InitRecipe {
+    UploadFromHost(HostData),
+    Zero,
+}
+
+pub struct TensorSpec {
+    id: TensorId,
+    kind: DataKind,
+    size: TensorSize,
+    init: Option<InitRecipe>,
+}
+
+impl TensorSpec {
+    pub fn blank<D: DataType>(size: TensorSize) -> Self {
+        Self::with::<D>(size, None)
+    }
+
+    pub fn seeded<D: DataType>(size: TensorSize, data: Vec<D::HostRepr>) -> Self {
+        Self::with::<D>(size, Some(InitRecipe::UploadFromHost(D::wrap(data))))
+    }
+
+    pub fn zeroed<D: DataType>(size: TensorSize) -> Self {
+        Self::with::<D>(size, Some(InitRecipe::Zero))
+    }
+
+    fn with<D: DataType>(size: TensorSize, init: Option<InitRecipe>) -> Self {
+        Self {
+            id: GlobalId::new(),
+            kind: D::KIND,
+            size,
+            init,
+        }
+    }
+
+    pub fn id(&self) -> TensorId {
+        self.id
+    }
+
+    pub fn kind(&self) -> DataKind {
+        self.kind
+    }
+
+    pub fn size(&self) -> &TensorSize {
+        &self.size
+    }
+
+    pub fn init(&self) -> Option<&InitRecipe> {
+        self.init.as_ref()
+    }
+}
 
 /// A live tensor on one device: just a handle (device + id)
 /// the buffer itself lives in the device's own table.
@@ -272,6 +348,9 @@ impl SpreadSpec {
     }
 }
 
+/// Tensors on different devices, seen as one. Whichever side is live (the
+/// whole or the parts) holds real buffers; the other is a shadow -- just the
+/// ids it would use if it existed.
 pub struct SpreadTensor {
     whole_id: TensorId,
     part_ids: Vec<TensorId>,
@@ -482,5 +561,88 @@ pub mod combine {
         let to = single(to)?;
         let first = parts.into_iter().next().ok_or("nothing to take")?;
         Ok(vec![first.copy_to_id::<D>(to, whole_id)?])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dtype::{Int8, F16, F32};
+    use crate::resolver::Resolvable;
+
+    #[test]
+    fn tensor_size_variants_construct() {
+        let fixed = TensorSize::Fixed(128);
+        let resolvable = TensorSize::Resolvable(ResolvedSize {
+            size: Resolvable::new(),
+            multiplier: 64,
+            coefficient: 1,
+        });
+        assert!(matches!(fixed, TensorSize::Fixed(128)));
+        assert!(matches!(resolvable, TensorSize::Resolvable(_)));
+    }
+
+    #[test]
+    fn tensor_size_resolvable_groups_by_shared_clone() {
+        let size = Resolvable::new();
+        let a = TensorSize::Resolvable(ResolvedSize {
+            size: size.clone(),
+            multiplier: 64,
+            coefficient: 1,
+        });
+        let b = TensorSize::Resolvable(ResolvedSize {
+            size: size.clone(),
+            multiplier: 64,
+            coefficient: 1,
+        });
+        size.resolver().resolve(256);
+        let TensorSize::Resolvable(a_size) = a else {
+            unreachable!()
+        };
+        let TensorSize::Resolvable(b_size) = b else {
+            unreachable!()
+        };
+        assert_eq!(*a_size.size.value(), 256);
+        assert_eq!(*b_size.size.value(), 256);
+    }
+
+    #[test]
+    fn tensor_spec_blank_has_no_init() {
+        let spec = TensorSpec::blank::<F32>(TensorSize::Fixed(4));
+        assert!(spec.init().is_none());
+        assert_eq!(spec.kind(), DataKind::F32);
+    }
+
+    #[test]
+    fn tensor_spec_seeded_carries_its_init() {
+        let spec = TensorSpec::seeded::<F32>(TensorSize::Fixed(4), vec![1.0, 2.0, 3.0, 4.0]);
+        assert!(matches!(
+            spec.init(),
+            Some(InitRecipe::UploadFromHost(HostData::F32(data))) if data.len() == 4
+        ));
+    }
+
+    #[test]
+    fn tensor_spec_zeroed_keeps_its_kind() {
+        let spec = TensorSpec::zeroed::<F16>(TensorSize::Fixed(4));
+        assert!(matches!(spec.init(), Some(InitRecipe::Zero)));
+        assert_eq!(spec.kind(), DataKind::F16);
+    }
+
+    #[test]
+    fn specs_of_different_kinds_share_one_slice() {
+        let specs = [
+            TensorSpec::blank::<F32>(TensorSize::Fixed(4)),
+            TensorSpec::seeded::<Int8>(TensorSize::Fixed(2), vec![1, 2]),
+        ];
+        assert_eq!(specs[0].kind(), DataKind::F32);
+        assert_eq!(specs[1].kind(), DataKind::Int8);
+    }
+
+    #[test]
+    fn tensor_spec_ids_are_distinct() {
+        let a = TensorSpec::blank::<F32>(TensorSize::Fixed(4));
+        let b = TensorSpec::blank::<F32>(TensorSize::Fixed(4));
+        assert_ne!(a.id(), b.id());
     }
 }
