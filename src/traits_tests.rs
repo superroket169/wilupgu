@@ -230,7 +230,11 @@ fn maximized_meta_is_not_flagged_dynamic() {
             TensorId::new(),
             BindingRole::Meta {
                 fields: &[MetaField::Uint],
-                kind: MetaKind::Maximized(Resolvable::new()),
+                kind: MetaKind::Maximized(ResolvedSize {
+                    size: Resolvable::new(),
+                    multiplier: 1,
+                    coefficient: 0,
+                }),
             },
         )],
         Workgroups::linear(1),
@@ -293,37 +297,37 @@ fn global_id_is_unique() {
 #[test]
 fn tensor_size_variants_construct() {
     let fixed = TensorSize::Fixed(128);
-    let resolvable = TensorSize::Resolvable {
+    let resolvable = TensorSize::Resolvable(ResolvedSize {
         size: Resolvable::new(),
         multiplier: 64,
         coefficient: 1,
-    };
+    });
     assert!(matches!(fixed, TensorSize::Fixed(128)));
-    assert!(matches!(resolvable, TensorSize::Resolvable { .. }));
+    assert!(matches!(resolvable, TensorSize::Resolvable(_)));
 }
 
 #[test]
 fn tensor_size_resolvable_groups_by_shared_clone() {
     let size = Resolvable::new();
-    let a = TensorSize::Resolvable {
+    let a = TensorSize::Resolvable(ResolvedSize {
         size: size.clone(),
         multiplier: 64,
         coefficient: 1,
-    };
-    let b = TensorSize::Resolvable {
+    });
+    let b = TensorSize::Resolvable(ResolvedSize {
         size: size.clone(),
         multiplier: 64,
         coefficient: 1,
-    };
+    });
     size.resolver().resolve(256);
-    let TensorSize::Resolvable { size: a_size, .. } = a else {
+    let TensorSize::Resolvable(a_size) = a else {
         unreachable!()
     };
-    let TensorSize::Resolvable { size: b_size, .. } = b else {
+    let TensorSize::Resolvable(b_size) = b else {
         unreachable!()
     };
-    assert_eq!(*a_size.value(), 256);
-    assert_eq!(*b_size.value(), 256);
+    assert_eq!(*a_size.size.value(), 256);
+    assert_eq!(*b_size.size.value(), 256);
 }
 
 #[test]

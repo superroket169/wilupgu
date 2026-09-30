@@ -3,8 +3,7 @@
 
 use crate::id::GlobalId;
 use crate::mesh::Parallelity;
-use crate::resolver::Resolvable;
-use crate::traits::{BindingRole, DataKind, DataType, HostData, Shader, Workgroups};
+use crate::traits::{BindingRole, DataKind, DataType, HostData, ResolvedSize, Shader, Workgroups};
 
 pub type TensorId = GlobalId<TensorSpec>;
 pub type NodeId = GlobalId<NodeSpec>;
@@ -13,11 +12,7 @@ pub enum TensorSize {
     Fixed(u32),
     /// Not known in compile time
     /// whoever resolves it decides HOW based on the owning NodeSpec's `Parallelity`
-    Resolvable {
-        size: Resolvable<u32>,
-        multiplier: u32,
-        coefficient: u32,
-    },
+    Resolvable(ResolvedSize),
 }
 
 pub enum InitRecipe {

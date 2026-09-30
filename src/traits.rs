@@ -38,7 +38,19 @@ pub enum DataKind {
 pub enum MetaKind {
     Static,
     Dynamic,
-    Maximized(Resolvable<u32>),
+    Maximized(ResolvedSize),
+}
+
+/// A size not known at compile time
+/// shared by `TensorSize` and `MetaKind`
+/// so a tensor and its meta can be given the same `Resolvable`
+///
+/// resolving one then resolves both, ruling out the two ever disagreeing on it.
+#[derive(Debug, Clone)]
+pub struct ResolvedSize {
+    pub size: Resolvable<u32>,
+    pub multiplier: u32,
+    pub coefficient: u32,
 }
 
 pub struct Shader {
