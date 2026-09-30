@@ -1,5 +1,4 @@
 use super::*;
-use crate::mesh::Parallelity;
 use crate::resolver::Resolvable;
 use crate::specs::*;
 use std::collections::HashMap;
@@ -207,7 +206,6 @@ fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
             Binding::new(1, to, BindingRole::Output(DataKind::F32)),
         ],
         Workgroups::linear(1),
-        Parallelity::Data,
     )
 }
 
@@ -238,7 +236,6 @@ fn maximized_meta_is_not_flagged_dynamic() {
             },
         )],
         Workgroups::linear(1),
-        Parallelity::Data,
     );
     let has_dynamic_meta = validate_spec::<ToyNode>(&spec).unwrap();
     assert!(

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::mesh::Parallelity;
 use crate::specs::{NodeId, NodeSpec};
 use crate::traits::DeviceId;
 
@@ -30,13 +29,6 @@ impl Placement {
                     node.id()
                 ));
             }
-        }
-        if node.parallelity() == Parallelity::Pipeline && devices.len() != 1 {
-            return Err(format!(
-                "node {:?} (`{name}`) is Pipeline but placed on {} devices, needs exactly 1",
-                node.id(),
-                devices.len()
-            ));
         }
         self.nodes.insert(node.id(), devices);
         Ok(())
@@ -80,13 +72,13 @@ mod tests {
         shader_code: &[],
     };
 
-    fn spec(parallelity: Parallelity) -> NodeSpec {
-        NodeSpec::new(&EMPTY, vec![], Workgroups::linear(1), parallelity)
+    fn spec() -> NodeSpec {
+        NodeSpec::new(&EMPTY, vec![], Workgroups::linear(1))
     }
 
     #[test]
     fn accepts_a_complete_placement() {
-        let specs = [spec(Parallelity::Data), spec(Parallelity::Pipeline)];
+        let specs = [spec(), spec()];
         let (d0, d1) = (DeviceId::new(), DeviceId::new());
         let mut p = Placement::new();
         p.assign(&specs[0], vec![d0, d1]).unwrap();
@@ -96,27 +88,14 @@ mod tests {
 
     #[test]
     fn assign_rejects_no_device() {
-        let err = Placement::new()
-            .assign(&spec(Parallelity::Data), vec![])
-            .unwrap_err();
+        let err = Placement::new().assign(&spec(), vec![]).unwrap_err();
         assert!(err.contains("no device"), "{err}");
-    }
-
-    #[test]
-    fn assign_rejects_pipeline_on_two_devices() {
-        let err = Placement::new()
-            .assign(
-                &spec(Parallelity::Pipeline),
-                vec![DeviceId::new(), DeviceId::new()],
-            )
-            .unwrap_err();
-        assert!(err.contains("needs exactly 1"), "{err}");
     }
 
     #[test]
     fn assign_rejects_duplicate_device() {
         let err = Placement::new()
-            .assign(&spec(Parallelity::Tensor), {
+            .assign(&spec(), {
                 let d = DeviceId::new();
                 vec![d, d]
             })
@@ -126,23 +105,24 @@ mod tests {
 
     #[test]
     fn rejected_assign_leaves_nothing_behind() {
-        let s = spec(Parallelity::Pipeline);
+        let s = spec();
         let mut p = Placement::new();
-        let _ = p.assign(&s, vec![DeviceId::new(), DeviceId::new()]);
+        let d = DeviceId::new();
+        let _ = p.assign(&s, vec![d, d]);
         assert!(p.devices(s.id()).is_none());
     }
 
     #[test]
     fn validate_rejects_unplaced_node() {
-        let specs = [spec(Parallelity::Data)];
+        let specs = [spec()];
         let err = Placement::new().validate(&specs).unwrap_err();
         assert!(err.contains("has no placement"), "{err}");
     }
 
     #[test]
     fn validate_rejects_node_outside_the_list() {
-        let specs = [spec(Parallelity::Data)];
-        let stranger = spec(Parallelity::Data);
+        let specs = [spec()];
+        let stranger = spec();
         let mut p = Placement::new();
         let d = DeviceId::new();
         p.assign(&specs[0], vec![d]).unwrap();

@@ -2,7 +2,6 @@
 //! on a device. Nothing here touches a backend.
 
 use crate::id::GlobalId;
-use crate::mesh::Parallelity;
 use crate::traits::{BindingRole, DataKind, DataType, HostData, ResolvedSize, Shader, Workgroups};
 
 pub type TensorId = GlobalId<TensorSpec>;
@@ -11,8 +10,7 @@ pub type NodeId = GlobalId<NodeSpec>;
 #[derive(Clone)]
 pub enum TensorSize {
     Fixed(u32),
-    /// Not known in compile time
-    /// whoever resolves it decides HOW based on the owning NodeSpec's `Parallelity`
+    /// Not known at compile time
     Resolvable(ResolvedSize),
 }
 
@@ -99,22 +97,15 @@ pub struct NodeSpec {
     shader: &'static Shader,
     bindings: Vec<Binding>,
     workgroups: Workgroups,
-    parallelity: Parallelity,
 }
 
 impl NodeSpec {
-    pub fn new(
-        shader: &'static Shader,
-        bindings: Vec<Binding>,
-        workgroups: Workgroups,
-        parallelity: Parallelity,
-    ) -> Self {
+    pub fn new(shader: &'static Shader, bindings: Vec<Binding>, workgroups: Workgroups) -> Self {
         Self {
             id: GlobalId::new(),
             shader,
             bindings,
             workgroups,
-            parallelity,
         }
     }
 
@@ -132,9 +123,5 @@ impl NodeSpec {
 
     pub fn workgroups(&self) -> Workgroups {
         self.workgroups
-    }
-
-    pub fn parallelity(&self) -> Parallelity {
-        self.parallelity
     }
 }
