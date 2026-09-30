@@ -8,11 +8,23 @@ use crate::traits::{BindingRole, DataKind, DataType, HostData, ResolvedSize, Sha
 pub type TensorId = GlobalId<TensorSpec>;
 pub type NodeId = GlobalId<NodeSpec>;
 
+#[derive(Clone)]
 pub enum TensorSize {
     Fixed(u32),
     /// Not known in compile time
     /// whoever resolves it decides HOW based on the owning NodeSpec's `Parallelity`
     Resolvable(ResolvedSize),
+}
+
+impl TensorSize {
+    /// # Panics
+    /// If it's `Resolvable` and hasn't been resolved yet.
+    pub fn resolved(&self) -> u32 {
+        match self {
+            TensorSize::Fixed(n) => *n,
+            TensorSize::Resolvable(r) => r.size.value() * r.multiplier + r.coefficient,
+        }
+    }
 }
 
 pub enum InitRecipe {

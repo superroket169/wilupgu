@@ -267,6 +267,11 @@ pub trait Storage: Send + Sync + 'static {
     /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
     /// the dtype is only known at runtime. Each backend matches the kinds it
     /// has a `SupportsDType` impl for -- a default body can't see which exist.
+    ///
+    /// # Errors
+    /// Must fail, not alias or overwrite, if `contains(id)` is already true
+    /// `Tensor::with_id` relies on this to keep two live tensors from ever
+    /// sharing one id's buffer.
     fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String>;
     fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String>;
     fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String>;
