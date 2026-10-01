@@ -1,19 +1,51 @@
 # Shader kataloğu
 
-Kaynak: wilupgu `src/builtin/mod.rs` (refactor sırasında silindi, builtin'ler
-geri döndüğünde bu tablo güncellenecek).
+Kaynak kodlar `src/shader-codes/{wgsl,native,cuda}/`, her shader kendi
+dosyasında.
 
-| Shader | wgsl | cuda | cpu | Kullanan |
-|---|---|---|---|---|
-| MatMul | fwd/matmul.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul()` (m>1) |
-| Gemv | fwd/gemv.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_with()` (m=1, H6 auto-route) |
-| GemvAdd | fwd/gemv_add.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_add_with()` (m=1) |
-| MatMulTrp | fwd/matmul_trp.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_trp()` |
-| MatMulAdd | fwd/matmul_add.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_add_with()` (m>1, block_pre_attn/block_post_attn own the meta); plain `matmul_add()` is now `#[cfg(test)]`-only |
-| MatMulWeightBwd | bwd/matmul_weight_trp.wgsl | Custom → cuBLAS | ✓ | sequexa `matmul_weight_bwd()` |
-| ResidualAdd | add.wgsl | Generic (`ADD`) | ✓ | sequexa `residual_add()` |
-| BwdAddInplace | bwd/bwd_add_inplace.wgsl | Generic (`BWD_ADD_INPLACE`) | ✓ | sequexa `add_inplace_bwd()` |
-| ZeroTensor | zero_tensor.wgsl | Generic (`ZERO_TENSOR`) | ✓ | sequexa `zero()` |
-| AdamW | bwd/adamw.wgsl | Custom → `launch_adamw` | ✓ | sequexa `optim/adamw.rs` |
-| AdamWSchedule | bwd/adamw_schedule.wgsl | Custom → `launch_adamw_schedule` | ✓ | sequexa `optim/adamw.rs` |
-| CausalMask | causal_mask.wgsl | Generic (`CAUSAL_MASK`) | ✓ | sequexa çağırmıyor (causal attention flash'a taşındı) |
+## Çekirdek lineer cebir
+
+| Shader | wgsl | cuda | native (cpu) |
+|---|---|---|---|
+| MatMul | matmul.wgsl | Custom → cuBLAS (henüz yok) | matmul.rs |
+| Gemv | gemv.wgsl | Custom → cuBLAS (henüz yok) | gemv.rs |
+| GemvAdd | gemv_add.wgsl | Custom → cuBLAS (henüz yok) | gemv_add.rs |
+| MatMulTrp | matmul_trp.wgsl | Custom → cuBLAS (henüz yok) | matmul_trp.rs |
+| MatMulAdd | matmul_add.wgsl | Custom → cuBLAS (henüz yok) | matmul_add.rs |
+| Transpose | transpose.wgsl | — | transpose.rs |
+| Dot | dot.wgsl | — | dot.rs |
+
+## Elementwise
+
+| Shader | wgsl | cuda | native (cpu) |
+|---|---|---|---|
+| Add | add.wgsl | add.cu | add.rs |
+| AddInplace | add_inplace.wgsl | add_inplace.cu | add_inplace.rs |
+| Mul | mul.wgsl | — | mul.rs |
+| Scale | scale.wgsl | — | scale.rs |
+| Max | max.wgsl | — | max.rs |
+| Min | min.wgsl | — | min.rs |
+| Clamp | clamp.wgsl | — | clamp.rs |
+
+## Reduction
+
+| Shader | wgsl | cuda | native (cpu) |
+|---|---|---|---|
+| Sum | sum.wgsl (çok-geçişli: workgroup başı bir partial, >1 partial kalırsa tekrar çağrılır) | — | sum.rs (tek geçiş) |
+| Dot | yukarıda -- ilk geçişi kendi, geri kalanı `Sum`'la biter | — | yukarıda |
+
+## Buffer init
+
+| Shader | wgsl | cuda | native (cpu) |
+|---|---|---|---|
+| ZeroTensor | zero_tensor.wgsl | zero_tensor.cu | zero_tensor.rs |
+| FillConstant | fill_constant.wgsl | — | fill_constant.rs |
+| FillRandom | fill_random.wgsl (hash tabanlı, kriptografik değil) | — | fill_random.rs (aynı hash, CPU/GPU parity için) |
+
+## Kapsam dışına alınanlar
+
+wilupgu'dan çıkarıldı:
+
+- **AdamW**, **AdamWSchedule** — optimizer/schedule, eğitim döngüsüne özel. sequexa-core'a taşınacak.
+- **CausalMask** — autoregressive attention maskesi, transformer'a özel. sequexa-core'a taşınacak.
+- **MatMulWeightBwd** — ayrı bir primitive değil, belirli bir transpoz kombinasyonuyla matmul; `MatMulTrp` zaten kapsıyor, ayrı builtin olarak kalmıyor.
