@@ -1,7 +1,7 @@
 use super::*;
-use crate::dtype::F32;
-use crate::node::NodeSpec;
-use crate::shader::BindingRole;
+use crate::core::dtype::F32;
+use crate::core::node::NodeSpec;
+use crate::core::shader::BindingRole;
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex};
 
@@ -34,8 +34,8 @@ pub(crate) static COPY_SHADER: Shader = Shader {
 pub(crate) static META_SHADER: Shader = Shader {
     name: "MetaEcho",
     layout: &[BindingRole::Meta {
-        fields: &[crate::shader::MetaField::Uint],
-        kind: crate::shader::MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
+        fields: &[crate::core::shader::MetaField::Uint],
+        kind: crate::core::shader::MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
     }],
     shader_code: &[],
 };

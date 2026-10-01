@@ -1,8 +1,8 @@
 use super::*;
 use crate::backend::tests::{ToyNode, META_SHADER};
-use crate::node::Binding;
-use crate::resolver::Resolvable;
-use crate::shader::{MetaField, ResolvedSize, Workgroups};
+use crate::core::node::Binding;
+use crate::core::resolver::Resolvable;
+use crate::core::shader::{MetaField, ResolvedSize, Workgroups};
 
 #[test]
 fn maximized_meta_is_not_flagged_dynamic() {

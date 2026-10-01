@@ -78,5 +78,5 @@ impl<T> Resolver<T> {
 }
 
 #[cfg(test)]
-#[path = "tests/resolver.rs"]
+#[path = "../tests/resolver.rs"]
 mod tests;

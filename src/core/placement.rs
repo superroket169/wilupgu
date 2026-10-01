@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::device::DeviceId;
-use crate::node::{NodeId, NodeSpec};
+use crate::core::device::DeviceId;
+use crate::core::node::{NodeId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {
@@ -62,5 +62,5 @@ impl Placement {
 }
 
 #[cfg(test)]
-#[path = "tests/placement.rs"]
+#[path = "../tests/placement.rs"]
 mod tests;

@@ -8,11 +8,11 @@ use crate::backends::CudaBackend;
 #[cfg(feature = "rayon")]
 use crate::backends::RayonBackend;
 use crate::backends::WgpuBackend;
-use crate::dtype::{DataKind, HostData};
-use crate::graph::Graph;
-use crate::id::GlobalId;
-use crate::node::NodeSpec;
-use crate::tensor::TensorId;
+use crate::core::dtype::{DataKind, HostData};
+use crate::core::graph::Graph;
+use crate::core::id::GlobalId;
+use crate::core::node::NodeSpec;
+use crate::core::tensor::TensorId;
 
 /// Stand-in tag until each backend has its own concrete device-id source.
 pub enum DeviceTag {}

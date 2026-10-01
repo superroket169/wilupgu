@@ -2,8 +2,8 @@
 //! via `rules.rs`; nothing here re-derives a rule `rules.rs` already owns.
 
 use crate::backend::Backend;
-use crate::node::NodeSpec;
-use crate::rules::{check_hazards, check_ownership, validate_spec};
+use crate::core::node::NodeSpec;
+use crate::core::rules::{check_hazards, check_ownership, validate_spec};
 
 pub enum DispatchPlan {
     Captured {
@@ -85,5 +85,5 @@ impl<B: Backend> Graph<B> {
 }
 
 #[cfg(test)]
-#[path = "tests/graph.rs"]
+#[path = "../tests/graph.rs"]
 mod tests;

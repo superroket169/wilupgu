@@ -1,5 +1,5 @@
 use super::*;
-use crate::shader::{Shader, Workgroups};
+use crate::core::shader::{Shader, Workgroups};
 
 static EMPTY: Shader = Shader {
     name: "Empty",

@@ -1,10 +1,10 @@
 //! Everything a `backends/*` implementation must provide. Nothing else lives here.
 
-use crate::device::DeviceId;
-use crate::dtype::{DataKind, DataType, HostData};
-use crate::node::Binding;
-use crate::shader::{Shader, Workgroups};
-use crate::tensor::TensorId;
+use crate::core::device::DeviceId;
+use crate::core::dtype::{DataKind, DataType, HostData};
+use crate::core::node::Binding;
+use crate::core::shader::{Shader, Workgroups};
+use crate::core::tensor::TensorId;
 
 /// raw data capsule that implemented in Dispatch/Storage
 pub trait Buffer: Clone + Send + Sync + 'static {

@@ -147,5 +147,5 @@ impl HostData {
 }
 
 #[cfg(test)]
-#[path = "tests/dtype.rs"]
+#[path = "../tests/dtype.rs"]
 mod tests;

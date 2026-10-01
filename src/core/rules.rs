@@ -2,9 +2,9 @@
 //! check. Nothing here runs anything -- `graph.rs` calls these, then runs.
 
 use crate::backend::{Backend, Node};
-use crate::node::NodeSpec;
-use crate::shader::{BindingRole, MetaKind};
-use crate::tensor::TensorId;
+use crate::core::node::NodeSpec;
+use crate::core::shader::{BindingRole, MetaKind};
+use crate::core::tensor::TensorId;
 
 pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<bool, String> {
     N::validate_workgroups(spec.workgroups())
@@ -97,5 +97,5 @@ pub(crate) fn check_hazards(specs: &[NodeSpec]) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "tests/rules.rs"]
+#[path = "../tests/rules.rs"]
 mod tests;

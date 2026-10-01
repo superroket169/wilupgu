@@ -1,4 +1,4 @@
-use crate::node::NodeId;
+use crate::core::node::NodeId;
 
 /// One partition of a compiled graph that runs as a single submit.
 /// Where the boundaries fall depends on the run strategy

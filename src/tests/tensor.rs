@@ -1,6 +1,6 @@
 use super::*;
-use crate::dtype::{Int8, F16, F32};
-use crate::resolver::Resolvable;
+use crate::core::dtype::{Int8, F16, F32};
+use crate::core::resolver::Resolvable;
 
 #[test]
 fn tensor_size_variants_construct() {
