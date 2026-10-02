@@ -145,6 +145,10 @@ impl<T: Copy> Dynamic<T> {
         cell.fresh = true;
     }
 
+    pub(crate) fn key(&self) -> usize {
+        Arc::as_ptr(&self.cell) as *const () as usize
+    }
+
     // Called once per run per `Dynamic`, however many nodes use it.
     pub(crate) fn read_for_run(&self) -> T {
         let mut cell = self.cell.lock().unwrap();
