@@ -1,26 +1,5 @@
+use super::common::{find, read_f32, read_u32, write_f32};
 use crate::core::shader::CpuBinding;
-
-fn find(bindings: &[CpuBinding], slot: u32) -> &CpuBinding {
-    bindings
-        .iter()
-        .find(|b| b.slot == slot)
-        .expect("missing binding slot")
-}
-
-fn read_f32(b: &CpuBinding) -> Vec<f32> {
-    let g = b.buffer.lock().unwrap();
-    bytemuck::pod_collect_to_vec::<u8, f32>(&g)
-}
-
-fn read_u32(b: &CpuBinding) -> Vec<u32> {
-    let g = b.buffer.lock().unwrap();
-    bytemuck::pod_collect_to_vec::<u8, u32>(&g)
-}
-
-fn write_f32(b: &CpuBinding, data: &[f32]) {
-    let mut g = b.buffer.lock().unwrap();
-    g.copy_from_slice(bytemuck::cast_slice(data));
-}
 
 // C[row, col] = sum_k A[row, k] * B[col, k]   (A: MxK, B: NxK, C: MxN) -- B read transposed
 pub(crate) fn matmul_trp(bindings: &[CpuBinding]) {
