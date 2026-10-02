@@ -5,6 +5,7 @@ static EMPTY: Shader = Shader {
     name: "Empty",
     meta: &[],
     layout: &[],
+    workgroup_size: [1, 1, 1],
     shader_code: ShaderCode::NONE,
 };
 

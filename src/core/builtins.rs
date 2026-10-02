@@ -43,18 +43,19 @@ macro_rules! code {
         ))
     };
     (native, $name:ident) => {
-        Some(NativeCode::new(native::$name::$name))
+        Some(NativeCode::new(native::$name::entry))
     };
 }
 
 // A format listed twice is a "field specified more than once" compile error.
 macro_rules! builtins {
-    ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] { $($format:ident)* } )*) => {
+    ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt { $($format:ident)* } )*) => {
         $(
             pub static $static: Shader = Shader {
                 name: stringify!($name),
                 meta: &[$($field),*],
                 layout: &[$($role),*],
+                workgroup_size: $workgroup_size,
                 shader_code: ShaderCode {
                     $( $format: code!($format, $name), )*
                     ..ShaderCode::NONE
@@ -81,32 +82,32 @@ const fn float(name: &'static str) -> MetaField {
 }
 
 builtins! {
-    // STATIC / name             [meta]                              [tensors]                                      { formats }
+    // STATIC / name             [meta]                                    [tensors]                                   workgroup     { formats }
 
     // linear algebra
-    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
-    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Accumulate(F32)]      { wgsl native }
-    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
-    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
-    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Accumulate(F32)]      { wgsl native }
-    TRANSPOSE / transpose         [uint("rows"), uint("cols")]        [Input(F32), Output(F32)]                      { wgsl native }
-    DOT / dot                     [uint("n")]                         [Input(F32), Input(F32), Output(F32)]          { wgsl native }
+    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native }
+    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [16, 16, 1]   { wgsl native }
+    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native }
+    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native }
+    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [256, 1, 1]   { wgsl native }
+    TRANSPOSE / transpose         [uint("rows"), uint("cols")]              [Input(F32), Output(F32)]                   [16, 16, 1]   { wgsl native }
+    DOT / dot                     [uint("n")]                               [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native }
 
     // elementwise
-    ADD / add                     []                                  [Accumulate(F32), Input(F32)]                  { wgsl native cuda }
-    MUL / mul                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
-    SCALE / scale                 [float("factor")]                   [InOut(F32)]                                   { wgsl native }
-    MAX / max                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
-    MIN / min                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
-    CLAMP / clamp                 [float("lo"), float("hi")]          [InOut(F32)]                                   { wgsl native }
+    ADD / add                     [uint("n")]                               [Accumulate(F32), Input(F32)]               [256, 1, 1]   { wgsl native cuda }
+    MUL / mul                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
+    SCALE / scale                 [uint("n"), float("factor")]              [InOut(F32)]                                [256, 1, 1]   { wgsl native }
+    MAX / max                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
+    MIN / min                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
+    CLAMP / clamp                 [uint("n"), float("lo"), float("hi")]     [InOut(F32)]                                [256, 1, 1]   { wgsl native }
 
     // reduction
-    SUM / sum                     [uint("n")]                         [Input(F32), Output(F32)]                      { wgsl native }
+    SUM / sum                     [uint("n")]                               [Input(F32), Output(F32)]                   [256, 1, 1]   { wgsl native }
 
     // buffer init
-    ZERO_TENSOR / zero_tensor     [uint("n")]                         [Output(F32)]                                  { wgsl native cuda }
-    FILL_CONSTANT / fill_constant [uint("n"), float("value")]         [Output(F32)]                                  { wgsl native }
-    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]           [Output(F32)]                                  { wgsl native }
+    ZERO_TENSOR / zero_tensor     [uint("n")]                               [Output(F32)]                               [256, 1, 1]   { wgsl native cuda }
+    FILL_CONSTANT / fill_constant [uint("n"), float("value")]               [Output(F32)]                               [256, 1, 1]   { wgsl native }
+    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]                 [Output(F32)]                               [256, 1, 1]   { wgsl native }
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
     meta: &[],
     layout: &[],
+    workgroup_size: [1, 1, 1],
     shader_code: ShaderCode::NONE,
 };
 
@@ -32,6 +33,7 @@ pub(crate) static COPY_SHADER: Shader = Shader {
         BindingRole::Input(DataKind::F32),
         BindingRole::Output(DataKind::F32),
     ],
+    workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(noop)),
         ..ShaderCode::NONE
@@ -51,6 +53,7 @@ pub(crate) static META_SHADER: Shader = Shader {
         },
     ],
     layout: &[],
+    workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(noop)),
         ..ShaderCode::NONE
