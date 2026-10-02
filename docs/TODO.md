@@ -65,10 +65,9 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   `Placement` is unused outside tests. Several design parts don't exist yet.
 - **Contract gaps in `rules.rs`:**
   - a binding's `DataKind` is never checked against the tensor's real kind;
-  - the same slot can be bound twice;
-  - `validate_spec`'s `has_dynamic_meta` result is ignored by `Graph::build`.
-- **`TensorSize` is `u32`, `Tensor` length is `usize`**; `resolved()` has no
-  overflow check.
+  - the same slot can be bound twice.
+- **A `TensorSpec` size is `Resolvable<u32>`, a live `Tensor`'s length is
+  `usize`.**
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
