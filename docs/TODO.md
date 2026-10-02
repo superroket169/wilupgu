@@ -9,9 +9,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   NVRTC and launched the same way; no BLAS path, no host readback of meta, so
   whole graphs stay capturable. The crate doesn't build until a backend
   exists (`compile_error!` without a backend feature).
-- **Terminology: "shader" everywhere.** Error messages still say "kernel"
-  and "Tensor Mode" (the type is `BindingRole`); "dispatch", "node" and
-  "spec" are used interchangeably.
 - **Parity tests**: run every builtin on every backend that has its format
   and compare against the native result (standard 7 in `docs/SHADERS.md`
   can only be checked this way). Needs the first backend.
@@ -37,7 +34,7 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   `vulkano::ShaderModule`, with barriers derived from the nodes'
   `BindingRole`s (real RAW/WAW hazards) and recorded by hand. First step:
   prove "WGSL → naga → SPIR-V → vulkano, one dispatch" in a scratch crate.
-- **Rayon backend**: real parallel kernels for many-core servers.
+- **Rayon backend**: real parallel native shader code for many-core servers.
   `CpuBackend` stays single-threaded for deterministic tests.
 - **SpreadTensor review.** Known inconsistency: `CombineOp` returns a `Vec`
   (all-reduce copies) but `SpreadTensor::combine` keeps only the last one.

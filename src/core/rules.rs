@@ -8,7 +8,7 @@ use crate::core::tensor::TensorId;
 
 pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<(), String> {
     N::validate_workgroups(spec.workgroups())
-        .map_err(|e| format!("kernel `{}`: {e}", spec.shader().name))?;
+        .map_err(|e| format!("shader `{}`: {e}", spec.shader().name))?;
 
     let layout = spec.shader().layout;
     let name = spec.shader().name;
@@ -19,14 +19,14 @@ pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<(), String> {
         let index = (b.slot as usize).checked_sub(1);
         let expected = index.and_then(|i| layout.get(i)).ok_or_else(|| {
             format!(
-                "Tensor Mode Mismatch: kernel `{name}` binding slot {} out of range (kernel expects tensor slots 1..={})",
+                "Binding role mismatch: shader `{name}` binding slot {} out of range (the shader has tensor slots 1..={})",
                 b.slot,
                 layout.len()
             )
         })?;
         if *expected != b.mode {
             return Err(format!(
-                "Tensor Mode Mismatch: kernel `{name}` slot {} expects {:?}, got {:?}",
+                "Binding role mismatch: shader `{name}` slot {} expects {:?}, got {:?}",
                 b.slot, expected, b.mode
             ));
         }
@@ -36,7 +36,7 @@ pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<(), String> {
 
     if !covered.iter().all(|&c| c) {
         return Err(format!(
-            "Tensor Mode Mismatch: kernel `{name}` expects {} binding(s), only {} were supplied",
+            "Binding role mismatch: shader `{name}` expects {} binding(s), only {} were supplied",
             layout.len(),
             covered.iter().filter(|&&c| c).count()
         ));
@@ -71,7 +71,7 @@ pub(crate) fn check_shader_code<B: Backend>(specs: &[NodeSpec]) -> Result<(), St
     for (i, spec) in specs.iter().enumerate() {
         if !spec.shader().shader_code.has(B::FORMAT) {
             return Err(format!(
-                "Missing shader code: dispatch {i} (kernel `{}`) has no {:?} code, \
+                "Missing shader code: node {i} (shader `{}`) has no {:?} code, \
                  the format this backend runs",
                 spec.shader().name,
                 B::FORMAT
@@ -86,7 +86,7 @@ pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result
         for b in spec.bindings() {
             if !ctx.contains(b.tensor) {
                 return Err(format!(
-                    "Buffer ownership mismatch: dispatch {i} (kernel `{}`) binding slot {} \
+                    "Buffer ownership mismatch: node {i} (shader `{}`) binding slot {} \
                      names tensor {:?}, which isn't allocated on device {:?}",
                     spec.shader().name,
                     b.slot,
@@ -111,8 +111,8 @@ pub(crate) fn check_hazards(specs: &[NodeSpec]) -> Result<(), String> {
                 BindingRole::Output(_) | BindingRole::InOut(_) => {
                     if let Some(&prev) = last_write.get(&id) {
                         return Err(format!(
-                            "Buffer hazard: dispatch {i} writes a buffer already written by \
-                             dispatch {prev} with nothing establishing their order"
+                            "Buffer hazard: node {i} writes a buffer already written by \
+                             node {prev} with nothing establishing their order"
                         ));
                     }
                     last_write.insert(id, i);

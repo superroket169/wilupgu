@@ -19,7 +19,7 @@ fn sink() -> Option<&'static Mutex<std::fs::File>> {
 }
 
 /// `dir` is "htod" or "dtoh"; `shader` is the triggering shader's name, or
-/// "-" for a transfer not tied to one kernel dispatch (a plain Tensor
+/// "-" for a transfer not tied to one shader dispatch (a plain Tensor
 /// upload/readback).
 pub fn log(dir: &str, shader: &str, bytes: u64) {
     let Some(m) = sink() else { return };
