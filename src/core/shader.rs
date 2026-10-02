@@ -1,5 +1,5 @@
+use crate::core::deferred::Resolvable;
 use crate::core::dtype::DataKind;
-use crate::core::resolver::Resolvable;
 
 #[derive(Debug, Clone)]
 pub enum BindingRole {

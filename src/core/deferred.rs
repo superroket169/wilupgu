@@ -20,6 +20,18 @@ impl<T> Resolvable<T> {
         }
     }
 
+    /// Same as:
+    /// ```
+    /// # use wilupgu::core::deferred::Resolvable;
+    /// let n = Resolvable::new();
+    /// n.resolver().resolve(1024);
+    /// ```
+    pub fn fixed(value: T) -> Self {
+        let r = Self::new();
+        r.resolver().resolve(value);
+        r
+    }
+
     /// Hands out the one-shot write authority
     /// Panics if called more than once on this (or a cloned) handle
     pub fn resolver(&self) -> Resolver<T> {
@@ -77,6 +89,36 @@ impl<T> Resolver<T> {
     }
 }
 
+pub struct Relation<T, const I: usize, const O: usize> {
+    inputs: [Resolvable<T>; I],
+    outputs: [Resolver<T>; O],
+    relation: fn([T; I]) -> [T; O],
+}
+
+impl<T: Copy, const I: usize, const O: usize> Relation<T, I, O> {
+    // The outputs' resolvers are taken here, so this relation is their only possible source.
+    pub fn new(
+        inputs: [&Resolvable<T>; I],
+        relation: fn([T; I]) -> [T; O],
+    ) -> (Self, [Resolvable<T>; O]) {
+        let outputs: [Resolvable<T>; O] = std::array::from_fn(|_| Resolvable::new());
+        let relation = Self {
+            inputs: inputs.map(Resolvable::clone),
+            outputs: std::array::from_fn(|i| outputs[i].resolver()),
+            relation,
+        };
+        (relation, outputs)
+    }
+
+    pub fn resolve(self) {
+        let values = self.inputs.each_ref().map(|r| *r.value());
+        let results = (self.relation)(values);
+        for (resolver, value) in self.outputs.into_iter().zip(results) {
+            resolver.resolve(value);
+        }
+    }
+}
+
 #[cfg(test)]
-#[path = "../tests/resolver.rs"]
+#[path = "../tests/deferred.rs"]
 mod tests;

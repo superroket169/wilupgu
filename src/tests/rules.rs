@@ -1,7 +1,7 @@
 use super::*;
 use crate::backend::tests::{ToyNode, META_SHADER};
+use crate::core::deferred::Resolvable;
 use crate::core::node::Binding;
-use crate::core::resolver::Resolvable;
 use crate::core::shader::{MetaField, ResolvedSize, Workgroups};
 
 #[test]

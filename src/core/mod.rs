@@ -4,6 +4,7 @@
 //! aren't part of this crate's own subject matter, they're what runs it.
 
 pub mod builtins;
+pub mod deferred;
 pub mod device;
 pub mod dtype;
 pub mod graph;
@@ -12,7 +13,6 @@ pub(crate) mod io_log;
 pub mod mesh;
 pub mod node;
 pub mod placement;
-pub mod resolver;
 pub(crate) mod rules;
 pub mod shader;
 pub mod spread;
