@@ -24,8 +24,6 @@ rayon = { version = "1", optional = true }
 
 [features]
 default = []
-vulkan = []
 cuda = ["cudarc"]
 cpu = []
 rayon = ["dep:rayon"]
-vulkano = []
