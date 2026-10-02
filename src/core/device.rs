@@ -7,7 +7,6 @@ use crate::backends::CpuBackend;
 use crate::backends::CudaBackend;
 #[cfg(feature = "rayon")]
 use crate::backends::RayonBackend;
-use crate::backends::WgpuBackend;
 use crate::core::dtype::{DataKind, HostData};
 use crate::core::graph::Graph;
 use crate::core::id::GlobalId;
@@ -19,12 +18,14 @@ pub enum DeviceTag {}
 
 pub type DeviceId = GlobalId<DeviceTag>;
 
+#[cfg(not(any(feature = "cuda", feature = "cpu", feature = "rayon")))]
+compile_error!("wilupgu needs at least one backend feature: `cuda`, `cpu` or `rayon`");
+
 /// One live device, whatever its backend
 /// It only dispatches on which backend it is
 /// everything that depends on the dtype is matched inside the backend itself (`alloc_kind` & co).
 #[derive(Clone)]
 pub enum Device {
-    Wgpu(Arc<WgpuBackend>),
     #[cfg(feature = "cuda")]
     Cuda(Arc<CudaBackend>),
     #[cfg(feature = "cpu")]
@@ -37,7 +38,6 @@ pub enum Device {
 macro_rules! on_backend {
     ($device:expr, $b:ident => $body:expr) => {
         match $device {
-            Device::Wgpu($b) => $body,
             #[cfg(feature = "cuda")]
             Device::Cuda($b) => $body,
             #[cfg(feature = "cpu")]
@@ -81,7 +81,6 @@ impl Device {
     /// P2P only ever exists between two devices of the same backend.
     pub fn supports_p2p(&self, other: &Device) -> bool {
         match (self, other) {
-            (Device::Wgpu(a), Device::Wgpu(_)) => a.supports_p2p(other.id()),
             #[cfg(feature = "cuda")]
             (Device::Cuda(a), Device::Cuda(_)) => a.supports_p2p(other.id()),
             #[cfg(feature = "cpu")]
