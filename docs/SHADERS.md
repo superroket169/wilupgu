@@ -20,7 +20,6 @@ dosyasında.
 | Shader | wgsl | cuda | native (cpu) |
 |---|---|---|---|
 | Add | add.wgsl | add.cu | add.rs |
-| AddInplace | add_inplace.wgsl | add_inplace.cu | add_inplace.rs |
 | Mul | mul.wgsl | — | mul.rs |
 | Scale | scale.wgsl | — | scale.rs |
 | Max | max.wgsl | — | max.rs |
