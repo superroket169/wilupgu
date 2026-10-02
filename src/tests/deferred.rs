@@ -91,3 +91,50 @@ fn relation_output_has_one_source_only() {
     let (_tokens, [len]) = Relation::new([&batch], |[b]| [b * 64]);
     len.resolver();
 }
+
+#[test]
+fn dynamic_reads_what_was_set() {
+    let lr = Dynamic::new();
+    lr.set(0.1f32);
+    assert_eq!(lr.read_for_run(), 0.1);
+}
+
+#[test]
+#[should_panic(expected = "before it was ever set")]
+fn dynamic_read_before_set_panics() {
+    Dynamic::<u32>::new().read_for_run();
+}
+
+#[test]
+#[should_panic(expected = "without a set since the last run")]
+fn dynamic_read_twice_without_set_panics() {
+    let step = Dynamic::new();
+    step.set(1u32);
+    step.read_for_run();
+    step.read_for_run();
+}
+
+#[test]
+fn dynamic_set_to_the_same_value_counts() {
+    let lr = Dynamic::new();
+    lr.set(0.1f32);
+    lr.read_for_run();
+    lr.set(0.1);
+    assert_eq!(lr.read_for_run(), 0.1);
+}
+
+#[test]
+fn dynamic_last_set_wins() {
+    let step = Dynamic::new();
+    step.set(1u32);
+    step.set(2);
+    assert_eq!(step.read_for_run(), 2);
+}
+
+#[test]
+fn dynamic_clones_share_one_cell() {
+    let step = Dynamic::new();
+    let handle = step.clone();
+    handle.set(7u32);
+    assert_eq!(step.read_for_run(), 7);
+}

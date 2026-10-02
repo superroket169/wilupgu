@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 struct Slot<T> {
     value: OnceLock<T>,
@@ -115,6 +115,68 @@ impl<T: Copy, const I: usize, const O: usize> Relation<T, I, O> {
         let results = (self.relation)(values);
         for (resolver, value) in self.outputs.into_iter().zip(results) {
             resolver.resolve(value);
+        }
+    }
+}
+
+struct DynamicCell<T> {
+    value: Option<T>,
+    // Set by `set`, cleared by a run's read: a run may only read a value set since the last one.
+    fresh: bool,
+}
+
+pub struct Dynamic<T> {
+    cell: Arc<Mutex<DynamicCell<T>>>,
+}
+
+impl<T: Copy> Dynamic<T> {
+    pub fn new() -> Self {
+        Self {
+            cell: Arc::new(Mutex::new(DynamicCell {
+                value: None,
+                fresh: false,
+            })),
+        }
+    }
+
+    pub fn set(&self, value: T) {
+        let mut cell = self.cell.lock().unwrap();
+        cell.value = Some(value);
+        cell.fresh = true;
+    }
+
+    // Called once per run per `Dynamic`, however many nodes use it.
+    pub(crate) fn read_for_run(&self) -> T {
+        let mut cell = self.cell.lock().unwrap();
+        let value = cell.value.expect("Dynamic read before it was ever set");
+        assert!(
+            cell.fresh,
+            "Dynamic read again without a set since the last run"
+        );
+        cell.fresh = false;
+        value
+    }
+}
+
+impl<T> Clone for Dynamic<T> {
+    fn clone(&self) -> Self {
+        Self {
+            cell: self.cell.clone(),
+        }
+    }
+}
+
+impl<T: Copy> Default for Dynamic<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Dynamic<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.cell.lock().unwrap().value {
+            Some(v) => f.debug_tuple("Dynamic").field(v).finish(),
+            None => f.write_str("Dynamic(<unset>)"),
         }
     }
 }
