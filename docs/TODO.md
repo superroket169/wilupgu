@@ -22,8 +22,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   7. Native code takes lengths from meta and uses `native/common.rs`.
   8. Comments in English.
   9. Every file starts with the same one-line formula comment in all formats.
-- **`wgpu` feature.** `wgpu`, `pollster`, `futures-intrusive` and `naga`
-  become optional behind it. `naga` parses WGSL in the standards tests.
 - **CUDA code for every builtin.** Today only `add` and `zero_tensor` have one.
 - **Terminology: "shader" everywhere.** Error messages still say "kernel"
   and "Tensor Mode" (the type is `BindingRole`); "dispatch", "node" and
