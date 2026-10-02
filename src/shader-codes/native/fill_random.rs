@@ -1,4 +1,5 @@
-use super::common::{find, read_u32, write_f32};
+// x[i] = hash(i ^ seed) / 0xFFFFFFFF   (i < n)
+use super::common::{find, read_f32, read_u32, write_f32};
 use crate::core::shader::CpuBinding;
 
 // Must match wgsl/fill_random.wgsl's `hash` exactly -- that's what makes the
@@ -13,11 +14,12 @@ fn hash(v: u32) -> u32 {
     h
 }
 
-pub(crate) fn fill_random(bindings: &[CpuBinding]) {
-    let meta = read_u32(find(bindings, 1));
-    let (len, seed) = (meta[0], meta[1]);
-    let data: Vec<f32> = (0..len)
-        .map(|i| hash(i ^ seed) as f32 / u32::MAX as f32)
-        .collect();
-    write_f32(find(bindings, 0), &data);
+pub(crate) fn entry(bindings: &[CpuBinding]) {
+    let meta = read_u32(find(bindings, 0));
+    let (n, seed) = (meta[0] as usize, meta[1]);
+    let mut x = read_f32(find(bindings, 1));
+    for (i, xi) in x.iter_mut().enumerate().take(n) {
+        *xi = hash(i as u32 ^ seed) as f32 / u32::MAX as f32;
+    }
+    write_f32(find(bindings, 1), &x);
 }
