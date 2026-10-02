@@ -85,29 +85,29 @@ builtins! {
     // STATIC / name             [meta]                                    [tensors]                                   workgroup     { formats }
 
     // linear algebra
-    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native }
-    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [16, 16, 1]   { wgsl native }
-    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native }
-    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native }
-    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [256, 1, 1]   { wgsl native }
-    TRANSPOSE / transpose         [uint("rows"), uint("cols")]              [Input(F32), Output(F32)]                   [16, 16, 1]   { wgsl native }
-    DOT / dot                     [uint("n")]                               [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native }
+    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native cuda }
+    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [16, 16, 1]   { wgsl native cuda }
+    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   { wgsl native cuda }
+    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native cuda }
+    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [256, 1, 1]   { wgsl native cuda }
+    TRANSPOSE / transpose         [uint("rows"), uint("cols")]              [Input(F32), Output(F32)]                   [16, 16, 1]   { wgsl native cuda }
+    DOT / dot                     [uint("n")]                               [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   { wgsl native cuda }
 
     // elementwise
     ADD / add                     [uint("n")]                               [Accumulate(F32), Input(F32)]               [256, 1, 1]   { wgsl native cuda }
-    MUL / mul                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
-    SCALE / scale                 [uint("n"), float("factor")]              [InOut(F32)]                                [256, 1, 1]   { wgsl native }
-    MAX / max                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
-    MIN / min                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native }
-    CLAMP / clamp                 [uint("n"), float("lo"), float("hi")]     [InOut(F32)]                                [256, 1, 1]   { wgsl native }
+    MUL / mul                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native cuda }
+    SCALE / scale                 [uint("n"), float("factor")]              [InOut(F32)]                                [256, 1, 1]   { wgsl native cuda }
+    MAX / max                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native cuda }
+    MIN / min                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   { wgsl native cuda }
+    CLAMP / clamp                 [uint("n"), float("lo"), float("hi")]     [InOut(F32)]                                [256, 1, 1]   { wgsl native cuda }
 
     // reduction
-    SUM / sum                     [uint("n")]                               [Input(F32), Output(F32)]                   [256, 1, 1]   { wgsl native }
+    SUM / sum                     [uint("n")]                               [Input(F32), Output(F32)]                   [256, 1, 1]   { wgsl native cuda }
 
     // buffer init
     ZERO_TENSOR / zero_tensor     [uint("n")]                               [Output(F32)]                               [256, 1, 1]   { wgsl native cuda }
-    FILL_CONSTANT / fill_constant [uint("n"), float("value")]               [Output(F32)]                               [256, 1, 1]   { wgsl native }
-    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]                 [Output(F32)]                               [256, 1, 1]   { wgsl native }
+    FILL_CONSTANT / fill_constant [uint("n"), float("value")]               [Output(F32)]                               [256, 1, 1]   { wgsl native cuda }
+    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]                 [Output(F32)]                               [256, 1, 1]   { wgsl native cuda }
 }
 
 #[cfg(test)]
