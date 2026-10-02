@@ -1,97 +1,105 @@
 # TODO
 
-Kapsam: sequexa-core + wilupgu ortak bekleyen iş listesi. Yalnız
-YAPILMAMIŞ maddeler — biten iş buradan silinir, tarihçe git log'da.
+Open wilupgu work only. Finished items are deleted; history is in git log.
+Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list.
 
-## Hız
+## Now
 
-- **Decode'u cuBLAS'sızlaştırmak** — `gemv.wgsl`/`gemv_add.wgsl`'in CUDA C
-  çevirisi yazılıp GEMV/GEMV_ADD `CudaShape::Custom`(cuBLAS)'tan
-  `Generic`'e geçer. Decode'daki tüm matmul'lar m=1 → GEMV olduğundan
-  decode graph'ında hiç cuBLAS kalmaz: dispatch-başı bloklayan meta dtoh'u
-  (CUDA decode'un her matmul çağrısında yaptığı senkron kopya) kökten
-  kalkar VE decode graph'ı capture edilebilir hale gelir. İlk adım: güncel
-  kodda CUDA↔Vulkan'ı yeniden ölçmek — eldeki 80-vs-31 step/dk sayısı
-  pooling/flash öncesi dönemden, güncel değil.
-- **Flash attention: shared memory/tiling yok** — thread-per-(row,head)
-  tasarımı K/V'yi her satır için global'den tekrar okuyor.
-- **wgpu otomatik bariyer bug'ı** — çok-node'lu tek compute pass'te
-  dispatch'ler arası bariyer eksik/gecikmeli, `Parent device is lost` ile
-  çöküyor. Tek çalışan workaround `WILUPGU_FORCE_SYNC=1` (doğru ama yavaş —
-  her node ayrı submit+wait). wgpu 0.19→30 upgrade denendi, çözmedi. Uzun
-  vadeli çözüm aşağıdaki native Vulkan backend maddesi.
+- **First backend: CUDA, no cuBLAS.** Every shader is CUDA C compiled with
+  NVRTC and launched the same way; no BLAS path, no host readback of meta, so
+  whole graphs stay capturable. The crate doesn't build until a backend
+  exists (`compile_error!` without a backend feature).
+- **Shader standards**, applied to all builtins and checked by tests over
+  `builtins::ALL`:
+  1. Entry point is `entry` in every format.
+  2. Slot 0 is `shader_meta`; tensors start at slot 1; exactly one meta.
+  3. Meta is `struct ShaderMeta` bound as `shader_meta`, `storage, read`,
+     scalar `u32`/`f32` fields only, fields named in the layout.
+  4. Bounds come from a meta `n`, never `arrayLength`.
+  5. `workgroup_size` lives in the builtins table; the WGSL attribute must match it.
+  6. CUDA signature: one pointer per slot in slot order, `const` for inputs,
+     no scalar arguments.
+  7. Native code takes lengths from meta and uses `native/common.rs`.
+  8. Comments in English.
+  9. Every file starts with the same one-line formula comment in all formats.
+- **`wgpu` feature.** `wgpu`, `pollster`, `futures-intrusive` and `naga`
+  become optional behind it. `naga` parses WGSL in the standards tests.
+- **CUDA code for every builtin.** Today only `add` and `zero_tensor` have one.
+- **Terminology: "shader" everywhere.** Error messages still say "kernel"
+  and "Tensor Mode" (the type is `BindingRole`); "dispatch", "node" and
+  "spec" are used interchangeably.
+- **Size contract between meta and tensors** (under discussion): a declared,
+  checked relation between meta values, tensor sizes and a shader's
+  inputs/outputs, built on `ResolvedSize`.
+- **`docs/SHADERS.md`**: rewrite in English to match the current table.
 
-## Tasarım (Büyük Wilupgu Refactoru)
+## Design
 
-- **Native Vulkan backend** (`backends/vulkano.rs`, şu an boş dosya) —
-  yukarıdaki wgpu bariyer bug'ını çözmek için. Zincir:
-  `naga::front::wgsl::parse_str` → `naga::valid::Validator` →
-  `naga::back::spv::write_vec` (WGSL→SPIR-V, wgpu'nun içeride zaten yaptığı
-  şey) → `vulkano::ShaderModule::new`. Bariyer: node'ların
-  `Binding`/`TensorMode`'undan gerçek RAW/WAW hazard'larını çıkarıp elle
-  `vkCmdPipelineBarrier` basmak. İlk gerçek adım: wilupgu'ya dokunmadan
-  bağımsız bir scratch'te "WGSL → naga → SPIR-V → vulkano tek dispatch"
-  zincirini uçtan uca kanıtlamak.
-- **Gerçek paralel CPU backend** (`backends/rayon.rs`) — iskelet hazır
-  (`Shader.rayon` alanı + tam `Backend` impl'i), ama her kernel şu an
-  `panic!` veriyor. Gerçek paralel kernel gövdeleri (matmul, adamw, vb.)
-  tek tek eklenecek — 200+ çekirdekli sunucularda gerçek kazanç burada.
-  Mevcut `CpuBackend` bilinçli tek-thread kalıyor (test determinism).
-- **Backend trait genişletmesi + CUDA'nın ikiye bölünmesi** — `cuda.rs`
-  (1189 satır) `wgpu.rs`'ten (370 satır) şişkin çünkü cuBLAS GEMM/GEMM_EX +
-  CUDA graph capture/replay + dtype-generic `Gemm<T>` hepsi orada. Plan:
-  `cuda.rs`'i `wgpu.rs` kadar ince, BLAS'sız, generic dispatch'e indirmek;
-  BLAS'lı yol ayrı bir `cuda-blas.rs` backend'i olsun. `Backend` trait'inin
-  kendisinin de daha dinamikleştirilebilir olduğu düşünülüyor — somut
-  madde yok, `backend.rs`'i birlikte açıp geçtiğimizde netleşecek.
-- **Flash attention head_dim'i WGSL `override` ile genelleştirmek** —
-  bugün `const HEAD_DIM: u32 = 64u` hardcode'lu (register-spill/RADV-hang
-  fix). Gerçek genel çözüm WGSL'nin pipeline-overridable constant'ı, ama
-  wilupgu'nun `Shader`/pipeline-cache API'sinde bu kavram hiç yok.
+- **SysTopology** (no draft yet). Built when wilupgu starts up: discovers
+  the machine's devices, enables the backends that can run on them,
+  computes device capacities and exposes the result as data. That data is
+  then used to pick sizes (batch size and the like) and to distribute a
+  graph across devices (suggestion functions were planned for this). A
+  `Resolvable` handed to SysTopology is resolved to the largest value these
+  devices can hold. Which backends are usable at runtime is decided here,
+  not by `cfg`s on shader code.
+- **cuda-blas backend**, separate from the plain CUDA backend: cuBLAS for the
+  matmul family, for training-sized GEMMs.
+- **wgpu backend**, rewritten on the new contract, with f16 and other dtypes.
+  Known wgpu bug: in one compute pass with several nodes, barriers between
+  dispatches are missing or late and the run dies with `Parent device is
+  lost`. The only working workaround is a submit+wait per node. Upgrading
+  wgpu didn't fix it; the native Vulkan backend below is the real fix.
+- **Native Vulkan backend** (vulkano). WGSL → `naga` → SPIR-V →
+  `vulkano::ShaderModule`, with barriers derived from the nodes'
+  `BindingRole`s (real RAW/WAW hazards) and recorded by hand. First step:
+  prove "WGSL → naga → SPIR-V → vulkano, one dispatch" in a scratch crate.
+- **Rayon backend**: real parallel kernels for many-core servers.
+  `CpuBackend` stays single-threaded for deterministic tests.
+- **SpreadTensor review.** Known inconsistency: `CombineOp` returns a `Vec`
+  (all-reduce copies) but `SpreadTensor::combine` keeps only the last one.
+  `combine::sum` / `sum_to_all` are missing.
+- **Tensor review.** Check whether handing `Device` (`Arc`) around everywhere
+  puts buffer lifetimes at risk.
+- **ComputeMesh**: still a skeleton (`todo!()` bodies, no constructor);
+  `Placement` is unused outside tests. Several design parts don't exist yet.
+- **Contract gaps in `rules.rs`:**
+  - a binding's `DataKind` is never checked against the tensor's real kind;
+  - the same slot can be bound twice;
+  - `validate_spec`'s `has_dynamic_meta` result is ignored by `Graph::build`.
+- **`TensorSize` is `u32`, `Tensor` length is `usize`**; `resolved()` has no
+  overflow check.
+- **Export the `builtins!` macro** so sequexa-core defines its shaders the
+  same way (`include_str!` resolves relative to the calling file, so this works).
+- **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
+  pipeline API has no such concept.
 
-## Küçük
+## Checks
 
-- `backends/wgpu.rs` — f16 ve diğer dtype'lar için destek yok.
-- `shaders/wgsl/fwd/rope.wgsl` — `inv_freq` precompute edilerek
-  optimize edilebilir.
-- GPU'nun eğitimde CPU'dan gerçekten bağımsız olduğunun doğrulanması —
-  steady-state train loop'ta kasıtlı trafik dışında gizli host
-  senkronu/kopyası olmadığını kanıtla.
+- Prove the GPU really runs independently of the CPU: no hidden host sync or
+  copy in a steady-state loop beyond deliberate traffic.
 
-## Uzak gelecek (parked)
+## Parked
 
-- **ROCm/HIP backend** — gerçek AMD backend (rocBLAS tabanlı,
-  `CudaBackend`'e paralel). wgpu/Vulkan zaten RADV üzerinden AMD'yi
-  karşıladığı için düşük öncelikli. Canlı crate adayları: `cubecl-hip-sys`,
-  `rocm-rs`.
-- **`dispatch_generic` tarzı factoring** — `impl Backend for CudaBackend`'in
-  ~280 satırlık trait-impl çekirdeğini küçültmek, ROCm ikinci tüketici
-  olmadan önce.
-- **WASM/WebGPU tarayıcı demosu** — wgpu backend'in doğal bir yan ürünü.
-- **Geniş quantization (int8/int4 inference)** — decode'un bant genişliği
-  sınırlı olması yüzünden genel bir iGPU kaldıracı; yukarıdaki NNUE-bağlı
-  quantization'dan ayrı, daha geniş kapsamlı.
+- **ROCm/HIP backend** (rocBLAS-based). Low priority: wgpu/Vulkan already
+  covers AMD through RADV. Candidate crates: `cubecl-hip-sys`, `rocm-rs`.
+- **WASM/WebGPU browser demo**, a natural by-product of the wgpu backend.
+- **Quantization (int8/int4 inference)**: decode is bandwidth-bound, so
+  this is a general iGPU lever.
 
-## Strateji notları (yeni bug çıkmasın diye)
+## Strategy notes
 
-1. **Kontratları yoruma değil, teste bağla.** Output/Accumulate etiket
-   hataları yakalanmadı çünkü etiket sadece beyan. Output etiketli her
-   buffer'ı dispatch öncesi NaN/çöple doldurup çıktıyı kontrol eden tek bir
-   "canary" testi bu sınıfı otomatik yakalar. Bir kere yaz, her yeni kernel
-   bedavaya taransın.
-2. **Kopya yüzeyini küçült.** Bug'ların önemli kısmı ikiz
-   implementasyonların ayrışması (WGSL'de eksik barrier, CUDA'da var; guard
-   bir kernelde var birinde yok). Eksik CPU impl'leri doldurulursa "her
-   kernel × her backend × CPU referansı" mekanik parity matrisi kurulur —
-   o matris varken ikizler sessizce ayrışamaz.
-3. **Formül yazarken köşeleri aynı anda test et.** Schedule clamp, boş
-   prompt, dataset underflow — hepsi aynı sınıf: parametrenin sınır değeri.
-   Parametre alan her fonksiyonun testine t=0, t=sınır, t=sınır+1
-   satırlarını eklemek bu sınıfı neredeyse bitirir. Maliyeti dakikalar.
-4. **Periyodik taramayı ritüelleştir.** Her N commit'te ya da her büyük
-   refactor sonrası bağımsız okuma turu — solo geliştiricinin code review'u
-   budur.
-5. **Panik satırını doğrulamadan teori kurma.** Bir hata mesajındaki
-   dosya:satır'ı hangi fonksiyona ait olduğunu okumadan "muhtemelen X"
-   demek, yanlış fonksiyonlara yama yapmaya götürür. Önce satırın gerçekten
-   hangi çağrıya ait olduğunu doğrula, sonra teori kur.
+1. **Tie contracts to tests, not comments.** A label is only a claim. One
+   "canary" test that fills every Output buffer with NaN/garbage before
+   dispatch and checks the result catches mislabeled Output/Accumulate
+   bindings for every shader, for free.
+2. **Shrink the copy surface.** Many bugs are twin implementations drifting
+   apart (a barrier in one format, missing in another). With CPU code for
+   every shader, a "shader × backend × CPU reference" parity matrix keeps
+   the twins from drifting silently.
+3. **Test edges when writing a formula.** For every parameter, test t=0,
+   t=limit and t=limit+1.
+4. **Make periodic review a ritual.** An independent read-through every N
+   commits or after each big refactor.
+5. **Verify the panic line before theorizing.** Read which call a
+   `file:line` actually belongs to before guessing a cause.

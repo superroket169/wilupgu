@@ -25,8 +25,13 @@ impl BindingRole {
 
 #[derive(Debug, Clone)]
 pub enum MetaKind {
+    /// Never changes. build time constant
     Static,
+    /// could be changable by user.
+    /// example: adamw shudeler step.
     Dynamic,
+    /// Determines at build time
+    /// source is what ResolvedSize is it.
     Maximized(ResolvedSize),
 }
 
