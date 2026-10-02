@@ -66,12 +66,16 @@ pub trait Dispatch: Storage {
     type Node: Node;
     const FORMAT: ShaderFormat;
 
+    // `meta` is slot 0's words; the backend owns that buffer.
     fn build_node(
         &self,
         shader: &'static Shader,
+        meta: &[u32],
         bindings: &[Binding],
         workgroups: Workgroups,
     ) -> Self::Node;
+    // Rewrites a node's meta buffer before a run, for its per-run fields.
+    fn update_meta(&self, node: &Self::Node, meta: &[u32]);
     fn execute(&self, nodes: &[Self::Node]);
     fn synchronize(&self);
 

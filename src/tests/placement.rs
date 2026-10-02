@@ -3,12 +3,13 @@ use crate::core::shader::{Shader, ShaderCode, Workgroups};
 
 static EMPTY: Shader = Shader {
     name: "Empty",
+    meta: &[],
     layout: &[],
     shader_code: ShaderCode::NONE,
 };
 
 fn spec() -> NodeSpec {
-    NodeSpec::new(&EMPTY, vec![], Workgroups::linear(1))
+    NodeSpec::new(&EMPTY, vec![], vec![], Workgroups::linear(1))
 }
 
 #[test]

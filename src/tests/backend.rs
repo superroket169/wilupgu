@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::dtype::F32;
 use crate::core::node::NodeSpec;
-use crate::core::shader::{BindingRole, CpuBinding, NativeCode, ShaderCode};
+use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex};
 
@@ -18,6 +18,7 @@ impl Buffer for ToyBuffer {
 
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
+    meta: &[],
     layout: &[],
     shader_code: ShaderCode::NONE,
 };
@@ -26,6 +27,7 @@ fn noop(_: &[CpuBinding]) {}
 
 pub(crate) static COPY_SHADER: Shader = Shader {
     name: "Copy",
+    meta: &[],
     layout: &[
         BindingRole::Input(DataKind::F32),
         BindingRole::Output(DataKind::F32),
@@ -38,11 +40,21 @@ pub(crate) static COPY_SHADER: Shader = Shader {
 
 pub(crate) static META_SHADER: Shader = Shader {
     name: "MetaEcho",
-    layout: &[BindingRole::Meta {
-        fields: &[crate::core::shader::MetaField::Uint],
-        kind: crate::core::shader::MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
-    }],
-    shader_code: ShaderCode::NONE,
+    meta: &[
+        MetaField {
+            name: "n",
+            ty: MetaType::Uint,
+        },
+        MetaField {
+            name: "lr",
+            ty: MetaType::Float,
+        },
+    ],
+    layout: &[],
+    shader_code: ShaderCode {
+        native: Some(NativeCode::new(noop)),
+        ..ShaderCode::NONE
+    },
 };
 
 #[derive(Clone)]
@@ -59,12 +71,15 @@ impl Node for ToyNode {
 pub(crate) struct ToyBackend {
     id: DeviceId,
     table: Mutex<HashMap<TensorId, ToyBuffer>>,
+    // every `update_meta` call's words, in order
+    pub(crate) meta_writes: Mutex<Vec<Vec<u32>>>,
 }
 impl ToyBackend {
     pub(crate) fn new() -> Self {
         Self {
             id: DeviceId::new(),
             table: Mutex::new(HashMap::new()),
+            meta_writes: Mutex::new(Vec::new()),
         }
     }
     fn insert(&self, id: TensorId, bytes: usize) {
@@ -114,8 +129,17 @@ impl Storage for ToyBackend {
 impl Dispatch for ToyBackend {
     type Node = ToyNode;
     const FORMAT: ShaderFormat = ShaderFormat::Native;
-    fn build_node(&self, _s: &'static Shader, _b: &[Binding], _wg: Workgroups) -> Self::Node {
+    fn build_node(
+        &self,
+        _s: &'static Shader,
+        _meta: &[u32],
+        _b: &[Binding],
+        _wg: Workgroups,
+    ) -> Self::Node {
         ToyNode
+    }
+    fn update_meta(&self, _node: &Self::Node, meta: &[u32]) {
+        self.meta_writes.lock().unwrap().push(meta.to_vec());
     }
     fn execute(&self, _nodes: &[Self::Node]) {}
     fn synchronize(&self) {}
@@ -208,9 +232,10 @@ fn carve_from_area() {
 pub(crate) fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
     NodeSpec::new(
         &COPY_SHADER,
+        vec![],
         vec![
-            Binding::new(0, from, BindingRole::Input(DataKind::F32)),
-            Binding::new(1, to, BindingRole::Output(DataKind::F32)),
+            Binding::new(1, from, BindingRole::Input(DataKind::F32)),
+            Binding::new(2, to, BindingRole::Output(DataKind::F32)),
         ],
         Workgroups::linear(1),
     )
