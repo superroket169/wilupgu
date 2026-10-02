@@ -34,7 +34,7 @@ fn code_paths_follow_the_shader_name() {
     assert_eq!(cuda.path(), "src/shader-codes/cuda/add.cu");
 }
 
-// --- shader standards (docs/TODO.md) ---
+// --- shader standards (docs/SHADERS.md) ---
 
 fn native_source(s: &Shader) -> String {
     let path = format!(

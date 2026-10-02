@@ -9,26 +9,12 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   NVRTC and launched the same way; no BLAS path, no host readback of meta, so
   whole graphs stay capturable. The crate doesn't build until a backend
   exists (`compile_error!` without a backend feature).
-- **Shader standards**, applied to all builtins and checked by tests over
-  `builtins::ALL`:
-  1. Entry point is `entry` in every format.
-  2. Slot 0 is `shader_meta`; tensors start at slot 1; exactly one meta.
-  3. Meta is `struct ShaderMeta` bound as `shader_meta`, `storage, read`,
-     scalar `u32`/`f32` fields only, fields named in the layout.
-  4. Bounds come from a meta `n`, never `arrayLength`.
-  5. `workgroup_size` lives in the builtins table; the WGSL attribute must match it.
-  6. CUDA signature: one pointer per slot in slot order, `const` for inputs,
-     no scalar arguments.
-  7. Native code takes lengths from meta and uses `native/common.rs`.
-  8. Comments in English.
-  9. Every file starts with the same one-line formula comment in all formats.
 - **Terminology: "shader" everywhere.** Error messages still say "kernel"
   and "Tensor Mode" (the type is `BindingRole`); "dispatch", "node" and
   "spec" are used interchangeably.
-- **Size contract between meta and tensors** (under discussion): a declared,
-  checked relation between meta values, tensor sizes and a shader's
-  inputs/outputs, built on `ResolvedSize`.
-- **`docs/SHADERS.md`**: rewrite in English to match the current table.
+- **Parity tests**: run every builtin on every backend that has its format
+  and compare against the native result (standard 7 in `docs/SHADERS.md`
+  can only be checked this way). Needs the first backend.
 
 ## Design
 
