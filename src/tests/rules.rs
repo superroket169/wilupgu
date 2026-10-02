@@ -1,11 +1,10 @@
 use super::*;
 use crate::backend::tests::{ToyNode, META_SHADER};
-use crate::core::deferred::Resolvable;
 use crate::core::node::Binding;
-use crate::core::shader::{MetaField, ResolvedSize, Workgroups};
+use crate::core::shader::{MetaField, Workgroups};
 
 #[test]
-fn maximized_meta_is_not_flagged_dynamic() {
+fn static_meta_is_not_flagged_dynamic() {
     let spec = NodeSpec::new(
         &META_SHADER,
         vec![Binding::new(
@@ -13,18 +12,11 @@ fn maximized_meta_is_not_flagged_dynamic() {
             TensorId::new(),
             BindingRole::Meta {
                 fields: &[MetaField::Uint],
-                kind: MetaKind::Maximized(ResolvedSize {
-                    size: Resolvable::new(),
-                    multiplier: 1,
-                    coefficient: 0,
-                }),
+                kind: MetaKind::Static,
             },
         )],
         Workgroups::linear(1),
     );
     let has_dynamic_meta = validate_spec::<ToyNode>(&spec).unwrap();
-    assert!(
-        !has_dynamic_meta,
-        "Maximized must not be treated as Dynamic"
-    );
+    assert!(!has_dynamic_meta, "Static must not be treated as Dynamic");
 }

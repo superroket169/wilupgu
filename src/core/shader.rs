@@ -1,4 +1,3 @@
-use crate::core::deferred::Resolvable;
 use crate::core::dtype::DataKind;
 
 #[derive(Debug, Clone)]
@@ -30,21 +29,6 @@ pub enum MetaKind {
     /// could be changable by user.
     /// example: adamw shudeler step.
     Dynamic,
-    /// Determines at build time
-    /// source is what ResolvedSize is it.
-    Maximized(ResolvedSize),
-}
-
-/// A size not known at compile time
-/// shared by `TensorSize` and `MetaKind`
-/// so a tensor and its meta can be given the same `Resolvable`
-///
-/// resolving one then resolves both, ruling out the two ever disagreeing on it.
-#[derive(Debug, Clone)]
-pub struct ResolvedSize {
-    pub size: Resolvable<u32>,
-    pub multiplier: u32,
-    pub coefficient: u32,
 }
 
 pub struct Shader {

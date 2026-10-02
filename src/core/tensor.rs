@@ -1,30 +1,12 @@
 //! A tensor, blueprint and live: what it will be before any buffer exists,
 //! and the handle to it once one does.
 
+use crate::core::deferred::Resolvable;
 use crate::core::device::Device;
 use crate::core::dtype::{DataKind, DataType, HostData};
 use crate::core::id::GlobalId;
-use crate::core::shader::ResolvedSize;
 
 pub type TensorId = GlobalId<TensorSpec>;
-
-#[derive(Clone)]
-pub enum TensorSize {
-    Fixed(u32),
-    /// Not known at compile time
-    Resolvable(ResolvedSize),
-}
-
-impl TensorSize {
-    /// # Panics
-    /// If it's `Resolvable` and hasn't been resolved yet.
-    pub fn resolved(&self) -> u32 {
-        match self {
-            TensorSize::Fixed(n) => *n,
-            TensorSize::Resolvable(r) => r.size.value() * r.multiplier + r.coefficient,
-        }
-    }
-}
 
 pub enum InitRecipe {
     UploadFromHost(HostData),
@@ -34,24 +16,24 @@ pub enum InitRecipe {
 pub struct TensorSpec {
     id: TensorId,
     kind: DataKind,
-    size: TensorSize,
+    size: Resolvable<u32>,
     init: Option<InitRecipe>,
 }
 
 impl TensorSpec {
-    pub fn blank<D: DataType>(size: TensorSize) -> Self {
+    pub fn blank<D: DataType>(size: Resolvable<u32>) -> Self {
         Self::with::<D>(size, None)
     }
 
-    pub fn seeded<D: DataType>(size: TensorSize, data: Vec<D::HostRepr>) -> Self {
+    pub fn seeded<D: DataType>(size: Resolvable<u32>, data: Vec<D::HostRepr>) -> Self {
         Self::with::<D>(size, Some(InitRecipe::UploadFromHost(D::wrap(data))))
     }
 
-    pub fn zeroed<D: DataType>(size: TensorSize) -> Self {
+    pub fn zeroed<D: DataType>(size: Resolvable<u32>) -> Self {
         Self::with::<D>(size, Some(InitRecipe::Zero))
     }
 
-    fn with<D: DataType>(size: TensorSize, init: Option<InitRecipe>) -> Self {
+    fn with<D: DataType>(size: Resolvable<u32>, init: Option<InitRecipe>) -> Self {
         Self {
             id: GlobalId::new(),
             kind: D::KIND,
@@ -68,7 +50,7 @@ impl TensorSpec {
         self.kind
     }
 
-    pub fn size(&self) -> &TensorSize {
+    pub fn size(&self) -> &Resolvable<u32> {
         &self.size
     }
 

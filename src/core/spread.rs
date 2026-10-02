@@ -3,15 +3,16 @@
 //! (`SpreadTensor`) -- whichever side is live holds real buffers, the other
 //! is a pure shadow of ids.
 
+use crate::core::deferred::Resolvable;
 use crate::core::device::{Device, DeviceId};
 use crate::core::dtype::DataType;
-use crate::core::shader::ResolvedSize;
-use crate::core::tensor::{Tensor, TensorId, TensorSize, TensorSpec};
+use crate::core::tensor::{Tensor, TensorId, TensorSpec};
 
 /// How a `SpreadTensor` is made: target device + size per part, in order.
 /// A plain `fn`, so it's `Copy` and fits in a `SpreadSpec`;
 /// the dtype is fixed when it's picked (`split::sized::<F32>`).
-pub type SplitOp = fn(Tensor, &[(Device, TensorSize, TensorId)]) -> Result<Vec<Tensor>, String>;
+pub type SplitOp =
+    fn(Tensor, &[(Device, Resolvable<u32>, TensorId)]) -> Result<Vec<Tensor>, String>;
 
 /// How a `SpreadTensor` is ended: the target devices and the whole's id
 /// every result tensor gets it. an all-reduce-style combine can leave
@@ -21,7 +22,7 @@ pub type CombineOp = fn(Vec<Tensor>, &[Device], TensorId) -> Result<Vec<Tensor>,
 /// A tensor spread across several devices
 pub struct SpreadSpec {
     whole: TensorSpec,
-    parts: Vec<(DeviceId, TensorSize, TensorId)>,
+    parts: Vec<(DeviceId, Resolvable<u32>, TensorId)>,
     split: SplitOp,
     combine: CombineOp,
     combine_to: Vec<DeviceId>,
@@ -46,45 +47,29 @@ impl SpreadSpec {
         }
     }
 
-    /// Parts sized `unit * multiplier + coefficient`, `unit` shared by all of
-    /// them (and by `whole`'s own `Resolvable`); gathered back onto
-    /// `combine_to` end to end.
-    ///
-    /// # Errors
-    /// If `whole`'s size isn't `Resolvable`: there's no shared unit to give
-    /// the parts if it's `Fixed`.
+    /// Gathered back onto `combine_to` end to end.
     pub fn sharded<D: DataType>(
         whole: TensorSpec,
-        parts: Vec<(DeviceId, u32, u32)>,
+        parts: Vec<(DeviceId, Resolvable<u32>)>,
         combine_to: DeviceId,
-    ) -> Result<Self, String> {
-        let TensorSize::Resolvable(base) = whole.size() else {
-            return Err("sharded needs whole's size to be Resolvable".to_string());
-        };
+    ) -> Self {
         let parts = parts
             .into_iter()
-            .map(|(d, multiplier, coefficient)| {
-                let size = TensorSize::Resolvable(ResolvedSize {
-                    size: base.size.clone(),
-                    multiplier,
-                    coefficient,
-                });
-                (d, size, TensorId::new())
-            })
+            .map(|(d, size)| (d, size, TensorId::new()))
             .collect();
-        Ok(Self {
+        Self {
             whole,
             parts,
             split: split::sized::<D>,
             combine: combine::concat::<D>,
             combine_to: vec![combine_to],
-        })
+        }
     }
 
     /// Any split/combine op, for cases the ready-made constructors don't cover.
     pub fn custom(
         whole: TensorSpec,
-        parts: Vec<(DeviceId, TensorSize)>,
+        parts: Vec<(DeviceId, Resolvable<u32>)>,
         split: SplitOp,
         combine: CombineOp,
         combine_to: Vec<DeviceId>,
@@ -125,7 +110,7 @@ impl SpreadSpec {
         &self.combine_to
     }
 
-    pub(crate) fn parts(&self) -> &[(DeviceId, TensorSize, TensorId)] {
+    pub(crate) fn parts(&self) -> &[(DeviceId, Resolvable<u32>, TensorId)] {
         &self.parts
     }
 
@@ -261,11 +246,11 @@ pub mod split {
     /// A full copy on each device, every part's size must be the whole length.
     pub fn replicate<D: DataType>(
         source: Tensor,
-        to: &[(Device, TensorSize, TensorId)],
+        to: &[(Device, Resolvable<u32>, TensorId)],
     ) -> Result<Vec<Tensor>, String> {
         let mut parts = Vec::with_capacity(to.len());
         for (d, size, id) in to {
-            let n = size.resolved() as usize;
+            let n = *size.value() as usize;
             if n != source.len() {
                 return Err(format!("a replica of {n} for a tensor of {}", source.len()));
             }
@@ -277,9 +262,9 @@ pub mod split {
     /// Consecutive slices, one per device, in order.
     pub fn sized<D: DataType>(
         source: Tensor,
-        to: &[(Device, TensorSize, TensorId)],
+        to: &[(Device, Resolvable<u32>, TensorId)],
     ) -> Result<Vec<Tensor>, String> {
-        let total: usize = to.iter().map(|(_, s, _)| s.resolved() as usize).sum();
+        let total: usize = to.iter().map(|(_, s, _)| *s.value() as usize).sum();
         if total != source.len() {
             return Err(format!(
                 "slices add up to {total}, the tensor has {}",
@@ -291,7 +276,7 @@ pub mod split {
         let mut start = 0;
         let mut parts = Vec::with_capacity(to.len());
         for (d, size, id) in to {
-            let n = size.resolved() as usize;
+            let n = *size.value() as usize;
             if n % per_word != 0 {
                 return Err(format!(
                     "slice of {n} isn't a multiple of {per_word}, the packing of {:?}",
