@@ -1,24 +1,25 @@
-struct Meta {
+// partial[w] = sum of a[i] * b[i] over workgroup w's slice   (i < n; native runs one workgroup)
+struct ShaderMeta {
     n: u32,
 }
 
-@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
-@group(0) @binding(2) var<storage, read_write> partial: array<f32>;
-@group(0) @binding(3) var<storage, read> config: Meta;
+@group(0) @binding(0) var<storage, read> shader_meta: ShaderMeta;
+@group(0) @binding(1) var<storage, read> a: array<f32>;
+@group(0) @binding(2) var<storage, read> b: array<f32>;
+@group(0) @binding(3) var<storage, read_write> partial: array<f32>;
 
 var<workgroup> scratch: array<f32, 256>;
 
 // First pass of a dot product: multiply then reduce, one partial per
 // workgroup. `sum.wgsl` finishes the job if more than one partial came out.
 @compute @workgroup_size(256, 1, 1)
-fn main(
+fn entry(
     @builtin(workgroup_id) wg_id: vec3<u32>,
     @builtin(num_workgroups) num_wg: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>
 ) {
     let idx = (wg_id.y * num_wg.x + wg_id.x) * 256u + local_id.x;
-    scratch[local_id.x] = select(0.0, a[idx] * b[idx], idx < config.n);
+    scratch[local_id.x] = select(0.0, a[idx] * b[idx], idx < shader_meta.n);
     workgroupBarrier();
 
     var stride = 128u;
