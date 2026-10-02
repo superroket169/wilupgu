@@ -1,7 +1,8 @@
 use crate::core::dtype::DataKind::F32;
-use crate::core::shader::BindingRole::{self, Accumulate, InOut, Input, Output};
-use crate::core::shader::MetaField::{Float, Uint};
-use crate::core::shader::{CudaCode, MetaKind, MetaSlot, NativeCode, Shader, ShaderCode, WgslCode};
+use crate::core::shader::BindingRole::{Accumulate, InOut, Input, Output};
+use crate::core::shader::{
+    CudaCode, MetaField, MetaType, NativeCode, Shader, ShaderCode, WgslCode,
+};
 
 #[path = "../shader-codes/native"]
 mod native {
@@ -48,10 +49,11 @@ macro_rules! code {
 
 // A format listed twice is a "field specified more than once" compile error.
 macro_rules! builtins {
-    ($( $static:ident / $name:ident [$($role:expr),* $(,)?] { $($format:ident)* } )*) => {
+    ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] { $($format:ident)* } )*) => {
         $(
             pub static $static: Shader = Shader {
                 name: stringify!($name),
+                meta: &[$($field),*],
                 layout: &[$($role),*],
                 shader_code: ShaderCode {
                     $( $format: code!($format, $name), )*
@@ -64,38 +66,47 @@ macro_rules! builtins {
     };
 }
 
-const fn meta(fields: MetaSlot) -> BindingRole {
-    BindingRole::Meta {
-        fields,
-        kind: MetaKind::Static,
+const fn uint(name: &'static str) -> MetaField {
+    MetaField {
+        name,
+        ty: MetaType::Uint,
+    }
+}
+
+const fn float(name: &'static str) -> MetaField {
+    MetaField {
+        name,
+        ty: MetaType::Float,
     }
 }
 
 builtins! {
+    // STATIC / name             [meta]                              [tensors]                                      { formats }
+
     // linear algebra
-    MATMUL / matmul         [Input(F32), Input(F32), Output(F32), meta(&[Uint, Uint, Uint])]     { wgsl native }
-    MATMUL_ADD / matmul_add [Input(F32), Input(F32), Accumulate(F32), meta(&[Uint, Uint, Uint])] { wgsl native }
-    MATMUL_TRP / matmul_trp [Input(F32), Input(F32), Output(F32), meta(&[Uint, Uint, Uint])]     { wgsl native }
-    GEMV / gemv             [Input(F32), Input(F32), Output(F32), meta(&[Uint, Uint, Uint])]     { wgsl native }
-    GEMV_ADD / gemv_add     [Input(F32), Input(F32), Accumulate(F32), meta(&[Uint, Uint, Uint])] { wgsl native }
-    TRANSPOSE / transpose   [Input(F32), Output(F32), meta(&[Uint, Uint])]                       { wgsl native }
-    DOT / dot               [Input(F32), Input(F32), Output(F32), meta(&[Uint])]                 { wgsl native }
+    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
+    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Accumulate(F32)]      { wgsl native }
+    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
+    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Output(F32)]          { wgsl native }
+    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]   [Input(F32), Input(F32), Accumulate(F32)]      { wgsl native }
+    TRANSPOSE / transpose         [uint("rows"), uint("cols")]        [Input(F32), Output(F32)]                      { wgsl native }
+    DOT / dot                     [uint("n")]                         [Input(F32), Input(F32), Output(F32)]          { wgsl native }
 
     // elementwise
-    ADD / add               [Accumulate(F32), Input(F32)]                                        { wgsl native cuda }
-    MUL / mul               [InOut(F32), Input(F32)]                                             { wgsl native }
-    SCALE / scale           [InOut(F32), meta(&[Float])]                                         { wgsl native }
-    MAX / max               [InOut(F32), Input(F32)]                                             { wgsl native }
-    MIN / min               [InOut(F32), Input(F32)]                                             { wgsl native }
-    CLAMP / clamp           [InOut(F32), meta(&[Float, Float])]                                  { wgsl native }
+    ADD / add                     []                                  [Accumulate(F32), Input(F32)]                  { wgsl native cuda }
+    MUL / mul                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
+    SCALE / scale                 [float("factor")]                   [InOut(F32)]                                   { wgsl native }
+    MAX / max                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
+    MIN / min                     []                                  [InOut(F32), Input(F32)]                       { wgsl native }
+    CLAMP / clamp                 [float("lo"), float("hi")]          [InOut(F32)]                                   { wgsl native }
 
     // reduction
-    SUM / sum               [Input(F32), Output(F32), meta(&[Uint])]                             { wgsl native }
+    SUM / sum                     [uint("n")]                         [Input(F32), Output(F32)]                      { wgsl native }
 
     // buffer init
-    ZERO_TENSOR / zero_tensor     [Output(F32), meta(&[Uint])]                                   { wgsl native cuda }
-    FILL_CONSTANT / fill_constant [Output(F32), meta(&[Uint, Float])]                            { wgsl native }
-    FILL_RANDOM / fill_random     [Output(F32), meta(&[Uint, Uint])]                             { wgsl native }
+    ZERO_TENSOR / zero_tensor     [uint("n")]                         [Output(F32)]                                  { wgsl native cuda }
+    FILL_CONSTANT / fill_constant [uint("n"), float("value")]         [Output(F32)]                                  { wgsl native }
+    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]           [Output(F32)]                                  { wgsl native }
 }
 
 #[cfg(test)]

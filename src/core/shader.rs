@@ -1,49 +1,33 @@
 use crate::core::dtype::DataKind;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingRole {
     Input(DataKind),
     Output(DataKind),
     InOut(DataKind),
     Accumulate(DataKind),
-    Meta { fields: MetaSlot, kind: MetaKind },
-}
-
-impl BindingRole {
-    pub(crate) fn accepts(&self, actual: &BindingRole) -> bool {
-        match (self, actual) {
-            (BindingRole::Input(a), BindingRole::Input(b)) => a == b,
-            (BindingRole::Output(a), BindingRole::Output(b)) => a == b,
-            (BindingRole::InOut(a), BindingRole::InOut(b)) => a == b,
-            (BindingRole::Accumulate(a), BindingRole::Accumulate(b)) => a == b,
-            (BindingRole::Meta { .. }, BindingRole::Meta { .. }) => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum MetaKind {
-    /// Never changes. build time constant
-    Static,
-    /// could be changable by user.
-    /// example: adamw shudeler step.
-    Dynamic,
 }
 
 pub struct Shader {
     pub name: &'static str,
+    /// Meta is always at slot 0
+    pub meta: &'static [MetaField],
+    /// tensors are always at slots 1..=layout.len()
     pub layout: &'static [BindingRole],
     pub shader_code: ShaderCode,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum MetaField {
+pub enum MetaType {
     Uint,
     Float,
 }
 
-pub type MetaSlot = &'static [MetaField];
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct MetaField {
+    pub name: &'static str,
+    pub ty: MetaType,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workgroups {
