@@ -1,5 +1,6 @@
 use super::*;
-use crate::backend::tests::{copy_node, device_with};
+use crate::backend::tests::{copy_node, device_with, TOY_SHADER};
+use crate::core::shader::Workgroups;
 
 #[test]
 fn graph_build_and_run() {
@@ -37,6 +38,17 @@ fn graph_build_rejects_foreign_buffer() {
         .unwrap();
     assert!(
         err.contains("Buffer ownership mismatch"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn graph_build_rejects_missing_shader_code() {
+    let (ctx, _) = device_with(0);
+    let spec = NodeSpec::new(&TOY_SHADER, vec![], Workgroups::linear(1));
+    let err = Graph::build(ctx, &[spec]).err().unwrap();
+    assert!(
+        err.contains("has no Native code"),
         "unexpected error: {err}"
     );
 }

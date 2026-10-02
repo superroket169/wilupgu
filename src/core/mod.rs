@@ -3,6 +3,7 @@
 //! `backends/` (the implementations) live one level up, on purpose -- they
 //! aren't part of this crate's own subject matter, they're what runs it.
 
+pub mod builtins;
 pub mod device;
 pub mod dtype;
 pub mod graph;

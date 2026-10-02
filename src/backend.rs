@@ -3,7 +3,7 @@
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
 use crate::core::node::Binding;
-use crate::core::shader::{Shader, Workgroups};
+use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::tensor::TensorId;
 
 /// raw data capsule that implemented in Dispatch/Storage
@@ -64,6 +64,7 @@ pub trait Storage: Send + Sync + 'static {
 
 pub trait Dispatch: Storage {
     type Node: Node;
+    const FORMAT: ShaderFormat;
 
     fn build_node(
         &self,

@@ -1,10 +1,10 @@
 use super::*;
-use crate::core::shader::{Shader, Workgroups};
+use crate::core::shader::{Shader, ShaderCode, Workgroups};
 
 static EMPTY: Shader = Shader {
     name: "Empty",
     layout: &[],
-    shader_code: &[],
+    shader_code: ShaderCode::NONE,
 };
 
 fn spec() -> NodeSpec {

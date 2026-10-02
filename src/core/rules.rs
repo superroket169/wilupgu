@@ -50,6 +50,20 @@ pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<bool, String> {
     Ok(has_dynamic_meta)
 }
 
+pub(crate) fn check_shader_code<B: Backend>(specs: &[NodeSpec]) -> Result<(), String> {
+    for (i, spec) in specs.iter().enumerate() {
+        if !spec.shader().shader_code.has(B::FORMAT) {
+            return Err(format!(
+                "Missing shader code: dispatch {i} (kernel `{}`) has no {:?} code, \
+                 the format this backend runs",
+                spec.shader().name,
+                B::FORMAT
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result<(), String> {
     for (i, spec) in specs.iter().enumerate() {
         for b in spec.bindings() {

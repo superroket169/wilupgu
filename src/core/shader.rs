@@ -45,7 +45,7 @@ pub struct ResolvedSize {
 pub struct Shader {
     pub name: &'static str,
     pub layout: &'static [BindingRole],
-    pub shader_code: &'static [ShaderCode],
+    pub shader_code: ShaderCode,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -85,9 +85,114 @@ pub struct CpuBinding {
 ///
 /// wgpu and vulkano both take `Wgsl`
 /// cpu and rayon both take `Native`.
-pub enum ShaderCode {
-    Wgsl(&'static str),
-    #[cfg(any(feature = "cpu", feature = "rayon"))]
-    Native(fn(&[CpuBinding])),
-    // TODO: Cuda(...) - needs a real dispatch type once the CUDA backend is written
+pub struct ShaderCode {
+    pub wgsl: Option<WgslCode>,
+    pub native: Option<NativeCode>,
+    pub cuda: Option<CudaCode>,
 }
+
+impl ShaderCode {
+    pub const NONE: Self = Self {
+        wgsl: None,
+        native: None,
+        cuda: None,
+    };
+
+    pub fn has(&self, format: ShaderFormat) -> bool {
+        match format {
+            ShaderFormat::Wgsl => self.wgsl.is_some(),
+            ShaderFormat::Native => self.native.is_some(),
+            ShaderFormat::Cuda => self.cuda.is_some(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShaderFormat {
+    Wgsl,
+    Native,
+    Cuda,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WgslCode {
+    path: &'static str,
+    source: &'static str,
+}
+
+impl WgslCode {
+    pub const fn new(path: &'static str, source: &'static str) -> Self {
+        assert!(
+            ends_with(path, ".wgsl"),
+            "WGSL code must come from a .wgsl file"
+        );
+        Self { path, source }
+    }
+
+    pub fn path(&self) -> &'static str {
+        self.path
+    }
+
+    pub fn source(&self) -> &'static str {
+        self.source
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CudaCode {
+    path: &'static str,
+    source: &'static str,
+}
+
+impl CudaCode {
+    pub const fn new(path: &'static str, source: &'static str) -> Self {
+        assert!(
+            ends_with(path, ".cu"),
+            "CUDA code must come from a .cu file"
+        );
+        Self { path, source }
+    }
+
+    pub fn path(&self) -> &'static str {
+        self.path
+    }
+
+    pub fn source(&self) -> &'static str {
+        self.source
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct NativeCode(fn(&[CpuBinding]));
+
+impl NativeCode {
+    pub const fn new(f: fn(&[CpuBinding])) -> Self {
+        Self(f)
+    }
+
+    pub fn run(&self, bindings: &[CpuBinding]) {
+        (self.0)(bindings)
+    }
+}
+
+// `str::ends_with` isn't callable in a const fn.
+const fn ends_with(s: &str, suffix: &str) -> bool {
+    let (s, suffix) = (s.as_bytes(), suffix.as_bytes());
+    if suffix.len() > s.len() {
+        return false;
+    }
+    let offset = s.len() - suffix.len();
+    let mut i = 0;
+
+    while i < suffix.len() {
+        if s[offset + i] != suffix[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[cfg(test)]
+#[path = "../tests/shader.rs"]
+mod tests;

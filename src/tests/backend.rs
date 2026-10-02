@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::dtype::F32;
 use crate::core::node::NodeSpec;
-use crate::core::shader::BindingRole;
+use crate::core::shader::{BindingRole, CpuBinding, NativeCode, ShaderCode};
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex};
 
@@ -19,8 +19,10 @@ impl Buffer for ToyBuffer {
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
     layout: &[],
-    shader_code: &[],
+    shader_code: ShaderCode::NONE,
 };
+
+fn noop(_: &[CpuBinding]) {}
 
 pub(crate) static COPY_SHADER: Shader = Shader {
     name: "Copy",
@@ -28,7 +30,10 @@ pub(crate) static COPY_SHADER: Shader = Shader {
         BindingRole::Input(DataKind::F32),
         BindingRole::Output(DataKind::F32),
     ],
-    shader_code: &[],
+    shader_code: ShaderCode {
+        native: Some(NativeCode::new(noop)),
+        ..ShaderCode::NONE
+    },
 };
 
 pub(crate) static META_SHADER: Shader = Shader {
@@ -37,7 +42,7 @@ pub(crate) static META_SHADER: Shader = Shader {
         fields: &[crate::core::shader::MetaField::Uint],
         kind: crate::core::shader::MetaKind::Static, // a shader's declared kind is irrelevant to `accepts`
     }],
-    shader_code: &[],
+    shader_code: ShaderCode::NONE,
 };
 
 #[derive(Clone)]
@@ -108,6 +113,7 @@ impl Storage for ToyBackend {
 }
 impl Dispatch for ToyBackend {
     type Node = ToyNode;
+    const FORMAT: ShaderFormat = ShaderFormat::Native;
     fn build_node(&self, _s: &'static Shader, _b: &[Binding], _wg: Workgroups) -> Self::Node {
         ToyNode
     }

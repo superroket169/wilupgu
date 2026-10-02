@@ -3,7 +3,7 @@
 
 use crate::backend::Backend;
 use crate::core::node::NodeSpec;
-use crate::core::rules::{check_hazards, check_ownership, validate_spec};
+use crate::core::rules::{check_hazards, check_ownership, check_shader_code, validate_spec};
 
 pub enum DispatchPlan {
     Captured {
@@ -26,6 +26,7 @@ impl<B: Backend> Graph<B> {
         for spec in specs {
             validate_spec::<B::Node>(spec)?;
         }
+        check_shader_code::<B>(specs)?;
         check_ownership(ctx.as_ref(), specs)?;
         check_hazards(specs)?;
 
