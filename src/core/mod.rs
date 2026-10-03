@@ -13,6 +13,7 @@ pub(crate) mod io_log;
 pub mod mesh;
 pub mod node;
 pub mod placement;
+pub(crate) mod pool;
 pub(crate) mod rules;
 pub mod shader;
 pub mod spread;
