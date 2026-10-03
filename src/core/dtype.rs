@@ -5,7 +5,7 @@
 //! - impl DataType for {F32, F16, Bf16, Int8, Int4}
 //! - enum HostData
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataKind {
     F32,
     F16,

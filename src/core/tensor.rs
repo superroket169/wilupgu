@@ -191,6 +191,12 @@ impl Tensor {
         dst.upload::<D>(&whole);
         Ok(())
     }
+
+    // Frees the buffer now, or fails if a built graph still binds it.
+    // On failure the tensor is dropped anyway and the buffer goes with the graph.
+    pub fn free(self) -> Result<(), String> {
+        self.device.check_unused(self.id)
+    }
 }
 
 impl Drop for Tensor {

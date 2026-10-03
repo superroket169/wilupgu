@@ -48,6 +48,8 @@ pub trait Storage: Send + Sync + 'static {
     fn device_id(&self) -> DeviceId;
     fn contains(&self, id: TensorId) -> bool;
     fn drop_buffer(&self, id: TensorId);
+    /// True while something besides the table (a built node) still holds `id`'s buffer.
+    fn in_use(&self, id: TensorId) -> bool;
 
     /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
     /// the dtype is only known at runtime. Each backend matches the kinds it

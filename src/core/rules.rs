@@ -1,7 +1,7 @@
 //! Every build-time runtime rule, each one its own function: one rule, one
 //! check. Nothing here runs anything -- `graph.rs` calls these, then runs.
 
-use crate::backend::{Backend, Node};
+use crate::backend::{Backend, Node, Storage};
 use crate::core::node::NodeSpec;
 use crate::core::shader::BindingRole;
 use crate::core::tensor::TensorId;
@@ -95,6 +95,17 @@ pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn check_unused<S: Storage>(storage: &S, id: TensorId) -> Result<(), String> {
+    if storage.in_use(id) {
+        return Err(format!(
+            "Buffer still in use: tensor {id:?} on device {:?} is bound by a built graph; \
+             it is freed when that graph is dropped",
+            storage.device_id()
+        ));
     }
     Ok(())
 }

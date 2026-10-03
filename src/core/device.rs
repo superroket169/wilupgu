@@ -61,6 +61,10 @@ impl Device {
         on_backend!(self, b => b.drop_buffer(id))
     }
 
+    pub(crate) fn check_unused(&self, id: TensorId) -> Result<(), String> {
+        on_backend!(self, b => crate::core::rules::check_unused(b.as_ref(), id))
+    }
+
     pub(crate) fn alloc_kind(
         &self,
         id: TensorId,

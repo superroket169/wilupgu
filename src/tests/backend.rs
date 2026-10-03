@@ -89,7 +89,7 @@ impl ToyBackend {
         let buf = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; bytes])));
         self.table.lock().unwrap().insert(id, buf);
     }
-    fn get(&self, id: TensorId) -> ToyBuffer {
+    pub(crate) fn get(&self, id: TensorId) -> ToyBuffer {
         self.table
             .lock()
             .unwrap()
@@ -108,6 +108,13 @@ impl Storage for ToyBackend {
     }
     fn drop_buffer(&self, id: TensorId) {
         self.table.lock().unwrap().remove(&id);
+    }
+    fn in_use(&self, id: TensorId) -> bool {
+        self.table
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|b| !b.is_sole_owner())
     }
 
     fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String> {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::tests::{ToyNode, COPY_SHADER, META_SHADER};
+use crate::backend::tests::{device_with, ToyNode, COPY_SHADER, META_SHADER};
 use crate::core::deferred::{Dynamic, Resolvable};
 use crate::core::dtype::DataKind;
 use crate::core::node::{Binding, MetaSource, MetaValue};
@@ -50,4 +50,21 @@ fn slot_zero_is_not_a_tensor_slot() {
     );
     let err = validate_spec::<ToyNode>(&spec).unwrap_err();
     assert!(err.contains("slot 0 out of range"), "{err}");
+}
+
+#[test]
+fn check_unused_passes_when_only_the_table_holds_it() {
+    let (dev, ids) = device_with(1);
+    assert!(check_unused(dev.as_ref(), ids[0]).is_ok());
+}
+
+#[test]
+fn check_unused_rejects_a_buffer_a_node_still_holds() {
+    let (dev, ids) = device_with(1);
+    // stands in for a built node's reference
+    let held = dev.get(ids[0]);
+    let err = check_unused(dev.as_ref(), ids[0]).unwrap_err();
+    assert!(err.starts_with("Buffer still in use"), "{err}");
+    drop(held);
+    assert!(check_unused(dev.as_ref(), ids[0]).is_ok());
 }
