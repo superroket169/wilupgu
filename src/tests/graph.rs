@@ -141,3 +141,12 @@ fn building_with_an_unresolved_once_value_panics() {
     );
     let _ = Graph::build(ctx, &[spec]);
 }
+
+#[test]
+fn a_built_graph_keeps_its_buffers_in_use() {
+    let (ctx, ids) = device_with(2);
+    let graph = Graph::build(ctx.clone(), &[copy_node(ids[0], ids[1])]).unwrap();
+    assert!(crate::core::rules::check_unused(ctx.as_ref(), ids[0]).is_err());
+    drop(graph);
+    assert!(crate::core::rules::check_unused(ctx.as_ref(), ids[0]).is_ok());
+}

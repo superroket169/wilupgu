@@ -11,8 +11,11 @@ impl Buffer for ToyBuffer {
     fn size_bytes(&self) -> u64 {
         self.0.lock().unwrap().len() as u64
     }
-    fn is_sole_owner(&self) -> bool {
-        StdArc::strong_count(&self.0) == 1
+    fn holders(&self) -> usize {
+        StdArc::strong_count(&self.0)
+    }
+    fn same_as(&self, other: &Self) -> bool {
+        StdArc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -60,9 +63,15 @@ pub(crate) static META_SHADER: Shader = Shader {
     },
 };
 
-#[derive(Clone)]
-pub(crate) struct ToyNode;
+#[derive(Clone, Default)]
+pub(crate) struct ToyNode {
+    pub(crate) buffers: Vec<ToyBuffer>,
+}
 impl Node for ToyNode {
+    type Buffer = ToyBuffer;
+    fn buffers(&self) -> &[ToyBuffer] {
+        &self.buffers
+    }
     fn shader(&self) -> &'static Shader {
         &TOY_SHADER
     }
@@ -106,15 +115,11 @@ impl Storage for ToyBackend {
     fn contains(&self, id: TensorId) -> bool {
         self.table.lock().unwrap().contains_key(&id)
     }
+    fn buffer(&self, id: TensorId) -> Option<ToyBuffer> {
+        self.table.lock().unwrap().get(&id).cloned()
+    }
     fn drop_buffer(&self, id: TensorId) {
         self.table.lock().unwrap().remove(&id);
-    }
-    fn in_use(&self, id: TensorId) -> bool {
-        self.table
-            .lock()
-            .unwrap()
-            .get(&id)
-            .is_some_and(|b| !b.is_sole_owner())
     }
 
     fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String> {
@@ -143,10 +148,12 @@ impl Dispatch for ToyBackend {
         &self,
         _s: &'static Shader,
         _meta: &[u32],
-        _b: &[Binding],
+        bindings: &[(Binding, ToyBuffer)],
         _wg: Workgroups,
     ) -> Self::Node {
-        ToyNode
+        ToyNode {
+            buffers: bindings.iter().map(|(_, b)| b.clone()).collect(),
+        }
     }
     fn update_meta(&self, _node: &Self::Node, meta: &[u32]) {
         self.meta_writes.lock().unwrap().push(meta.to_vec());
