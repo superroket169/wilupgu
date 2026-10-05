@@ -1,23 +1,8 @@
 use super::*;
-use crate::core::dtype::F32;
+pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
 use crate::core::node::NodeSpec;
 use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
-use std::collections::HashMap;
-use std::sync::{Arc as StdArc, Mutex};
-
-#[derive(Clone)]
-pub(crate) struct ToyBuffer(pub(crate) StdArc<Mutex<Vec<u8>>>);
-impl Buffer for ToyBuffer {
-    fn size_bytes(&self) -> u64 {
-        self.0.lock().unwrap().len() as u64
-    }
-    fn holders(&self) -> usize {
-        StdArc::strong_count(&self.0)
-    }
-    fn same_as(&self, other: &Self) -> bool {
-        StdArc::ptr_eq(&self.0, &other.0)
-    }
-}
+use std::sync::Arc as StdArc;
 
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
@@ -63,177 +48,12 @@ pub(crate) static META_SHADER: Shader = Shader {
     },
 };
 
-#[derive(Clone, Default)]
-pub(crate) struct ToyNode {
-    pub(crate) buffers: Vec<ToyBuffer>,
-}
-impl Node for ToyNode {
-    type Buffer = ToyBuffer;
-    fn buffers(&self) -> &[ToyBuffer] {
-        &self.buffers
-    }
-    fn shader(&self) -> &'static Shader {
-        &TOY_SHADER
-    }
-    fn workgroups(&self) -> Workgroups {
-        Workgroups::linear(1)
-    }
-}
-
-pub(crate) struct ToyBackend {
-    id: DeviceId,
-    table: Mutex<HashMap<TensorId, ToyBuffer>>,
-    // every `update_meta` call's words, in order
-    pub(crate) meta_writes: Mutex<Vec<Vec<u32>>>,
-}
-impl ToyBackend {
-    pub(crate) fn new() -> Self {
-        Self {
-            id: DeviceId::new(),
-            table: Mutex::new(HashMap::new()),
-            meta_writes: Mutex::new(Vec::new()),
-        }
-    }
-    fn insert(&self, id: TensorId, bytes: usize) {
-        let buf = ToyBuffer(StdArc::new(Mutex::new(vec![0u8; bytes])));
-        self.table.lock().unwrap().insert(id, buf);
-    }
-    pub(crate) fn get(&self, id: TensorId) -> ToyBuffer {
-        self.table
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .expect("tensor not on this device")
-    }
-}
-impl Storage for ToyBackend {
-    type Buffer = ToyBuffer;
-    fn device_id(&self) -> DeviceId {
-        self.id
-    }
-    fn contains(&self, id: TensorId) -> bool {
-        self.table.lock().unwrap().contains_key(&id)
-    }
-    fn buffer(&self, id: TensorId) -> Option<ToyBuffer> {
-        self.table.lock().unwrap().get(&id).cloned()
-    }
-    fn drop_buffer(&self, id: TensorId) {
-        self.table.lock().unwrap().remove(&id);
-    }
-
-    fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String> {
-        match kind {
-            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, id, elem_count)),
-            _ => Err(format!("toy does not support {kind:?}")),
-        }
-    }
-    fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String> {
-        match data {
-            HostData::F32(v) => Ok(SupportsDType::<F32>::upload(self, id, v)),
-            _ => Err(format!("toy does not support {:?}", data.kind())),
-        }
-    }
-    fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String> {
-        match kind {
-            DataKind::F32 => Ok(F32::wrap(SupportsDType::<F32>::download(self, id))),
-            _ => Err(format!("toy does not support {kind:?}")),
-        }
-    }
-}
-impl Dispatch for ToyBackend {
-    type Node = ToyNode;
-    const FORMAT: ShaderFormat = ShaderFormat::Native;
-    fn build_node(
-        &self,
-        _s: &'static Shader,
-        _meta: &[u32],
-        bindings: &[(Binding, ToyBuffer)],
-        _wg: Workgroups,
-    ) -> Self::Node {
-        ToyNode {
-            buffers: bindings.iter().map(|(_, b)| b.clone()).collect(),
-        }
-    }
-    fn update_meta(&self, _node: &Self::Node, meta: &[u32]) {
-        self.meta_writes.lock().unwrap().push(meta.to_vec());
-    }
-    fn execute(&self, _nodes: &[Self::Node]) {}
-    fn synchronize(&self) {}
-}
-
-// ToyBackend never overrides execute_captured/release_captured --
-// exercises Dispatch's default (runtime-fallback) bodies.
-
-// ToyBackend only ever implements SupportsDType<F32> -- on purpose.
-impl SupportsDType<F32> for ToyBackend {
-    fn alloc(&self, id: TensorId, elem_count: usize) {
-        self.insert(id, elem_count * 4);
-    }
-    fn upload(&self, id: TensorId, data: &[f32]) {
-        *self.get(id).0.lock().unwrap() = bytemuck::cast_slice(data).to_vec();
-    }
-    fn download(&self, id: TensorId) -> Vec<f32> {
-        bytemuck::cast_slice(&self.get(id).0.lock().unwrap()).to_vec()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ToyDevice(u32);
-
-impl DeviceInfo for ToyDevice {
-    fn label(&self) -> String {
-        format!("toy-device-{}", self.0)
-    }
-    fn total_memory_bytes(&self) -> u64 {
-        1024
-    }
-}
-
-impl Topology for ToyBackend {
-    type Info = ToyDevice;
-    fn choosable_devices() -> Vec<Self::Info> {
-        vec![ToyDevice(0), ToyDevice(1)]
-    }
-    fn attach(_info: Self::Info) -> Result<Self, String> {
-        Ok(ToyBackend::new())
-    }
-    fn name(&self) -> &'static str {
-        "toy"
-    }
-}
-
 #[test]
 fn topology_enumerate_then_attach() {
     let devices = ToyBackend::choosable_devices();
     assert_eq!(devices.len(), 2);
     let backend = ToyBackend::attach(devices[0].clone()).unwrap();
     assert_eq!(backend.name(), "toy");
-}
-
-pub(crate) struct ToyArea;
-
-impl Area for ToyArea {
-    fn size_bytes(&self) -> u64 {
-        1024
-    }
-    fn remaining_bytes(&self) -> u64 {
-        1024
-    }
-}
-
-impl Areable for ToyBackend {
-    type Area = ToyArea;
-    fn reserve(&self, _total_bytes: u64) -> Self::Area {
-        ToyArea
-    }
-    fn release(&self, _area: Self::Area) {}
-}
-
-impl SupportsCarve<F32> for ToyBackend {
-    fn carve(&self, _area: &mut Self::Area, id: TensorId, elem_count: usize) {
-        self.insert(id, elem_count * 4);
-    }
 }
 
 #[test]
