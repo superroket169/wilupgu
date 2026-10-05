@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use crate::backend::Backend;
 use crate::core::node::{MetaValue, NodeSpec};
 use crate::core::rules::{
-    check_hazards, check_meta, check_ownership, check_shader_code, validate_spec,
+    check_hazards, check_meta, check_node_holds_buffers, check_ownership, check_shader_code,
+    validate_spec,
 };
 
 pub enum DispatchPlan {
@@ -37,18 +38,28 @@ impl<B: Backend> Graph<B> {
         check_ownership(ctx.as_ref(), specs)?;
         check_hazards(specs)?;
 
-        // Once values are read here; per-run ones get a placeholder until `run`.
-        let nodes: Vec<B::Node> = specs
-            .iter()
-            .map(|s| {
-                let words: Vec<u32> = s
-                    .meta()
-                    .iter()
-                    .map(|v| v.once_word().unwrap_or(0))
-                    .collect();
-                ctx.build_node(s.shader(), &words, s.bindings(), s.workgroups())
-            })
-            .collect();
+        let mut nodes: Vec<B::Node> = Vec::with_capacity(specs.len());
+        for (i, s) in specs.iter().enumerate() {
+            // Once values are read here; per-run ones get a placeholder until `run`.
+            let words: Vec<u32> = s
+                .meta()
+                .iter()
+                .map(|v| v.once_word().unwrap_or(0))
+                .collect();
+            let bound: Vec<_> = s
+                .bindings()
+                .iter()
+                .map(|b| {
+                    let buf = ctx.buffer(b.tensor).expect("checked by check_ownership");
+                    (b.clone(), buf)
+                })
+                .collect();
+            let node = ctx.build_node(s.shader(), &words, &bound, s.workgroups());
+            let given: Vec<_> = bound.into_iter().map(|(_, buf)| buf).collect();
+
+            check_node_holds_buffers::<B>(i, s, &node, &given)?;
+            nodes.push(node);
+        }
         let per_run_meta = specs
             .iter()
             .enumerate()

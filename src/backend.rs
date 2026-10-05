@@ -17,8 +17,12 @@ pub trait Buffer: Clone + Send + Sync + 'static {
     /// stored in it; shaders take their bounds from the meta, not from this.
     fn size_bytes(&self) -> u64;
 
-    /// True when no other clone of this buffer exists.
-    fn is_sole_owner(&self) -> bool;
+    /// How many clones of this buffer exist, this one included.
+    /// 1 means nobody else holds it, so it can go back to the pool.
+    fn holders(&self) -> usize;
+
+    /// True if `self` and `other` are clones of the same buffer.
+    fn same_as(&self, other: &Self) -> bool;
 }
 
 /// One built dispatch, ready to run: a shader, its buffers, its meta and its
@@ -27,8 +31,14 @@ pub trait Buffer: Clone + Send + Sync + 'static {
 /// Made by `Dispatch::build_node`. It keeps a clone of every buffer it is
 /// bound to (see `Buffer`).
 pub trait Node: Clone + Send + Sync + 'static {
+    type Buffer: Buffer;
+
     /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
+
+    /// The buffers this node holds, in the order `build_node` got them.
+    /// The graph checks this right after building the node.
+    fn buffers(&self) -> &[Self::Buffer];
 
     fn shader(&self) -> &'static Shader;
     fn workgroups(&self) -> Workgroups;
@@ -83,12 +93,12 @@ pub trait Storage: Send + Sync + 'static {
     /// True if `id` has an entry in this device's table.
     fn contains(&self, id: TensorId) -> bool;
 
+    /// A clone of `id`'s buffer, or `None` if `id` isn't in the table.
+    fn buffer(&self, id: TensorId) -> Option<Self::Buffer>;
+
     /// Removes `id`'s entry from the table. The memory is freed (or returned
     /// to the pool) only when no built node holds a clone of it anymore.
     fn drop_buffer(&self, id: TensorId);
-
-    /// True while something besides the table (a built node) still holds `id`'s buffer.
-    fn in_use(&self, id: TensorId) -> bool;
 
     /// The new buffer may come from the pool, so its old contents are still
     /// in it. A shader that fully writes it doesn't care; use
@@ -117,15 +127,17 @@ pub trait Storage: Send + Sync + 'static {
 
 /// The compute side of a device: builds nodes and runs them.
 pub trait Dispatch: Storage {
-    type Node: Node;
+    type Node: Node<Buffer = Self::Buffer>;
 
     /// The shader code format this backend runs. A graph is only built if
     /// every node's shader has code in this format.
     const FORMAT: ShaderFormat;
 
     /// Builds one node. `meta` is the words for slot 0; the backend makes the
-    /// meta buffer and owns it. `bindings` name tensors in this device's
-    /// table; the node keeps a clone of each one's buffer.
+    /// meta buffer and owns it.
+    /// Each binding comes with a clone of its buffer, taken from this device's table.
+    /// The node must keep them all,
+    /// in this order, and return them from `Node::buffers`.
     ///
     /// The graph checks the node before calling this, so a backend may
     /// panic on input the rules would have rejected.
@@ -133,7 +145,7 @@ pub trait Dispatch: Storage {
         &self,
         shader: &'static Shader,
         meta: &[u32],
-        bindings: &[Binding],
+        bindings: &[(Binding, Self::Buffer)],
         workgroups: Workgroups,
     ) -> Self::Node;
     /// Writes new words into a node's meta buffer. Called before a run, for
