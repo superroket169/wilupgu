@@ -39,8 +39,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 - **SpreadTensor review.** Known inconsistency: `CombineOp` returns a `Vec`
   (all-reduce copies) but `SpreadTensor::combine` keeps only the last one.
   `combine::sum` / `sum_to_all` are missing.
-- **Tensor review.** Check whether handing `Device` (`Arc`) around everywhere
-  puts buffer lifetimes at risk.
 - **ComputeMesh**: still a skeleton (`todo!()` bodies, no constructor);
   `Placement` is unused outside tests. Several design parts don't exist yet.
 - **Contract gaps in `rules.rs`:**

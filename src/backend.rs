@@ -6,18 +6,34 @@ use crate::core::node::Binding;
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::tensor::TensorId;
 
-/// raw data capsule that implemented in Dispatch/Storage
+/// A backend's handle to one block of device memory.
+///
+/// Cloning a `Buffer` must not copy the memory: every clone points to the same
+/// block, and the block lives until the last clone is dropped.
+/// A built node keeps a clone of each buffer it uses, so a buffer can't be
+/// freed while a graph still runs on it.
 pub trait Buffer: Clone + Send + Sync + 'static {
+    /// The real size of the memory block. It can be larger than the tensor
+    /// stored in it; shaders take their bounds from the meta, not from this.
     fn size_bytes(&self) -> u64;
+
+    /// True when no other clone of this buffer exists.
     fn is_sole_owner(&self) -> bool;
 }
 
+/// One built dispatch, ready to run: a shader, its buffers, its meta and its
+/// workgroup count, in the backend's own form.
+///
+/// Made by `Dispatch::build_node`. It keeps a clone of every buffer it is
+/// bound to (see `Buffer`).
 pub trait Node: Clone + Send + Sync + 'static {
+    /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
     fn shader(&self) -> &'static Shader;
     fn workgroups(&self) -> Workgroups;
 
+    /// Fails if any dimension of `wg` is over `MAX_WORKGROUPS_PER_DIM`.
     fn validate_workgroups(wg: Workgroups) -> Result<(), String> {
         if wg.dims().iter().all(|&d| d <= Self::MAX_WORKGROUPS_PER_DIM) {
             Ok(())
@@ -30,45 +46,89 @@ pub trait Node: Clone + Send + Sync + 'static {
     }
 }
 
+/// What a backend can tell about one device before it is opened.
 pub trait DeviceInfo: Clone + std::fmt::Debug + Send + Sync + 'static {
+    /// A name for people to read, like the GPU's model name.
     fn label(&self) -> String;
     fn total_memory_bytes(&self) -> u64;
 }
 
+/// How a backend finds devices on this machine and opens them.
 pub trait Topology: Sized + Send + Sync + 'static {
     type Info: DeviceInfo;
 
+    /// Every device this backend can open on this machine.
     fn choosable_devices() -> Vec<Self::Info>;
+
+    /// Opens the device that `info` describes.
     fn attach(info: Self::Info) -> Result<Self, String>;
+
+    /// The backend's name, like `"cuda"`.
     fn name(&self) -> &'static str;
 }
 
+/// The memory side of a device.
+///
+/// A backend keeps a table from `TensorId` to `Buffer`. A `Tensor` is only a
+/// device and an id; its memory is the table's entry.
+///
+/// Uploads, downloads and dispatches run in the order they are called, so an
+/// upload between two runs needs no `synchronize`. This holds for one stream
+/// per device.
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
+
     fn device_id(&self) -> DeviceId;
+
+    /// True if `id` has an entry in this device's table.
     fn contains(&self, id: TensorId) -> bool;
+
+    /// Removes `id`'s entry from the table. The memory is freed (or returned
+    /// to the pool) only when no built node holds a clone of it anymore.
     fn drop_buffer(&self, id: TensorId);
+
     /// True while something besides the table (a built node) still holds `id`'s buffer.
     fn in_use(&self, id: TensorId) -> bool;
 
+    /// The new buffer may come from the pool, so its old contents are still
+    /// in it. A shader that fully writes it doesn't care; use
+    /// `InitRecipe::Zero` when zeros are needed.
+    ///
     /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
     /// the dtype is only known at runtime. Each backend matches the kinds it
-    /// has a `SupportsDType` impl for -- a default body can't see which exist.
+    /// has a `SupportsDType` impl for.
+    /// a default body can't see which exist.
     ///
     /// # Errors
     /// Must fail, not alias or overwrite, if `contains(id)` is already true
     /// `Tensor::with_id` relies on this to keep two live tensors from ever
     /// sharing one id's buffer.
     fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String>;
+
+    /// Writes host data into `id`'s buffer. Fails if this backend doesn't
+    /// support the data's kind.
     fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String>;
+
+    /// Reads `id`'s buffer back to the host, as `kind`. Blocks until the
+    /// device work queued before it is done. Returns only the tensor's
+    /// elements, not the rest of a larger buffer.
     fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String>;
 }
 
+/// The compute side of a device: builds nodes and runs them.
 pub trait Dispatch: Storage {
     type Node: Node;
+
+    /// The shader code format this backend runs. A graph is only built if
+    /// every node's shader has code in this format.
     const FORMAT: ShaderFormat;
 
-    // `meta` is slot 0's words; the backend owns that buffer.
+    /// Builds one node. `meta` is the words for slot 0; the backend makes the
+    /// meta buffer and owns it. `bindings` name tensors in this device's
+    /// table; the node keeps a clone of each one's buffer.
+    ///
+    /// The graph checks the node before calling this, so a backend may
+    /// panic on input the rules would have rejected.
     fn build_node(
         &self,
         shader: &'static Shader,
@@ -76,28 +136,48 @@ pub trait Dispatch: Storage {
         bindings: &[Binding],
         workgroups: Workgroups,
     ) -> Self::Node;
-    // Rewrites a node's meta buffer before a run, for its per-run fields.
+    /// Writes new words into a node's meta buffer. Called before a run, for
+    /// nodes with per-run meta fields. It must be ordered before that run's
+    /// dispatches and must not change the meta buffer's address.
     fn update_meta(&self, node: &Self::Node, meta: &[u32]);
+
+    /// Queues `nodes` to run in order. Doesn't wait for them to finish.
     fn execute(&self, nodes: &[Self::Node]);
+
+    /// Blocks until all queued work on this device is done.
     fn synchronize(&self);
 
+    /// Like `execute`, but the backend may record `nodes` once under `key`
+    /// and replay the recording on later calls (CUDA graphs, for example).
+    /// The default just calls `execute`.
+    ///
+    /// A recording keeps raw buffer addresses, so the nodes' buffers must stay
+    /// where they are; they do, because the nodes hold them.
     fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
         self.execute(nodes);
     }
+
+    /// Drops the recording made under `key`, if there is one.
     fn release_captured(&self, _key: usize) {}
 
+    /// True if this device can copy straight to `other`, without going
+    /// through the host. Both must be devices of the same backend.
     fn supports_p2p(&self, other: DeviceId) -> bool {
         let _ = other;
         false
     }
 }
 
+/// A complete backend. Every `Dispatch` is one; code that takes a backend
+/// asks for this.
 pub trait Backend: Dispatch {}
 impl<T: Dispatch> Backend for T {}
 
-/// backend implements it for each DType that backend supports it
-/// gives type safety at raw
+/// A backend implements this once for each data type it supports.
+/// It is the typed form of `alloc_kind`, `upload_kind` and `download_kind`:
+/// a wrong type is a compile error here instead of an `Err`.
 pub trait SupportsDType<D: DataType>: Storage {
+    /// Same contract as `Storage::alloc_kind`.
     fn alloc(&self, id: TensorId, elem_count: usize);
     fn upload(&self, id: TensorId, data: &[D::HostRepr]);
     fn download(&self, id: TensorId) -> Vec<D::HostRepr>;
@@ -110,19 +190,29 @@ pub trait SupportsDType<D: DataType>: Storage {
     }
 }
 
+/// One large block of device memory, reserved up front. Tensors are then
+/// cut out of it instead of being allocated one by one.
 pub trait Area: Send + Sync + 'static {
     fn size_bytes(&self) -> u64;
+
+    /// Bytes not yet cut out.
     fn remaining_bytes(&self) -> u64;
 }
 
+/// A backend that can reserve `Area`s.
 pub trait Areable: Storage {
     type Area: Area;
 
     fn reserve(&self, total_bytes: u64) -> Self::Area;
+
+    /// Gives the whole area back to the device.
     fn release(&self, area: Self::Area);
 }
 
+/// Cutting tensors of type `D` out of an `Area`.
 pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
+    /// Cuts `elem_count` elements out of `area` and puts them in the table
+    /// under `id`, like `alloc` does.
     fn carve(&self, area: &mut Self::Area, id: TensorId, elem_count: usize);
 }
 

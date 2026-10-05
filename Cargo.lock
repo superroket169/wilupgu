@@ -1228,6 +1228,7 @@ dependencies = [
  "cudarc",
  "futures-intrusive",
  "half",
+ "naga",
  "pollster",
  "rayon",
  "wgpu",
