@@ -14,7 +14,7 @@ use crate::backend::{
 };
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData, F32};
-use crate::core::node::Binding;
+use crate::core::node::{Binding, BuiltNode};
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::tensor::TensorId;
 
@@ -27,22 +27,14 @@ impl Buffer for ToyBuffer {
     fn holders(&self) -> usize {
         Arc::strong_count(&self.0)
     }
-    fn same_as(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
 }
 
 #[derive(Clone)]
 pub(crate) struct ToyNode {
     pub(crate) shader: &'static Shader,
     pub(crate) workgroups: Workgroups,
-    pub(crate) buffers: Vec<ToyBuffer>,
 }
 impl Node for ToyNode {
-    type Buffer = ToyBuffer;
-    fn buffers(&self) -> &[ToyBuffer] {
-        &self.buffers
-    }
     fn shader(&self) -> &'static Shader {
         self.shader
     }
@@ -119,19 +111,15 @@ impl Dispatch for ToyBackend {
         &self,
         shader: &'static Shader,
         _meta: &[u32],
-        bindings: &[(Binding, ToyBuffer)],
+        _bindings: &[(Binding, ToyBuffer)],
         workgroups: Workgroups,
     ) -> Self::Node {
-        ToyNode {
-            shader,
-            workgroups,
-            buffers: bindings.iter().map(|(_, b)| b.clone()).collect(),
-        }
+        ToyNode { shader, workgroups }
     }
     fn update_meta(&self, _node: &Self::Node, meta: &[u32]) {
         self.meta_writes.lock().unwrap().push(meta.to_vec());
     }
-    fn execute(&self, _nodes: &[Self::Node]) {}
+    fn execute(&self, _nodes: &[BuiltNode<Self>]) {}
     fn synchronize(&self) {}
 }
 

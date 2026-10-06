@@ -2,7 +2,7 @@
 
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
-use crate::core::node::Binding;
+use crate::core::node::{Binding, BuiltNode};
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::tensor::TensorId;
 
@@ -10,8 +10,9 @@ use crate::core::tensor::TensorId;
 ///
 /// Cloning a `Buffer` must not copy the memory: every clone points to the same
 /// block, and the block lives until the last clone is dropped.
-/// A built node keeps a clone of each buffer it uses, so a buffer can't be
-/// freed while a graph still runs on it.
+///
+/// Core keeps a clone of each buffer a built node uses (see `BuiltNode`)
+/// so a buffer can't be freed while that node can still run.
 pub trait Buffer: Clone + Send + Sync + 'static {
     /// The real size of the memory block. It can be larger than the tensor
     /// stored in it; shaders take their bounds from the meta, not from this.
@@ -20,25 +21,15 @@ pub trait Buffer: Clone + Send + Sync + 'static {
     /// How many clones of this buffer exist, this one included.
     /// 1 means nobody else holds it, so it can go back to the pool.
     fn holders(&self) -> usize;
-
-    /// True if `self` and `other` are clones of the same buffer.
-    fn same_as(&self, other: &Self) -> bool;
 }
 
 /// One built dispatch, ready to run: a shader, its buffers, its meta and its
 /// workgroup count, in the backend's own form.
 ///
-/// Made by `Dispatch::build_node`. It keeps a clone of every buffer it is
-/// bound to (see `Buffer`).
+/// Made by `Dispatch::build_node`
 pub trait Node: Clone + Send + Sync + 'static {
-    type Buffer: Buffer;
-
     /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
-
-    /// The buffers this node holds, in the order `build_node` got them.
-    /// The graph checks this right after building the node.
-    fn buffers(&self) -> &[Self::Buffer];
 
     fn shader(&self) -> &'static Shader;
     fn workgroups(&self) -> Workgroups;
@@ -126,8 +117,8 @@ pub trait Storage: Send + Sync + 'static {
 }
 
 /// The compute side of a device: builds nodes and runs them.
-pub trait Dispatch: Storage {
-    type Node: Node<Buffer = Self::Buffer>;
+pub trait Dispatch: Storage + Sized {
+    type Node: Node;
 
     /// The shader code format this backend runs. A graph is only built if
     /// every node's shader has code in this format.
@@ -135,9 +126,6 @@ pub trait Dispatch: Storage {
 
     /// Builds one node. `meta` is the words for slot 0; the backend makes the
     /// meta buffer and owns it.
-    /// Each binding comes with a clone of its buffer, taken from this device's table.
-    /// The node must keep them all,
-    /// in this order, and return them from `Node::buffers`.
     ///
     /// The graph checks the node before calling this, so a backend may
     /// panic on input the rules would have rejected.
@@ -154,7 +142,7 @@ pub trait Dispatch: Storage {
     fn update_meta(&self, node: &Self::Node, meta: &[u32]);
 
     /// Queues `nodes` to run in order. Doesn't wait for them to finish.
-    fn execute(&self, nodes: &[Self::Node]);
+    fn execute(&self, nodes: &[BuiltNode<Self>]);
 
     /// Blocks until all queued work on this device is done.
     fn synchronize(&self);
@@ -164,8 +152,7 @@ pub trait Dispatch: Storage {
     /// The default just calls `execute`.
     ///
     /// A recording keeps raw buffer addresses, so the nodes' buffers must stay
-    /// where they are; they do, because the nodes hold them.
-    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
+    fn execute_captured(&self, _key: usize, nodes: &[BuiltNode<Self>]) {
         self.execute(nodes);
     }
 

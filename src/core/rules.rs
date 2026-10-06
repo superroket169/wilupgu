@@ -99,26 +99,6 @@ pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result
     Ok(())
 }
 
-pub(crate) fn check_node_holds_buffers<B: Backend>(
-    i: usize,
-    spec: &NodeSpec,
-    node: &B::Node,
-    given: &[B::Buffer],
-) -> Result<(), String> {
-    let held = node.buffers();
-    let same = held.len() == given.len() && held.iter().zip(given).all(|(h, g)| h.same_as(g));
-    if !same {
-        return Err(format!(
-            "Node doesn't hold its buffers: node {i} (shader `{}`) was given {} buffers \
-             and holds {}, or not the same ones in the same order",
-            spec.shader().name,
-            given.len(),
-            held.len()
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn check_unused<S: Storage>(storage: &S, id: TensorId) -> Result<(), String> {
     // The table holds one clone and `buffer` hands us another; any more is a built node.
     let in_use = storage.buffer(id).is_some_and(|b| b.holders() > 2);

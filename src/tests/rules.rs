@@ -1,7 +1,5 @@
 use super::*;
-use crate::backend::tests::{
-    copy_node, device_with, ToyBackend, ToyNode, COPY_SHADER, META_SHADER,
-};
+use crate::backend::tests::{device_with, ToyNode, COPY_SHADER, META_SHADER};
 use crate::core::deferred::{Dynamic, Resolvable};
 use crate::core::dtype::DataKind;
 use crate::core::node::{Binding, MetaSource, MetaValue};
@@ -69,49 +67,4 @@ fn check_unused_rejects_a_buffer_a_node_still_holds() {
     assert!(err.starts_with("Buffer still in use"), "{err}");
     drop(held);
     assert!(check_unused(dev.as_ref(), ids[0]).is_ok());
-}
-
-#[test]
-fn check_node_holds_buffers_passes_when_it_keeps_them_in_order() {
-    let (dev, ids) = device_with(2);
-    let given = vec![dev.get(ids[0]), dev.get(ids[1])];
-    let node = ToyNode {
-        shader: &COPY_SHADER,
-        workgroups: Workgroups::linear(1),
-        buffers: given.clone(),
-    };
-    let spec = copy_node(ids[0], ids[1]);
-    assert!(check_node_holds_buffers::<ToyBackend>(0, &spec, &node, &given).is_ok());
-}
-
-#[test]
-fn check_node_holds_buffers_rejects_a_node_that_dropped_them() {
-    let (dev, ids) = device_with(2);
-    let given = vec![dev.get(ids[0]), dev.get(ids[1])];
-    let spec = copy_node(ids[0], ids[1]);
-    let err = check_node_holds_buffers::<ToyBackend>(
-        0,
-        &spec,
-        &ToyNode {
-            shader: &COPY_SHADER,
-            workgroups: Workgroups::linear(1),
-            buffers: vec![],
-        },
-        &given,
-    )
-    .unwrap_err();
-    assert!(err.starts_with("Node doesn't hold its buffers"), "{err}");
-}
-
-#[test]
-fn check_node_holds_buffers_rejects_the_wrong_order() {
-    let (dev, ids) = device_with(2);
-    let given = vec![dev.get(ids[0]), dev.get(ids[1])];
-    let node = ToyNode {
-        shader: &COPY_SHADER,
-        workgroups: Workgroups::linear(1),
-        buffers: vec![given[1].clone(), given[0].clone()],
-    };
-    let spec = copy_node(ids[0], ids[1]);
-    assert!(check_node_holds_buffers::<ToyBackend>(0, &spec, &node, &given).is_err());
 }

@@ -4,10 +4,9 @@
 use std::collections::HashMap;
 
 use crate::backend::Backend;
-use crate::core::node::{MetaValue, NodeSpec};
+use crate::core::node::{BuiltNode, MetaValue, NodeSpec};
 use crate::core::rules::{
-    check_hazards, check_meta, check_node_holds_buffers, check_ownership, check_shader_code,
-    validate_spec,
+    check_hazards, check_meta, check_ownership, check_shader_code, validate_spec,
 };
 
 pub enum DispatchPlan {
@@ -22,7 +21,7 @@ pub enum DispatchPlan {
 
 pub struct Graph<B: Backend> {
     ctx: std::sync::Arc<B>,
-    nodes: Vec<B::Node>,
+    nodes: Vec<BuiltNode<B>>,
     // Nodes with per-run meta fields: index into `nodes`, and all of that node's meta.
     per_run_meta: Vec<(usize, Vec<MetaValue>)>,
     plan: Vec<DispatchPlan>,
@@ -38,8 +37,8 @@ impl<B: Backend> Graph<B> {
         check_ownership(ctx.as_ref(), specs)?;
         check_hazards(specs)?;
 
-        let mut nodes: Vec<B::Node> = Vec::with_capacity(specs.len());
-        for (i, s) in specs.iter().enumerate() {
+        let mut nodes: Vec<BuiltNode<B>> = Vec::with_capacity(specs.len());
+        for s in specs {
             // Once values are read here; per-run ones get a placeholder until `run`.
             let words: Vec<u32> = s
                 .meta()
@@ -55,10 +54,8 @@ impl<B: Backend> Graph<B> {
                 })
                 .collect();
             let node = ctx.build_node(s.shader(), &words, &bound, s.workgroups());
-            let given: Vec<_> = bound.into_iter().map(|(_, buf)| buf).collect();
-
-            check_node_holds_buffers::<B>(i, s, &node, &given)?;
-            nodes.push(node);
+            let buffers = bound.into_iter().map(|(_, buf)| buf).collect();
+            nodes.push(BuiltNode::new(node, buffers));
         }
         let per_run_meta = specs
             .iter()
@@ -101,7 +98,7 @@ impl<B: Backend> Graph<B> {
                     None => v.read_word_for_run(),
                 })
                 .collect();
-            self.ctx.update_meta(&self.nodes[*node], &words);
+            self.ctx.update_meta(self.nodes[*node].node(), &words);
         }
     }
 
