@@ -3,7 +3,6 @@ pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
 use crate::core::node::NodeSpec;
 use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
 use crate::core::tensor::TensorId;
-use std::sync::Arc;
 
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
@@ -79,13 +78,13 @@ pub(crate) fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
 }
 
 // A toy device with `n` fresh one-element F32 tensors in its table.
-pub(crate) fn device_with(n: usize) -> (Arc<ToyBackend>, Vec<TensorId>) {
+pub(crate) fn device_with(n: usize) -> (ToyBackend, Vec<TensorId>) {
     let toy = ToyBackend::new();
     let ids: Vec<TensorId> = (0..n).map(|_| TensorId::new()).collect();
     for &id in &ids {
         toy.table().alloc(&toy, id, DataKind::F32, 1).unwrap();
     }
-    (Arc::new(toy), ids)
+    (toy, ids)
 }
 
 #[test]

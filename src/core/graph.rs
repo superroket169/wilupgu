@@ -19,22 +19,22 @@ pub enum DispatchPlan {
     },
 }
 
-pub struct Graph<B: Backend> {
-    ctx: std::sync::Arc<B>,
+pub struct Graph<'d, B: Backend> {
+    ctx: &'d B,
     nodes: Vec<BuiltNode<B>>,
     // Nodes with per-run meta fields: index into `nodes`, and all of that node's meta.
     per_run_meta: Vec<(usize, Vec<MetaValue>)>,
     plan: Vec<DispatchPlan>,
 }
 
-impl<B: Backend> Graph<B> {
-    pub fn build(ctx: std::sync::Arc<B>, specs: &[NodeSpec]) -> Result<Self, String> {
+impl<'d, B: Backend> Graph<'d, B> {
+    pub fn build(ctx: &'d B, specs: &[NodeSpec]) -> Result<Self, String> {
         for spec in specs {
             validate_spec::<B::Node>(spec)?;
             check_meta(spec)?;
         }
         check_shader_code::<B>(specs)?;
-        check_ownership(ctx.as_ref(), specs)?;
+        check_ownership(ctx, specs)?;
         check_hazards(specs)?;
 
         let mut nodes: Vec<BuiltNode<B>> = Vec::with_capacity(specs.len());

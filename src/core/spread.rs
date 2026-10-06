@@ -11,13 +11,16 @@ use crate::core::tensor::{Tensor, TensorId, TensorSpec};
 /// How a `SpreadTensor` is made: target device + size per part, in order.
 /// A plain `fn`, so it's `Copy` and fits in a `SpreadSpec`;
 /// the dtype is fixed when it's picked (`split::sized::<F32>`).
-pub type SplitOp =
-    fn(Tensor, &[(Device, Resolvable<u32>, TensorId)]) -> Result<Vec<Tensor>, String>;
+pub type SplitOp = for<'d> fn(
+    Tensor<'d>,
+    &[(&'d Device, Resolvable<u32>, TensorId)],
+) -> Result<Vec<Tensor<'d>>, String>;
 
 /// How a `SpreadTensor` is ended: the target devices and the whole's id
 /// every result tensor gets it. an all-reduce-style combine can leave
 /// identical copies on several devices, all still the same logical tensor.
-pub type CombineOp = fn(Vec<Tensor>, &[Device], TensorId) -> Result<Vec<Tensor>, String>;
+pub type CombineOp =
+    for<'d> fn(Vec<Tensor<'d>>, &[&'d Device], TensorId) -> Result<Vec<Tensor<'d>>, String>;
 
 /// A tensor spread across several devices
 pub struct SpreadSpec {
@@ -126,23 +129,23 @@ impl SpreadSpec {
 /// Tensors on different devices, seen as one. Whichever side is live (the
 /// whole or the parts) holds real buffers; the other is a shadow -- just the
 /// ids it would use if it existed.
-pub struct SpreadTensor {
+pub struct SpreadTensor<'d> {
     whole_id: TensorId,
     part_ids: Vec<TensorId>,
-    state: SpreadState,
+    state: SpreadState<'d>,
 }
 
-enum SpreadState {
-    Whole(Tensor),
-    Parts(Vec<Tensor>),
+enum SpreadState<'d> {
+    Whole(Tensor<'d>),
+    Parts(Vec<Tensor<'d>>),
 }
 
-impl SpreadTensor {
+impl<'d> SpreadTensor<'d> {
     /// Wraps `tensor` as `spec`'s whole side; the parts stay shadow until `split`.
     ///
     /// # Panics
     /// If `tensor`'s kind doesn't match `spec`'s.
-    pub fn from_whole(tensor: Tensor, spec: &SpreadSpec) -> Self {
+    pub fn from_whole(tensor: Tensor<'d>, spec: &SpreadSpec) -> Self {
         assert_eq!(
             tensor.kind(),
             spec.whole().kind(),
@@ -166,7 +169,7 @@ impl SpreadTensor {
     }
 
     /// The live whole, if this side is combined; `None` while it's split.
-    pub fn whole(&self) -> Option<&Tensor> {
+    pub fn whole(&self) -> Option<&Tensor<'d>> {
         match &self.state {
             SpreadState::Whole(t) => Some(t),
             SpreadState::Parts(_) => None,
@@ -174,7 +177,7 @@ impl SpreadTensor {
     }
 
     /// The live parts, if this side is split; `None` while it's whole.
-    pub fn parts(&self) -> Option<&[Tensor]> {
+    pub fn parts(&self) -> Option<&[Tensor<'d>]> {
         match &self.state {
             SpreadState::Parts(p) => Some(p),
             SpreadState::Whole(_) => None,
@@ -185,17 +188,13 @@ impl SpreadTensor {
     ///
     /// # Errors
     /// Already split, or a device in `spec` isn't in `devices`.
-    pub fn split(&mut self, spec: &SpreadSpec, devices: &[Device]) -> Result<(), String> {
+    pub fn split(&mut self, spec: &SpreadSpec, devices: &'d [Device]) -> Result<(), String> {
         if matches!(self.state, SpreadState::Parts(_)) {
             return Err("already split".to_string());
         }
         let mut targets = Vec::with_capacity(spec.parts().len());
         for (device_id, size, id) in spec.parts() {
-            targets.push((
-                resolve_device(devices, *device_id)?.clone(),
-                size.clone(),
-                *id,
-            ));
+            targets.push((resolve_device(devices, *device_id)?, size.clone(), *id));
         }
         let SpreadState::Whole(whole) =
             std::mem::replace(&mut self.state, SpreadState::Parts(Vec::new()))
@@ -213,13 +212,13 @@ impl SpreadTensor {
     ///
     /// # Errors
     /// Already whole, or a device in `spec` isn't in `devices`.
-    pub fn combine(&mut self, spec: &SpreadSpec, devices: &[Device]) -> Result<(), String> {
+    pub fn combine(&mut self, spec: &SpreadSpec, devices: &'d [Device]) -> Result<(), String> {
         if matches!(self.state, SpreadState::Whole(_)) {
             return Err("already whole".to_string());
         }
         let mut to = Vec::with_capacity(spec.combine_to().len());
         for device_id in spec.combine_to() {
-            to.push(resolve_device(devices, *device_id)?.clone());
+            to.push(resolve_device(devices, *device_id)?);
         }
         let SpreadState::Parts(parts) =
             std::mem::replace(&mut self.state, SpreadState::Parts(Vec::new()))
@@ -244,26 +243,26 @@ pub mod split {
     use super::*;
 
     /// A full copy on each device, every part's size must be the whole length.
-    pub fn replicate<D: DataType>(
-        source: Tensor,
-        to: &[(Device, Resolvable<u32>, TensorId)],
-    ) -> Result<Vec<Tensor>, String> {
+    pub fn replicate<'d, D: DataType>(
+        source: Tensor<'d>,
+        to: &[(&'d Device, Resolvable<u32>, TensorId)],
+    ) -> Result<Vec<Tensor<'d>>, String> {
         let mut parts = Vec::with_capacity(to.len());
         for (d, size, id) in to {
             let n = *size.value() as usize;
             if n != source.len() {
                 return Err(format!("a replica of {n} for a tensor of {}", source.len()));
             }
-            parts.push(source.copy_to_id::<D>(d, *id)?);
+            parts.push(source.copy_to_id::<D>(*d, *id)?);
         }
         Ok(parts)
     }
 
     /// Consecutive slices, one per device, in order.
-    pub fn sized<D: DataType>(
-        source: Tensor,
-        to: &[(Device, Resolvable<u32>, TensorId)],
-    ) -> Result<Vec<Tensor>, String> {
+    pub fn sized<'d, D: DataType>(
+        source: Tensor<'d>,
+        to: &[(&'d Device, Resolvable<u32>, TensorId)],
+    ) -> Result<Vec<Tensor<'d>>, String> {
         let total: usize = to.iter().map(|(_, s, _)| *s.value() as usize).sum();
         if total != source.len() {
             return Err(format!(
@@ -284,7 +283,7 @@ pub mod split {
                 ));
             }
             let words = n / per_word;
-            let part = Tensor::with_id(d, *id, D::KIND, n)?;
+            let mut part = Tensor::with_id(*d, *id, D::KIND, n)?;
             part.upload::<D>(&data[start..start + words]);
             parts.push(part);
             start += words;
@@ -302,25 +301,25 @@ pub mod split {
 pub mod combine {
     use super::*;
 
-    fn single(to: &[Device]) -> Result<&Device, String> {
+    fn single<'d>(to: &[&'d Device]) -> Result<&'d Device, String> {
         match to {
-            [d] => Ok(d),
+            [d] => Ok(*d),
             _ => Err(format!("expected one target device, got {}", to.len())),
         }
     }
 
     /// The parts laid end to end, as one tensor on the single `to` device.
-    pub fn concat<D: DataType>(
-        parts: Vec<Tensor>,
-        to: &[Device],
+    pub fn concat<'d, D: DataType>(
+        parts: Vec<Tensor<'d>>,
+        to: &[&'d Device],
         whole_id: TensorId,
-    ) -> Result<Vec<Tensor>, String> {
+    ) -> Result<Vec<Tensor<'d>>, String> {
         let to = single(to)?;
         let total = parts.iter().map(Tensor::len).sum();
-        let whole = Tensor::with_id(to, whole_id, D::KIND, total)?;
+        let mut whole = Tensor::with_id(to, whole_id, D::KIND, total)?;
         let mut offset = 0;
         for p in &parts {
-            p.copy_into::<D>(&whole, offset)?;
+            p.copy_into::<D>(&mut whole, offset)?;
             offset += p.len();
         }
         Ok(vec![whole])
@@ -328,11 +327,11 @@ pub mod combine {
 
     /// The first part, moved to the single `to` device (and given `whole_id`)
     /// even if it's already there. For parts known to be identical copies.
-    pub fn take_one<D: DataType>(
-        parts: Vec<Tensor>,
-        to: &[Device],
+    pub fn take_one<'d, D: DataType>(
+        parts: Vec<Tensor<'d>>,
+        to: &[&'d Device],
         whole_id: TensorId,
-    ) -> Result<Vec<Tensor>, String> {
+    ) -> Result<Vec<Tensor<'d>>, String> {
         let to = single(to)?;
         let first = parts.into_iter().next().ok_or("nothing to take")?;
         Ok(vec![first.copy_to_id::<D>(to, whole_id)?])

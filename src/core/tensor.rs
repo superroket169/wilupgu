@@ -63,36 +63,36 @@ impl TensorSpec {
 /// the buffer itself lives in the device's own table.
 ///
 /// Not `Clone`
-pub struct Tensor {
-    device: Device,
+pub struct Tensor<'d> {
+    device: &'d Device,
     id: TensorId,
     kind: DataKind,
     elem_count: usize,
 }
 
-impl Tensor {
-    pub fn new(device: &Device, kind: DataKind, elem_count: usize) -> Result<Self, String> {
+impl<'d> Tensor<'d> {
+    pub fn new(device: &'d Device, kind: DataKind, elem_count: usize) -> Result<Self, String> {
         Self::with_id(device, TensorId::new(), kind, elem_count)
     }
 
     /// Like `new`, with the id fixed instead of freshly minted.
     /// For a `SpreadSpec`'s parts and whole, whose ids are decided up front.
     pub(crate) fn with_id(
-        device: &Device,
+        device: &'d Device,
         id: TensorId,
         kind: DataKind,
         elem_count: usize,
     ) -> Result<Self, String> {
         device.alloc_kind(id, kind, elem_count)?;
         Ok(Self {
-            device: device.clone(),
+            device,
             id,
             kind,
             elem_count,
         })
     }
 
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> &'d Device {
         &self.device
     }
 
@@ -125,7 +125,7 @@ impl Tensor {
 
     /// # Panics
     /// If `D` isn't this tensor's kind or `data` isn't exactly its size.
-    pub fn upload<D: DataType>(&self, data: &[D::HostRepr]) {
+    pub fn upload<D: DataType>(&mut self, data: &[D::HostRepr]) {
         self.assert_kind::<D>();
         assert_eq!(
             data.len(),
@@ -153,24 +153,24 @@ impl Tensor {
     /// A full copy on `to`, as a new tensor.
     /// Goes through the host for now;
     /// a same-backend device-to-device path comes with integration.
-    pub fn copy_to<D: DataType>(&self, to: &Device) -> Result<Tensor, String> {
+    pub fn copy_to<'e, D: DataType>(&self, to: &'e Device) -> Result<Tensor<'e>, String> {
         self.copy_to_id::<D>(to, TensorId::new())
     }
 
     /// Like `copy_to`, with the copy's id fixed instead of freshly minted.
-    pub(crate) fn copy_to_id<D: DataType>(
+    pub(crate) fn copy_to_id<'e, D: DataType>(
         &self,
-        to: &Device,
+        to: &'e Device,
         id: TensorId,
-    ) -> Result<Tensor, String> {
-        let copy = Tensor::with_id(to, id, self.kind, self.elem_count)?;
+    ) -> Result<Tensor<'e>, String> {
+        let mut copy = Tensor::with_id(to, id, self.kind, self.elem_count)?;
         copy.upload::<D>(&self.download::<D>());
         Ok(copy)
     }
 
     /// Writes this tensor into `dst`, starting at element `offset`. Host
     /// round trip for now, like `copy_to`.
-    pub fn copy_into<D: DataType>(&self, dst: &Tensor, offset: usize) -> Result<(), String> {
+    pub fn copy_into<D: DataType>(&self, dst: &mut Tensor, offset: usize) -> Result<(), String> {
         let per_word = D::ELEMS_PER_HOST_WORD as usize;
         if offset % per_word != 0 {
             return Err(format!(
@@ -199,7 +199,7 @@ impl Tensor {
     }
 }
 
-impl Drop for Tensor {
+impl Drop for Tensor<'_> {
     fn drop(&mut self) {
         self.device.drop_buffer(self.id);
     }

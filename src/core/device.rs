@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::backend::{Dispatch, Storage};
 #[cfg(feature = "cpu")]
 use crate::backends::CpuBackend;
@@ -24,14 +22,13 @@ compile_error!("wilupgu needs at least one backend feature: `cuda`, `cpu` or `ra
 /// One live device, whatever its backend
 /// It only dispatches on which backend it is
 /// everything that depends on the dtype is matched inside the backend itself (`alloc_kind` & co).
-#[derive(Clone)]
 pub enum Device {
     #[cfg(feature = "cuda")]
-    Cuda(Arc<CudaBackend>),
+    Cuda(CudaBackend),
     #[cfg(feature = "cpu")]
-    Cpu(Arc<CpuBackend>),
+    Cpu(CpuBackend),
     #[cfg(feature = "rayon")]
-    Rayon(Arc<RayonBackend>),
+    Rayon(RayonBackend),
 }
 
 /// Runs `$body` with `$b` bound to the backend inside whichever variant this is.
@@ -71,11 +68,11 @@ impl Device {
         kind: DataKind,
         elem_count: usize,
     ) -> Result<(), String> {
-        on_backend!(self, b => b.table().alloc(b.as_ref(), id, kind, elem_count))
+        on_backend!(self, b => b.table().alloc(b, id, kind, elem_count))
     }
 
     pub(crate) fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String> {
-        on_backend!(self, b => b.table().upload(b.as_ref(), id, data))
+        on_backend!(self, b => b.table().upload(b, id, data))
     }
 
     pub(crate) fn download_kind(
@@ -84,7 +81,7 @@ impl Device {
         kind: DataKind,
         elem_count: usize,
     ) -> Result<HostData, String> {
-        on_backend!(self, b => b.table().download(b.as_ref(), id, kind, elem_count))
+        on_backend!(self, b => b.table().download(b, id, kind, elem_count))
     }
 
     /// P2P only ever exists between two devices of the same backend.
@@ -109,7 +106,7 @@ impl Device {
     /// and users' own ones.
     pub fn run_once(&self, node: &NodeSpec) -> Result<(), String> {
         on_backend!(self, b => {
-            let graph = Graph::build(b.clone(), std::slice::from_ref(node))?;
+            let graph = Graph::build(b, std::slice::from_ref(node))?;
             graph.run();
             b.synchronize();
             Ok(())
