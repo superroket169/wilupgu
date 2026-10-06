@@ -49,7 +49,10 @@ impl<B: Backend> Graph<B> {
                 .bindings()
                 .iter()
                 .map(|b| {
-                    let buf = ctx.buffer(b.tensor).expect("checked by check_ownership");
+                    let buf = ctx
+                        .table()
+                        .get(b.tensor)
+                        .expect("checked by check_ownership");
                     (b.clone(), buf)
                 })
                 .collect();

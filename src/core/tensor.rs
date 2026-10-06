@@ -145,7 +145,7 @@ impl Tensor {
         self.assert_kind::<D>();
         let data = self
             .device
-            .download_kind(self.id, self.kind)
+            .download_kind(self.id, self.kind, self.elem_count)
             .expect("the kind was accepted when this tensor was allocated");
         D::unwrap(data).expect("the device returned the kind it was asked for")
     }

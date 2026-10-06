@@ -4,7 +4,7 @@ use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
 use crate::core::node::{Binding, BuiltNode};
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
-use crate::core::tensor::TensorId;
+use crate::core::table::BufferTable;
 
 /// A backend's handle to one block of device memory.
 ///
@@ -70,9 +70,6 @@ pub trait Topology: Sized + Send + Sync + 'static {
 
 /// The memory side of a device.
 ///
-/// A backend keeps a table from `TensorId` to `Buffer`. A `Tensor` is only a
-/// device and an id; its memory is the table's entry.
-///
 /// Uploads, downloads and dispatches run in the order they are called, so an
 /// upload between two runs needs no `synchronize`. This holds for one stream
 /// per device.
@@ -81,39 +78,28 @@ pub trait Storage: Send + Sync + 'static {
 
     fn device_id(&self) -> DeviceId;
 
-    /// True if `id` has an entry in this device's table.
-    fn contains(&self, id: TensorId) -> bool;
+    /// This device's tensors
+    fn table(&self) -> &BufferTable<Self::Buffer>;
 
-    /// A clone of `id`'s buffer, or `None` if `id` isn't in the table.
-    fn buffer(&self, id: TensorId) -> Option<Self::Buffer>;
-
-    /// Removes `id`'s entry from the table. The memory is freed (or returned
-    /// to the pool) only when no built node holds a clone of it anymore.
-    fn drop_buffer(&self, id: TensorId);
-
-    /// The new buffer may come from the pool, so its old contents are still
-    /// in it. A shader that fully writes it doesn't care; use
-    /// `InitRecipe::Zero` when zeros are needed.
-    ///
     /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
     /// the dtype is only known at runtime. Each backend matches the kinds it
     /// has a `SupportsDType` impl for.
     /// a default body can't see which exist.
-    ///
-    /// # Errors
-    /// Must fail, not alias or overwrite, if `contains(id)` is already true
-    /// `Tensor::with_id` relies on this to keep two live tensors from ever
-    /// sharing one id's buffer.
-    fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String>;
+    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String>;
 
-    /// Writes host data into `id`'s buffer. Fails if this backend doesn't
-    /// support the data's kind.
-    fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String>;
+    /// Writes host data into `buf`. Fails if this backend doesn't support the
+    /// data's kind.
+    fn upload_kind(&self, buf: &Self::Buffer, data: &HostData) -> Result<(), String>;
 
-    /// Reads `id`'s buffer back to the host, as `kind`. Blocks until the
-    /// device work queued before it is done. Returns only the tensor's
-    /// elements, not the rest of a larger buffer.
-    fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String>;
+    /// Reads `elem_count` elements of `kind` back from `buf` to the host.
+    /// Blocks until the device work queued before it is done. Returns only
+    /// those elements, not the rest of a larger buffer.
+    fn download_kind(
+        &self,
+        buf: &Self::Buffer,
+        kind: DataKind,
+        elem_count: usize,
+    ) -> Result<HostData, String>;
 }
 
 /// The compute side of a device: builds nodes and runs them.
@@ -177,15 +163,16 @@ impl<T: Dispatch> Backend for T {}
 /// a wrong type is a compile error here instead of an `Err`.
 pub trait SupportsDType<D: DataType>: Storage {
     /// Same contract as `Storage::alloc_kind`.
-    fn alloc(&self, id: TensorId, elem_count: usize);
-    fn upload(&self, id: TensorId, data: &[D::HostRepr]);
-    fn download(&self, id: TensorId) -> Vec<D::HostRepr>;
+    fn alloc(&self, elem_count: usize) -> Self::Buffer;
+    fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
+    fn download(&self, buf: &Self::Buffer, elem_count: usize) -> Vec<D::HostRepr>;
 
-    /// Allocates the same id on `dest`; the copy on `self` stays.
-    fn copy_to(&self, id: TensorId, dest: &Self) {
-        let data = self.download(id);
-        dest.alloc(id, data.len());
-        dest.upload(id, &data);
+    /// A copy of `buf` in a new buffer on `dest`; `buf` stays.
+    fn copy_to(&self, buf: &Self::Buffer, elem_count: usize, dest: &Self) -> Self::Buffer {
+        let data = self.download(buf, elem_count);
+        let copy = dest.alloc(elem_count);
+        dest.upload(&copy, &data);
+        copy
     }
 }
 
@@ -210,9 +197,8 @@ pub trait Areable: Storage {
 
 /// Cutting tensors of type `D` out of an `Area`.
 pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
-    /// Cuts `elem_count` elements out of `area` and puts them in the table
-    /// under `id`, like `alloc` does.
-    fn carve(&self, area: &mut Self::Area, id: TensorId, elem_count: usize);
+    /// Cuts a buffer for `elem_count` elements out of `area`.
+    fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
 }
 
 #[cfg(test)]

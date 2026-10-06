@@ -54,15 +54,15 @@ impl Device {
     }
 
     pub(crate) fn contains(&self, id: TensorId) -> bool {
-        on_backend!(self, b => b.contains(id))
+        on_backend!(self, b => b.table().contains(id))
     }
 
     pub(crate) fn drop_buffer(&self, id: TensorId) {
-        on_backend!(self, b => b.drop_buffer(id))
+        on_backend!(self, b => b.table().remove(id))
     }
 
     pub(crate) fn check_unused(&self, id: TensorId) -> Result<(), String> {
-        on_backend!(self, b => crate::core::rules::check_unused(b.as_ref(), id))
+        on_backend!(self, b => crate::core::rules::check_unused(b.table(), id, b.device_id()))
     }
 
     pub(crate) fn alloc_kind(
@@ -71,15 +71,20 @@ impl Device {
         kind: DataKind,
         elem_count: usize,
     ) -> Result<(), String> {
-        on_backend!(self, b => b.alloc_kind(id, kind, elem_count))
+        on_backend!(self, b => b.table().alloc(b.as_ref(), id, kind, elem_count))
     }
 
     pub(crate) fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String> {
-        on_backend!(self, b => b.upload_kind(id, data))
+        on_backend!(self, b => b.table().upload(b.as_ref(), id, data))
     }
 
-    pub(crate) fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String> {
-        on_backend!(self, b => b.download_kind(id, kind))
+    pub(crate) fn download_kind(
+        &self,
+        id: TensorId,
+        kind: DataKind,
+        elem_count: usize,
+    ) -> Result<HostData, String> {
+        on_backend!(self, b => b.table().download(b.as_ref(), id, kind, elem_count))
     }
 
     /// P2P only ever exists between two devices of the same backend.

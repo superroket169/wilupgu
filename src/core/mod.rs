@@ -17,4 +17,5 @@ pub(crate) mod pool;
 pub(crate) mod rules;
 pub mod shader;
 pub mod spread;
+pub mod table;
 pub mod tensor;

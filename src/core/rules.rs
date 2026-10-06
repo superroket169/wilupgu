@@ -1,9 +1,11 @@
 //! Every build-time runtime rule, each one its own function: one rule, one
 //! check. Nothing here runs anything -- `graph.rs` calls these, then runs.
 
-use crate::backend::{Backend, Buffer, Node, Storage};
+use crate::backend::{Backend, Buffer, Node};
+use crate::core::device::DeviceId;
 use crate::core::node::NodeSpec;
 use crate::core::shader::BindingRole;
+use crate::core::table::BufferTable;
 use crate::core::tensor::TensorId;
 
 pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<(), String> {
@@ -84,7 +86,7 @@ pub(crate) fn check_shader_code<B: Backend>(specs: &[NodeSpec]) -> Result<(), St
 pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result<(), String> {
     for (i, spec) in specs.iter().enumerate() {
         for b in spec.bindings() {
-            if !ctx.contains(b.tensor) {
+            if !ctx.table().contains(b.tensor) {
                 return Err(format!(
                     "Buffer ownership mismatch: node {i} (shader `{}`) binding slot {} \
                      names tensor {:?}, which isn't allocated on device {:?}",
@@ -99,14 +101,17 @@ pub(crate) fn check_ownership<B: Backend>(ctx: &B, specs: &[NodeSpec]) -> Result
     Ok(())
 }
 
-pub(crate) fn check_unused<S: Storage>(storage: &S, id: TensorId) -> Result<(), String> {
-    // The table holds one clone and `buffer` hands us another; any more is a built node.
-    let in_use = storage.buffer(id).is_some_and(|b| b.holders() > 2);
+pub(crate) fn check_unused<Buf: Buffer>(
+    table: &BufferTable<Buf>,
+    id: TensorId,
+    device: DeviceId,
+) -> Result<(), String> {
+    // The table holds one clone and `get` hands us another; any more is a built node.
+    let in_use = table.get(id).is_some_and(|b| b.holders() > 2);
     if in_use {
         return Err(format!(
-            "Buffer still in use: tensor {id:?} on device {:?} is bound by a built graph; \
-             it is freed when that graph is dropped",
-            storage.device_id()
+            "Buffer still in use: tensor {id:?} on device {device:?} is bound by a built node; \
+             it is freed when that node is dropped"
         ));
     }
     Ok(())
