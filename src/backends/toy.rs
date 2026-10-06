@@ -5,7 +5,6 @@
 //!
 //! this file in cfg(test), look mod.rs
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::backend::{
@@ -16,7 +15,7 @@ use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData, F32};
 use crate::core::node::{Binding, BuiltNode};
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
-use crate::core::tensor::TensorId;
+use crate::core::table::BufferTable;
 
 #[derive(Clone)]
 pub(crate) struct ToyBuffer(pub(crate) Arc<Mutex<Vec<u8>>>);
@@ -45,7 +44,7 @@ impl Node for ToyNode {
 
 pub(crate) struct ToyBackend {
     id: DeviceId,
-    table: Mutex<HashMap<TensorId, ToyBuffer>>,
+    table: BufferTable<ToyBuffer>,
     // every `update_meta` call's words, in order
     pub(crate) meta_writes: Mutex<Vec<Vec<u32>>>,
 }
@@ -53,21 +52,9 @@ impl ToyBackend {
     pub(crate) fn new() -> Self {
         Self {
             id: DeviceId::new(),
-            table: Mutex::new(HashMap::new()),
+            table: BufferTable::new(1024),
             meta_writes: Mutex::new(Vec::new()),
         }
-    }
-    fn insert(&self, id: TensorId, bytes: usize) {
-        let buf = ToyBuffer(Arc::new(Mutex::new(vec![0u8; bytes])));
-        self.table.lock().unwrap().insert(id, buf);
-    }
-    pub(crate) fn get(&self, id: TensorId) -> ToyBuffer {
-        self.table
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .expect("tensor not on this device")
     }
 }
 impl Storage for ToyBackend {
@@ -75,31 +62,31 @@ impl Storage for ToyBackend {
     fn device_id(&self) -> DeviceId {
         self.id
     }
-    fn contains(&self, id: TensorId) -> bool {
-        self.table.lock().unwrap().contains_key(&id)
+    fn table(&self) -> &BufferTable<ToyBuffer> {
+        &self.table
     }
-    fn buffer(&self, id: TensorId) -> Option<ToyBuffer> {
-        self.table.lock().unwrap().get(&id).cloned()
-    }
-    fn drop_buffer(&self, id: TensorId) {
-        self.table.lock().unwrap().remove(&id);
-    }
-
-    fn alloc_kind(&self, id: TensorId, kind: DataKind, elem_count: usize) -> Result<(), String> {
+    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<ToyBuffer, String> {
         match kind {
-            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, id, elem_count)),
+            DataKind::F32 => Ok(SupportsDType::<F32>::alloc(self, elem_count)),
             _ => Err(format!("toy does not support {kind:?}")),
         }
     }
-    fn upload_kind(&self, id: TensorId, data: &HostData) -> Result<(), String> {
+    fn upload_kind(&self, buf: &ToyBuffer, data: &HostData) -> Result<(), String> {
         match data {
-            HostData::F32(v) => Ok(SupportsDType::<F32>::upload(self, id, v)),
+            HostData::F32(v) => Ok(SupportsDType::<F32>::upload(self, buf, v)),
             _ => Err(format!("toy does not support {:?}", data.kind())),
         }
     }
-    fn download_kind(&self, id: TensorId, kind: DataKind) -> Result<HostData, String> {
+    fn download_kind(
+        &self,
+        buf: &ToyBuffer,
+        kind: DataKind,
+        elem_count: usize,
+    ) -> Result<HostData, String> {
         match kind {
-            DataKind::F32 => Ok(F32::wrap(SupportsDType::<F32>::download(self, id))),
+            DataKind::F32 => Ok(F32::wrap(SupportsDType::<F32>::download(
+                self, buf, elem_count,
+            ))),
             _ => Err(format!("toy does not support {kind:?}")),
         }
     }
@@ -128,14 +115,16 @@ impl Dispatch for ToyBackend {
 
 // ToyBackend only ever implements SupportsDType<F32> -- on purpose.
 impl SupportsDType<F32> for ToyBackend {
-    fn alloc(&self, id: TensorId, elem_count: usize) {
-        self.insert(id, elem_count * 4);
+    fn alloc(&self, elem_count: usize) -> ToyBuffer {
+        ToyBuffer(Arc::new(Mutex::new(vec![0u8; elem_count * 4])))
     }
-    fn upload(&self, id: TensorId, data: &[f32]) {
-        *self.get(id).0.lock().unwrap() = bytemuck::cast_slice(data).to_vec();
+    fn upload(&self, buf: &ToyBuffer, data: &[f32]) {
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        buf.0.lock().unwrap()[..bytes.len()].copy_from_slice(bytes);
     }
-    fn download(&self, id: TensorId) -> Vec<f32> {
-        bytemuck::cast_slice(&self.get(id).0.lock().unwrap()).to_vec()
+    fn download(&self, buf: &ToyBuffer, elem_count: usize) -> Vec<f32> {
+        let bytes = buf.0.lock().unwrap();
+        bytemuck::cast_slice(&bytes[..elem_count * 4]).to_vec()
     }
 }
 
@@ -184,7 +173,7 @@ impl Areable for ToyBackend {
 }
 
 impl SupportsCarve<F32> for ToyBackend {
-    fn carve(&self, _area: &mut Self::Area, id: TensorId, elem_count: usize) {
-        self.insert(id, elem_count * 4);
+    fn carve(&self, _area: &mut Self::Area, elem_count: usize) -> ToyBuffer {
+        SupportsDType::<F32>::alloc(self, elem_count)
     }
 }

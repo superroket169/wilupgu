@@ -2,7 +2,8 @@ use super::*;
 pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
 use crate::core::node::NodeSpec;
 use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
-use std::sync::Arc as StdArc;
+use crate::core::tensor::TensorId;
+use std::sync::Arc;
 
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",
@@ -59,10 +60,9 @@ fn topology_enumerate_then_attach() {
 #[test]
 fn carve_from_area() {
     let ctx = ToyBackend::new();
-    let id = TensorId::new();
     let mut area = ctx.reserve(1024);
-    ctx.carve(&mut area, id, 4);
-    assert_eq!(ctx.download(id).len(), 4);
+    let buf = ctx.carve(&mut area, 4);
+    assert_eq!(ctx.download(&buf, 4).len(), 4);
     ctx.release(area);
 }
 
@@ -78,14 +78,14 @@ pub(crate) fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
     )
 }
 
-/// A device with `n` fresh one-element F32 tensors on it.
-pub(crate) fn device_with(n: usize) -> (StdArc<ToyBackend>, Vec<TensorId>) {
-    let ctx = ToyBackend::new();
+// A toy device with `n` fresh one-element F32 tensors in its table.
+pub(crate) fn device_with(n: usize) -> (Arc<ToyBackend>, Vec<TensorId>) {
+    let toy = ToyBackend::new();
     let ids: Vec<TensorId> = (0..n).map(|_| TensorId::new()).collect();
     for &id in &ids {
-        ctx.alloc(id, 1);
+        toy.table().alloc(&toy, id, DataKind::F32, 1).unwrap();
     }
-    (StdArc::new(ctx), ids)
+    (Arc::new(toy), ids)
 }
 
 #[test]
@@ -98,60 +98,59 @@ fn supports_p2p_defaults_to_false() {
 fn copy_to_round_trips_through_host() {
     let src = ToyBackend::new();
     let dest = ToyBackend::new();
-    let id = TensorId::new();
-    src.alloc(id, 4);
-    src.upload(id, &[1.0, 2.0, 3.0, 4.0]);
+    let buf = src.alloc(4);
+    src.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
 
-    src.copy_to(id, &dest);
+    let copy = src.copy_to(&buf, 4, &dest);
 
-    assert_eq!(dest.download(id), vec![1.0, 2.0, 3.0, 4.0]);
-    assert!(src.contains(id), "the source copy stays");
-}
-
-#[test]
-fn drop_buffer_removes_it_from_the_table() {
-    let ctx = ToyBackend::new();
-    let id = TensorId::new();
-    ctx.alloc(id, 1);
-    ctx.drop_buffer(id);
-    assert!(!ctx.contains(id));
+    assert_eq!(dest.download(&copy, 4), vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(
+        src.download(&buf, 4),
+        vec![1.0, 2.0, 3.0, 4.0],
+        "the source stays"
+    );
 }
 
 #[test]
 fn alloc_kind_uses_the_matching_impl() {
     let ctx = ToyBackend::new();
-    let id = TensorId::new();
-    ctx.alloc_kind(id, DataKind::F32, 4).unwrap();
-    assert!(ctx.contains(id));
-    assert_eq!(ctx.download(id).len(), 4);
+    let buf = ctx.alloc_kind(DataKind::F32, 4).unwrap();
+    assert_eq!(buf.size_bytes(), 16);
 }
 
 #[test]
 fn alloc_kind_rejects_an_unsupported_kind() {
     let err = ToyBackend::new()
-        .alloc_kind(TensorId::new(), DataKind::Int4, 4)
-        .unwrap_err();
+        .alloc_kind(DataKind::Int4, 4)
+        .err()
+        .unwrap();
     assert!(err.contains("Int4"), "{err}");
 }
 
 #[test]
 fn host_data_round_trips_through_the_kind_api() {
     let ctx = ToyBackend::new();
-    let id = TensorId::new();
-    ctx.alloc_kind(id, DataKind::F32, 3).unwrap();
-    ctx.upload_kind(id, &HostData::F32(vec![1.0, 2.0, 3.0]))
+    let buf = ctx.alloc_kind(DataKind::F32, 3).unwrap();
+    ctx.upload_kind(&buf, &HostData::F32(vec![1.0, 2.0, 3.0]))
         .unwrap();
-    let back = ctx.download_kind(id, DataKind::F32).unwrap();
+    let back = ctx.download_kind(&buf, DataKind::F32, 3).unwrap();
     assert!(matches!(back, HostData::F32(v) if v == vec![1.0, 2.0, 3.0]));
+}
+
+#[test]
+fn download_returns_only_the_asked_elements() {
+    let ctx = ToyBackend::new();
+    let buf = ctx.alloc(4);
+    ctx.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(ctx.download(&buf, 2), vec![1.0, 2.0]);
 }
 
 #[test]
 fn upload_kind_rejects_an_unsupported_kind() {
     let ctx = ToyBackend::new();
-    let id = TensorId::new();
-    ctx.alloc_kind(id, DataKind::F32, 1).unwrap();
+    let buf = ctx.alloc_kind(DataKind::F32, 1).unwrap();
     let err = ctx
-        .upload_kind(id, &HostData::F16(vec![half::f16::ZERO]))
+        .upload_kind(&buf, &HostData::F16(vec![half::f16::ZERO]))
         .unwrap_err();
     assert!(err.contains("F16"), "{err}");
 }
