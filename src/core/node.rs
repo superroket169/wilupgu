@@ -1,7 +1,6 @@
 //! One dispatch's blueprint: what shader, wired to which tensors, at what
 //! size. Nothing here touches a backend.
 
-use crate::backend::Dispatch;
 use crate::core::deferred::{Dynamic, Resolvable};
 use crate::core::id::GlobalId;
 use crate::core::shader::{BindingRole, MetaType, Shader, Workgroups};
@@ -135,26 +134,5 @@ impl NodeSpec {
 
     pub fn workgroups(&self) -> Workgroups {
         self.workgroups
-    }
-}
-
-// A backend's node together with the buffers it was built on
-// Core holds the buffers here, so they live as long as the node can run
-pub struct BuiltNode<B: Dispatch> {
-    node: B::Node,
-    buffers: Vec<B::Buffer>,
-}
-
-impl<B: Dispatch> BuiltNode<B> {
-    pub(crate) fn new(node: B::Node, buffers: Vec<B::Buffer>) -> Self {
-        Self { node, buffers }
-    }
-
-    pub fn node(&self) -> &B::Node {
-        &self.node
-    }
-
-    pub fn buffers(&self) -> &[B::Buffer] {
-        &self.buffers
     }
 }

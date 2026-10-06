@@ -2,7 +2,7 @@
 
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
-use crate::core::node::{Binding, BuiltNode};
+use crate::core::node::Binding;
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 
@@ -11,7 +11,7 @@ use crate::core::table::BufferTable;
 /// Cloning a `Buffer` must not copy the memory: every clone points to the same
 /// block, and the block lives until the last clone is dropped.
 ///
-/// Core keeps a clone of each buffer a built node uses (see `BuiltNode`)
+/// Core keeps a clone of each buffer a built node uses
 /// so a buffer can't be freed while that node can still run.
 pub trait Buffer: Clone + Send + Sync + 'static {
     /// The real size of the memory block. It can be larger than the tensor
@@ -103,7 +103,7 @@ pub trait Storage: Send + Sync + 'static {
 }
 
 /// The compute side of a device: builds nodes and runs them.
-pub trait Dispatch: Storage + Sized {
+pub trait Dispatch: Storage {
     type Node: Node;
 
     /// The shader code format this backend runs. A graph is only built if
@@ -128,7 +128,7 @@ pub trait Dispatch: Storage + Sized {
     fn update_meta(&self, node: &Self::Node, meta: &[u32]);
 
     /// Queues `nodes` to run in order. Doesn't wait for them to finish.
-    fn execute(&self, nodes: &[BuiltNode<Self>]);
+    fn execute(&self, nodes: &[Self::Node]);
 
     /// Blocks until all queued work on this device is done.
     fn synchronize(&self);
@@ -138,7 +138,7 @@ pub trait Dispatch: Storage + Sized {
     /// The default just calls `execute`.
     ///
     /// A recording keeps raw buffer addresses, so the nodes' buffers must stay
-    fn execute_captured(&self, _key: usize, nodes: &[BuiltNode<Self>]) {
+    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
         self.execute(nodes);
     }
 

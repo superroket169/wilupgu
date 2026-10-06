@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::backend::Backend;
-use crate::core::node::{BuiltNode, MetaValue, NodeSpec};
+use crate::core::node::{MetaValue, NodeSpec};
 use crate::core::rules::{
     check_hazards, check_meta, check_ownership, check_shader_code, validate_spec,
 };
@@ -21,7 +21,11 @@ pub enum DispatchPlan {
 
 pub struct Graph<'d, B: Backend> {
     ctx: &'d B,
-    nodes: Vec<BuiltNode<B>>,
+    nodes: Vec<B::Node>,
+    // Each node's buffers, held here so they live as long as the node can run,
+    // whatever the backend's node keeps. Only held, never read.
+    #[allow(dead_code)]
+    buffers: Vec<Vec<B::Buffer>>,
     // Nodes with per-run meta fields: index into `nodes`, and all of that node's meta.
     per_run_meta: Vec<(usize, Vec<MetaValue>)>,
     plan: Vec<DispatchPlan>,
@@ -37,7 +41,8 @@ impl<'d, B: Backend> Graph<'d, B> {
         check_ownership(ctx, specs)?;
         check_hazards(specs)?;
 
-        let mut nodes: Vec<BuiltNode<B>> = Vec::with_capacity(specs.len());
+        let mut nodes: Vec<B::Node> = Vec::with_capacity(specs.len());
+        let mut buffers: Vec<Vec<B::Buffer>> = Vec::with_capacity(specs.len());
         for s in specs {
             // Once values are read here; per-run ones get a placeholder until `run`.
             let words: Vec<u32> = s
@@ -57,8 +62,8 @@ impl<'d, B: Backend> Graph<'d, B> {
                 })
                 .collect();
             let node = ctx.build_node(s.shader(), &words, &bound, s.workgroups());
-            let buffers = bound.into_iter().map(|(_, buf)| buf).collect();
-            nodes.push(BuiltNode::new(node, buffers));
+            nodes.push(node);
+            buffers.push(bound.into_iter().map(|(_, buf)| buf).collect());
         }
         let per_run_meta = specs
             .iter()
@@ -73,6 +78,7 @@ impl<'d, B: Backend> Graph<'d, B> {
         Ok(Self {
             ctx,
             nodes,
+            buffers,
             per_run_meta,
             plan,
         })
@@ -101,7 +107,7 @@ impl<'d, B: Backend> Graph<'d, B> {
                     None => v.read_word_for_run(),
                 })
                 .collect();
-            self.ctx.update_meta(self.nodes[*node].node(), &words);
+            self.ctx.update_meta(&self.nodes[*node], &words);
         }
     }
 

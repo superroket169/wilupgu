@@ -15,6 +15,7 @@ pub mod node;
 pub mod placement;
 pub(crate) mod pool;
 pub(crate) mod rules;
+pub mod run;
 pub mod shader;
 pub mod spread;
 pub mod table;

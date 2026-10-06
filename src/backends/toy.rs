@@ -13,7 +13,7 @@ use crate::backend::{
 };
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData, F32};
-use crate::core::node::{Binding, BuiltNode};
+use crate::core::node::Binding;
 use crate::core::shader::{Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 
@@ -106,7 +106,7 @@ impl Dispatch for ToyBackend {
     fn update_meta(&self, _node: &Self::Node, meta: &[u32]) {
         self.meta_writes.lock().unwrap().push(meta.to_vec());
     }
-    fn execute(&self, _nodes: &[BuiltNode<Self>]) {}
+    fn execute(&self, _nodes: &[Self::Node]) {}
     fn synchronize(&self) {}
 }
 
