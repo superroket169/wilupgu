@@ -1,6 +1,6 @@
 use super::*;
 pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
-use crate::core::node::NodeSpec;
+use crate::core::node::{Binding, NodeSpec};
 use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
 use crate::core::tensor::TensorId;
 

@@ -2,8 +2,7 @@
 
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
-use crate::core::node::Binding;
-use crate::core::shader::{Shader, ShaderFormat, Workgroups};
+use crate::core::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 
 /// A backend's handle to one block of device memory.
@@ -119,7 +118,7 @@ pub trait Dispatch: Storage {
         &self,
         shader: &'static Shader,
         meta: &[u32],
-        bindings: &[(Binding, Self::Buffer)],
+        bindings: &[(u32, BindingRole, Self::Buffer)],
         workgroups: Workgroups,
     ) -> Self::Node;
     /// Writes new words into a node's meta buffer. Called before a run, for

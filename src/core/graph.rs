@@ -58,12 +58,12 @@ impl<'d, B: Backend> Graph<'d, B> {
                         .table()
                         .get(b.tensor)
                         .expect("checked by check_ownership");
-                    (b.clone(), buf)
+                    (b.slot, b.mode.clone(), buf)
                 })
                 .collect();
             let node = ctx.build_node(s.shader(), &words, &bound, s.workgroups());
             nodes.push(node);
-            buffers.push(bound.into_iter().map(|(_, buf)| buf).collect());
+            buffers.push(bound.into_iter().map(|(_, _, buf)| buf).collect());
         }
         let per_run_meta = specs
             .iter()

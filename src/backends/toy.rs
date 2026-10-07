@@ -13,8 +13,7 @@ use crate::backend::{
 };
 use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData, F32};
-use crate::core::node::Binding;
-use crate::core::shader::{Shader, ShaderFormat, Workgroups};
+use crate::core::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 
 #[derive(Clone)]
@@ -98,7 +97,7 @@ impl Dispatch for ToyBackend {
         &self,
         shader: &'static Shader,
         _meta: &[u32],
-        _bindings: &[(Binding, ToyBuffer)],
+        _bindings: &[(u32, BindingRole, ToyBuffer)],
         workgroups: Workgroups,
     ) -> Self::Node {
         ToyNode { shader, workgroups }
