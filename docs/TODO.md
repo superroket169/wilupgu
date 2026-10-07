@@ -3,15 +3,14 @@
 Open wilupgu work only. Finished items are deleted; history is in git log.
 Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list.
 
-## Now
-
-- **First backend: CUDA, no cuBLAS.** Every shader is CUDA C compiled with
-  NVRTC and launched the same way; no BLAS path, no host readback of meta, so
-  whole graphs stay capturable. The crate doesn't build until a backend
-  exists (`compile_error!` without a backend feature).
-- **Parity tests**: run every builtin on every backend that has its format
-  and compare against the native result (standard 7 in `docs/SHADERS.md`
-  can only be checked this way). Needs the first backend.
+- Graph going to be deleted, will replaced by run.rs parts (RunPart)
+- docs.rs creation
+- pool size rolling discuison
+- nn tools : tools/nn : maybe could come from sequexa-core
+- tool import check, tool importations should be dag
+- Device::contains and io_log is not using
+- Toy backend will be deleted, after cpu backend implemented
+- there is writing exploids at graph::run and device::upload_kind
 
 ## Design
 
