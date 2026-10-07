@@ -1,4 +1,6 @@
 use crate::backend::{Dispatch, Storage};
+#[cfg(test)]
+use crate::backends::toy::ToyBackend;
 #[cfg(feature = "cpu")]
 use crate::backends::CpuBackend;
 #[cfg(feature = "cuda")]
@@ -16,7 +18,7 @@ pub enum DeviceTag {}
 
 pub type DeviceId = GlobalId<DeviceTag>;
 
-#[cfg(not(any(feature = "cuda", feature = "cpu", feature = "rayon")))]
+#[cfg(not(any(feature = "cuda", feature = "cpu", feature = "rayon", test)))]
 compile_error!("wilupgu needs at least one backend feature: `cuda`, `cpu` or `rayon`");
 
 /// One live device, whatever its backend
@@ -29,6 +31,9 @@ pub enum Device {
     Cpu(CpuBackend),
     #[cfg(feature = "rayon")]
     Rayon(RayonBackend),
+    #[cfg(test)]
+    #[allow(private_interfaces)]
+    Toy(ToyBackend),
 }
 
 /// Runs `$body` with `$b` bound to the backend inside whichever variant this is.
@@ -41,6 +46,8 @@ macro_rules! on_backend {
             Device::Cpu($b) => $body,
             #[cfg(feature = "rayon")]
             Device::Rayon($b) => $body,
+            #[cfg(test)]
+            Device::Toy($b) => $body,
         }
     };
 }
@@ -93,6 +100,8 @@ impl Device {
             (Device::Cpu(a), Device::Cpu(_)) => a.supports_p2p(other.id()),
             #[cfg(feature = "rayon")]
             (Device::Rayon(a), Device::Rayon(_)) => a.supports_p2p(other.id()),
+            #[cfg(test)]
+            (Device::Toy(a), Device::Toy(_)) => a.supports_p2p(other.id()),
             #[allow(unreachable_patterns)]
             _ => false,
         }
