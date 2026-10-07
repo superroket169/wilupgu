@@ -1,6 +1,6 @@
 use super::*;
-use crate::core::deferred::Resolvable;
-use crate::core::dtype::{Int8, F16, F32};
+use crate::backend::dtype::{Int8, F16, F32};
+use crate::tools::core::deferred::Resolvable;
 
 #[test]
 fn specs_sharing_a_size_see_one_value() {

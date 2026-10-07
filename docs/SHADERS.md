@@ -1,9 +1,9 @@
 # Shaders
 
 Builtin shaders are general-purpose GPU math. Each one has a source file per
-format under `src/shader-codes/{wgsl,native,cuda}/`, named after the shader.
+format under `src/tools/builtins/codes/{wgsl,native,cuda}/`, named after the shader.
 
-The table in `src/core/builtins.rs` is the single source for every builtin:
+The table in `src/tools/builtins/mod.rs` is the single source for every builtin:
 its name, meta fields, tensor layout, workgroup size and which formats it has.
 File paths, file names and native function names are all derived from the
 shader's name, so a missing or misnamed file is a compile error.

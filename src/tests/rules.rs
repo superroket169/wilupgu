@@ -1,10 +1,10 @@
 use super::*;
+use crate::backend::dtype::DataKind;
+use crate::backend::shader::Workgroups;
 use crate::backend::tests::{device_with, ToyNode, COPY_SHADER, META_SHADER};
 use crate::backend::Storage;
-use crate::core::deferred::{Dynamic, Resolvable};
-use crate::core::dtype::DataKind;
-use crate::core::node::{Binding, MetaSource, MetaValue};
-use crate::core::shader::Workgroups;
+use crate::tools::core::deferred::{Dynamic, Resolvable};
+use crate::tools::core::node::{Binding, MetaSource, MetaValue};
 
 fn meta_spec(meta: Vec<MetaValue>) -> NodeSpec {
     NodeSpec::new(&META_SHADER, meta, vec![], Workgroups::linear(1))

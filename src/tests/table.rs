@@ -1,7 +1,7 @@
 use super::*;
+use crate::backend::dtype::HostData;
 use crate::backend::{Storage, SupportsDType};
 use crate::backends::toy::ToyBackend;
-use crate::core::dtype::HostData;
 use std::sync::Arc;
 
 #[test]

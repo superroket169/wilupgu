@@ -7,14 +7,14 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::backend::dtype::{DataKind, DataType, HostData, F32};
+use crate::backend::id::DeviceId;
+use crate::backend::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
+use crate::backend::table::BufferTable;
 use crate::backend::{
     Area, Areable, Buffer, DeviceInfo, Dispatch, Node, Storage, SupportsCarve, SupportsDType,
     Topology,
 };
-use crate::core::dtype::{DataKind, DataType, HostData, F32};
-use crate::core::id::DeviceId;
-use crate::core::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
-use crate::core::table::BufferTable;
 
 #[derive(Clone)]
 pub(crate) struct ToyBuffer(pub(crate) Arc<Mutex<Vec<u8>>>);

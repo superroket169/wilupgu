@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::shader::{BindingRole, ShaderFormat};
+use crate::backend::shader::{BindingRole, ShaderFormat};
 
 #[test]
 fn all_lists_every_builtin_once() {
@@ -28,17 +28,17 @@ fn every_builtin_has_some_code() {
 #[test]
 fn code_paths_follow_the_shader_name() {
     let wgsl = ADD.shader_code.wgsl.unwrap();
-    assert_eq!(wgsl.path(), "src/shader-codes/wgsl/add.wgsl");
+    assert_eq!(wgsl.path(), "src/tools/builtins/codes/wgsl/add.wgsl");
     assert!(wgsl.source().contains("@compute"));
     let cuda = ADD.shader_code.cuda.unwrap();
-    assert_eq!(cuda.path(), "src/shader-codes/cuda/add.cu");
+    assert_eq!(cuda.path(), "src/tools/builtins/codes/cuda/add.cu");
 }
 
 // --- shader standards (docs/SHADERS.md) ---
 
 fn native_source(s: &Shader) -> String {
     let path = format!(
-        "{}/src/shader-codes/native/{}.rs",
+        "{}/src/tools/builtins/codes/native/{}.rs",
         env!("CARGO_MANIFEST_DIR"),
         s.name
     );

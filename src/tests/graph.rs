@@ -1,9 +1,9 @@
 use super::*;
+use crate::backend::shader::Workgroups;
 use crate::backend::tests::{copy_node, device_with, META_SHADER, TOY_SHADER};
 use crate::backend::Storage;
-use crate::core::deferred::{Dynamic, Resolvable};
-use crate::core::node::{MetaSource, MetaValue};
-use crate::core::shader::Workgroups;
+use crate::tools::core::deferred::{Dynamic, Resolvable};
+use crate::tools::core::node::{MetaSource, MetaValue};
 
 #[test]
 fn graph_build_and_run() {
@@ -147,7 +147,7 @@ fn building_with_an_unresolved_once_value_panics() {
 fn a_built_graph_keeps_its_buffers_in_use() {
     let (ctx, ids) = device_with(2);
     let graph = Graph::build(&ctx, &[copy_node(ids[0], ids[1])]).unwrap();
-    let unused = |id| crate::core::rules::check_unused(ctx.table(), id, ctx.device_id());
+    let unused = |id| crate::tools::core::rules::check_unused(ctx.table(), id, ctx.device_id());
     assert!(unused(ids[0]).is_err());
     drop(graph);
     assert!(unused(ids[0]).is_ok());
