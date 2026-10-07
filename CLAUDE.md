@@ -6,13 +6,17 @@ sequexa-core, which uses wilupgu.
 
 ## Layout
 
-- `src/backend.rs` is the contract: only what `src/backends/*` implements.
+- `src/backend/` is the contract: everything a backend implements or uses.
+  `mod.rs` holds the traits; next to it: dtype, id, shader, table, pool, io_log.
 - `src/backends/` holds backend implementations (cuda, cpu, ...).
-- `src/core/` is the crate's own domain: device, dtype, graph, node, tensor,
-  spread, placement, resolver, rules, shader, mesh, id, io_log.
+  `toy.rs` is a test-only backend (`cfg(test)`).
+- `src/tools/` holds optional packages built on the contract. A user can pick
+  a backend and use none of them.
+  - `core/`: device, tensor, node, graph, rules, deferred, run.
+  - `spread/`: spread, placement, mesh. Uses `core`.
+  - `builtins/`: the builtin shader table; `codes/{wgsl,native,cuda}/` has
+    one file per shader per format. Directory names mirror `ShaderCode` variants.
   One file = one subject.
-- `src/shader-codes/{wgsl,native,cuda}/`: one file per shader per format.
-  Directory names mirror `ShaderCode` variants.
 - `src/tests/`: one file per topic. There is only one tests directory.
 
 ## Builtin shaders

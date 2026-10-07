@@ -1,4 +1,5 @@
-//! Everything a `backends/*` implementation must provide. Nothing else lives here.
+//! Everything a `backends/*` implementation must provide
+//! and neceserry tools (pool & table & ...)
 
 pub mod dtype;
 pub mod id;
