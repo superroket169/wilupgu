@@ -3,8 +3,8 @@
 
 use crate::core::deferred::{Dynamic, Resolvable};
 use crate::core::id::GlobalId;
+use crate::core::id::TensorId;
 use crate::core::shader::{BindingRole, MetaType, Shader, Workgroups};
-use crate::core::tensor::TensorId;
 
 pub type NodeId = GlobalId<NodeSpec>;
 

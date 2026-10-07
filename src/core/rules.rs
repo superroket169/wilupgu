@@ -2,11 +2,11 @@
 //! check. Nothing here runs anything -- `graph.rs` calls these, then runs.
 
 use crate::backend::{Backend, Buffer, Node};
-use crate::core::device::DeviceId;
+use crate::core::id::DeviceId;
+use crate::core::id::TensorId;
 use crate::core::node::NodeSpec;
 use crate::core::shader::BindingRole;
 use crate::core::table::BufferTable;
-use crate::core::tensor::TensorId;
 
 pub(crate) fn validate_spec<N: Node>(spec: &NodeSpec) -> Result<(), String> {
     N::validate_workgroups(spec.workgroups())

@@ -4,9 +4,7 @@
 use crate::core::deferred::Resolvable;
 use crate::core::device::Device;
 use crate::core::dtype::{DataKind, DataType, HostData};
-use crate::core::id::GlobalId;
-
-pub type TensorId = GlobalId<TensorSpec>;
+use crate::core::id::{GlobalId, TensorId};
 
 pub enum InitRecipe {
     UploadFromHost(HostData),

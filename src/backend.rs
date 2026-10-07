@@ -1,7 +1,7 @@
 //! Everything a `backends/*` implementation must provide. Nothing else lives here.
 
-use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData};
+use crate::core::id::DeviceId;
 use crate::core::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 

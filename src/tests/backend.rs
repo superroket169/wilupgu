@@ -1,8 +1,8 @@
 use super::*;
 pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
+use crate::core::id::TensorId;
 use crate::core::node::{Binding, NodeSpec};
 use crate::core::shader::{BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode};
-use crate::core::tensor::TensorId;
 
 pub(crate) static TOY_SHADER: Shader = Shader {
     name: "Toy",

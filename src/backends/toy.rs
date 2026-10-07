@@ -11,8 +11,8 @@ use crate::backend::{
     Area, Areable, Buffer, DeviceInfo, Dispatch, Node, Storage, SupportsCarve, SupportsDType,
     Topology,
 };
-use crate::core::device::DeviceId;
 use crate::core::dtype::{DataKind, DataType, HostData, F32};
+use crate::core::id::DeviceId;
 use crate::core::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
 use crate::core::table::BufferTable;
 

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque identity, tagged with what it identifies at the type level only (`PhantomData`, zero bytes)
-/// `GlobalId<NodeSpec>` where a `GlobalId<TensorSpec>` is expected doesn't compile.
+/// A `DeviceId` where a `TensorId` is expected doesn't compile.
 /// One counter behind every tag, so ids are unique across all of them too.
 ///
 /// `fn() -> T` keeps the id `Send + Sync + Copy` no matter what `T` is; the
@@ -12,6 +12,19 @@ pub struct GlobalId<T> {
     raw: u64,
     _of: PhantomData<fn() -> T>,
 }
+
+/// Tag for `DeviceId`. Stand-in until each backend has its own concrete device-id source.
+pub enum DeviceTag {}
+
+/// Names one device. Plans (placement, spread) hold this instead of a `&Device`.
+pub type DeviceId = GlobalId<DeviceTag>;
+
+/// Tag for `TensorId`.
+pub enum TensorTag {}
+
+/// Names one tensor. It is the key of a device's `BufferTable`, and a node's
+/// bindings point to tensors with it.
+pub type TensorId = GlobalId<TensorTag>;
 
 impl<T> GlobalId<T> {
     /// Crate-only, so users can't mint ids

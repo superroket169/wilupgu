@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use crate::backend::{Buffer, Storage};
 use crate::core::dtype::{DataKind, HostData};
+use crate::core::id::TensorId;
 use crate::core::pool::BufferPool;
-use crate::core::tensor::TensorId;
 
 struct Entry<Buf> {
     buf: Buf,

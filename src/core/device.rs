@@ -9,14 +9,8 @@ use crate::backends::CudaBackend;
 use crate::backends::RayonBackend;
 use crate::core::dtype::{DataKind, HostData};
 use crate::core::graph::Graph;
-use crate::core::id::GlobalId;
+use crate::core::id::{DeviceId, TensorId};
 use crate::core::node::NodeSpec;
-use crate::core::tensor::TensorId;
-
-/// Stand-in tag until each backend has its own concrete device-id source.
-pub enum DeviceTag {}
-
-pub type DeviceId = GlobalId<DeviceTag>;
 
 #[cfg(not(any(feature = "cuda", feature = "cpu", feature = "rayon", test)))]
 compile_error!("wilupgu needs at least one backend feature: `cuda`, `cpu` or `rayon`");
