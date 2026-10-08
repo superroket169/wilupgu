@@ -1,5 +1,4 @@
 use crate::backend::dtype::{DataKind, HostData};
-use crate::tools::core::id::{DeviceId, TensorId};
 use crate::backend::{Dispatch, Storage};
 #[cfg(test)]
 use crate::backends::toy::ToyBackend;
@@ -10,6 +9,7 @@ use crate::backends::CudaBackend;
 #[cfg(feature = "rayon")]
 use crate::backends::RayonBackend;
 use crate::tools::core::graph::Graph;
+use crate::tools::core::id::{DeviceId, TensorId};
 use crate::tools::core::node::NodeSpec;
 
 #[cfg(not(any(feature = "cuda", feature = "cpu", feature = "rayon", test)))]

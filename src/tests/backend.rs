@@ -1,22 +1,39 @@
 use super::*;
-use crate::tools::core::id::TensorId;
 use crate::backend::shader::{
-    BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode,
+    BindingRole, MetaField, MetaType, NativeBinding, NativeCode, ShaderCode,
 };
-pub(crate) use crate::backends::toy::{ToyBackend, ToyNode};
-use crate::tools::core::node::{Binding, NodeSpec};
+use crate::backends::{CpuBackend, CpuBuffer};
 
-pub(crate) static TOY_SHADER: Shader = Shader {
-    name: "Toy",
-    meta: &[],
-    layout: &[],
-    workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode::NONE,
-};
+fn cpu() -> CpuBackend {
+    CpuBackend::attach(CpuBackend::choosable_devices().remove(0)).unwrap()
+}
 
-fn noop(_: &[CpuBinding]) {}
+fn buffer_with(ctx: &CpuBackend, data: &[f32]) -> CpuBuffer {
+    let bytes: &[u8] = bytemuck::cast_slice(data);
+    let mut buf = ctx.alloc_raw(bytes.len() as u64).unwrap();
+    // SAFETY: the buffer was made for exactly these bytes.
+    unsafe { ctx.upload_raw(&mut buf, bytes) };
+    buf
+}
 
-pub(crate) static COPY_SHADER: Shader = Shader {
+fn read_back(ctx: &CpuBackend, buf: &CpuBuffer, len: usize) -> Vec<f32> {
+    // SAFETY: every caller asks for no more than the buffer holds.
+    let bytes = unsafe { ctx.download_raw(buf, len as u64 * 4) };
+    bytemuck::pod_collect_to_vec(&bytes)
+}
+
+// dst = src, element by element
+fn copy(_meta: &[u32], bindings: &mut [NativeBinding]) {
+    let src = match &bindings[0] {
+        NativeBinding::Read(b) => b.to_vec(),
+        NativeBinding::Write(_) => unreachable!(),
+    };
+    if let NativeBinding::Write(dst) = &mut bindings[1] {
+        dst.copy_from_slice(&src);
+    }
+}
+
+static COPY_SHADER: Shader = Shader {
     name: "Copy",
     meta: &[],
     layout: &[
@@ -25,133 +42,115 @@ pub(crate) static COPY_SHADER: Shader = Shader {
     ],
     workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
-        native: Some(NativeCode::new(noop)),
+        native: Some(NativeCode::new(copy)),
         ..ShaderCode::NONE
     },
 };
 
-pub(crate) static META_SHADER: Shader = Shader {
+// x[0] = n as f32
+fn meta_echo(meta: &[u32], bindings: &mut [NativeBinding]) {
+    if let NativeBinding::Write(x) = &mut bindings[0] {
+        x[..4].copy_from_slice(&(meta[0] as f32).to_ne_bytes());
+    }
+}
+
+static META_SHADER: Shader = Shader {
     name: "MetaEcho",
-    meta: &[
-        MetaField {
-            name: "n",
-            ty: MetaType::Uint,
-        },
-        MetaField {
-            name: "lr",
-            ty: MetaType::Float,
-        },
-    ],
-    layout: &[],
+    meta: &[MetaField {
+        name: "n",
+        ty: MetaType::Uint,
+    }],
+    layout: &[BindingRole::Output(DataKind::F32)],
     workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
-        native: Some(NativeCode::new(noop)),
+        native: Some(NativeCode::new(meta_echo)),
         ..ShaderCode::NONE
     },
 };
 
 #[test]
 fn topology_enumerate_then_attach() {
-    let devices = ToyBackend::choosable_devices();
-    assert_eq!(devices.len(), 2);
-    let backend = ToyBackend::attach(devices[0].clone()).unwrap();
-    assert_eq!(backend.name(), "toy");
+    let devices = CpuBackend::choosable_devices();
+    assert_eq!(devices.len(), 1);
+    let ctx = CpuBackend::attach(devices[0].clone()).unwrap();
+    assert_eq!(CpuBackend::NAME, "cpu");
+    assert_eq!(ctx.info().label(), "cpu");
 }
 
 #[test]
-fn carve_from_area() {
-    let ctx = ToyBackend::new();
-    let mut area = ctx.reserve(1024);
-    let buf = ctx.carve(&mut area, 4);
-    assert_eq!(ctx.download(&buf, 4).len(), 4);
-    ctx.release(area);
+fn alloc_rounds_up_to_whole_words() {
+    let buf = cpu().alloc_raw(5).unwrap();
+    assert_eq!(buf.size_bytes(), 8);
 }
 
-pub(crate) fn copy_node(from: TensorId, to: TensorId) -> NodeSpec {
-    NodeSpec::new(
-        &COPY_SHADER,
-        vec![],
-        vec![
-            Binding::new(1, from, BindingRole::Input(DataKind::F32)),
-            Binding::new(2, to, BindingRole::Output(DataKind::F32)),
-        ],
-        Workgroups::linear(1),
-    )
+#[test]
+fn upload_then_download_round_trips() {
+    let ctx = cpu();
+    let buf = buffer_with(&ctx, &[1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(read_back(&ctx, &buf, 4), vec![1.0, 2.0, 3.0, 4.0]);
 }
 
-// A toy device with `n` fresh one-element F32 tensors in its table.
-pub(crate) fn device_with(n: usize) -> (ToyBackend, Vec<TensorId>) {
-    let toy = ToyBackend::new();
-    let ids: Vec<TensorId> = (0..n).map(|_| TensorId::new()).collect();
-    for &id in &ids {
-        toy.table().alloc(&toy, id, DataKind::F32, 1).unwrap();
+#[test]
+fn download_returns_only_the_asked_bytes() {
+    let ctx = cpu();
+    let buf = buffer_with(&ctx, &[1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(read_back(&ctx, &buf, 2), vec![1.0, 2.0]);
+}
+
+#[test]
+fn address_survives_a_move() {
+    let buf = cpu().alloc_raw(16).unwrap();
+    let before = buf.address();
+    let moved = buf;
+    assert_eq!(moved.address(), before);
+}
+
+#[test]
+fn execute_runs_the_node_on_its_bindings() {
+    let ctx = cpu();
+    let src = buffer_with(&ctx, &[1.0, 2.0, 3.0]);
+    let mut dst = buffer_with(&ctx, &[0.0; 3]);
+    let node = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    // SAFETY: slot order and roles follow COPY_SHADER's layout, both buffers
+    // hold 3 F32s, and nothing touches them before `synchronize`.
+    unsafe {
+        ctx.execute_raw(&node, &mut [Access::Read(&src), Access::Write(&mut dst)])
+            .unwrap();
     }
-    (toy, ids)
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, &dst, 3), vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn execute_rejects_another_devices_buffer() {
+    let (ours, theirs) = (cpu(), cpu());
+    let src = buffer_with(&theirs, &[1.0]);
+    let mut dst = buffer_with(&ours, &[0.0]);
+    let node = ours.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    // SAFETY: as above; the call must fail before running anything.
+    let err =
+        unsafe { ours.execute_raw(&node, &mut [Access::Read(&src), Access::Write(&mut dst)]) }
+            .unwrap_err();
+    assert!(err.contains("another device"), "{err}");
+}
+
+#[test]
+fn update_meta_reaches_the_next_run() {
+    let ctx = cpu();
+    let mut x = buffer_with(&ctx, &[0.0]);
+    let mut node = ctx.build_node(&META_SHADER, &[1], Workgroups::linear(1));
+    ctx.update_meta(&mut node, &[7]);
+    // SAFETY: one Output slot, one F32, untouched until `synchronize`.
+    unsafe {
+        ctx.execute_raw(&node, &mut [Access::Write(&mut x)])
+            .unwrap()
+    };
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, &x, 1), vec![7.0]);
 }
 
 #[test]
 fn supports_p2p_defaults_to_false() {
-    let ctx = ToyBackend::new();
-    assert!(!ctx.supports_p2p(DeviceId::new()));
-}
-
-#[test]
-fn copy_to_round_trips_through_host() {
-    let src = ToyBackend::new();
-    let dest = ToyBackend::new();
-    let buf = src.alloc(4);
-    src.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
-
-    let copy = src.copy_to(&buf, 4, &dest);
-
-    assert_eq!(dest.download(&copy, 4), vec![1.0, 2.0, 3.0, 4.0]);
-    assert_eq!(
-        src.download(&buf, 4),
-        vec![1.0, 2.0, 3.0, 4.0],
-        "the source stays"
-    );
-}
-
-#[test]
-fn alloc_kind_uses_the_matching_impl() {
-    let ctx = ToyBackend::new();
-    let buf = ctx.alloc_kind(DataKind::F32, 4).unwrap();
-    assert_eq!(buf.size_bytes(), 16);
-}
-
-#[test]
-fn alloc_kind_rejects_an_unsupported_kind() {
-    let err = ToyBackend::new()
-        .alloc_kind(DataKind::Int4, 4)
-        .err()
-        .unwrap();
-    assert!(err.contains("Int4"), "{err}");
-}
-
-#[test]
-fn host_data_round_trips_through_the_kind_api() {
-    let ctx = ToyBackend::new();
-    let buf = ctx.alloc_kind(DataKind::F32, 3).unwrap();
-    ctx.upload_kind(&buf, &HostData::F32(vec![1.0, 2.0, 3.0]))
-        .unwrap();
-    let back = ctx.download_kind(&buf, DataKind::F32, 3).unwrap();
-    assert!(matches!(back, HostData::F32(v) if v == vec![1.0, 2.0, 3.0]));
-}
-
-#[test]
-fn download_returns_only_the_asked_elements() {
-    let ctx = ToyBackend::new();
-    let buf = ctx.alloc(4);
-    ctx.upload(&buf, &[1.0, 2.0, 3.0, 4.0]);
-    assert_eq!(ctx.download(&buf, 2), vec![1.0, 2.0]);
-}
-
-#[test]
-fn upload_kind_rejects_an_unsupported_kind() {
-    let ctx = ToyBackend::new();
-    let buf = ctx.alloc_kind(DataKind::F32, 1).unwrap();
-    let err = ctx
-        .upload_kind(&buf, &HostData::F16(vec![half::f16::ZERO]))
-        .unwrap_err();
-    assert!(err.contains("F16"), "{err}");
+    let (a, b) = (cpu(), cpu());
+    assert!(!a.supports_p2p(&b));
 }

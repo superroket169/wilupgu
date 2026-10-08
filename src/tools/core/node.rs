@@ -1,10 +1,10 @@
 //! One dispatch's blueprint: what shader, wired to which tensors, at what
 //! size. Nothing here touches a backend.
 
-use crate::tools::core::id::GlobalId;
-use crate::tools::core::id::TensorId;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::tools::core::deferred::{Dynamic, Resolvable};
+use crate::tools::core::id::GlobalId;
+use crate::tools::core::id::TensorId;
 
 pub type NodeId = GlobalId<NodeSpec>;
 

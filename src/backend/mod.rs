@@ -2,8 +2,8 @@
 //! and the backend tools (pool, io_log, ...)
 
 pub mod dtype;
-pub(crate) mod io_log;
-pub(crate) mod pool;
+pub mod io_log;
+pub mod pool;
 pub mod shader;
 
 use std::marker::PhantomData;

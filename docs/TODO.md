@@ -9,7 +9,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 - nn tools : tools/nn : maybe could come from sequexa-core
 - tool import check, tool importations should be dag
 - Device::contains and io_log is not using
-- Toy backend will be deleted, after cpu backend implemented
 - there is writing exploids at graph::run and device::upload_kind
 
 ## Design

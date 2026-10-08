@@ -1,9 +1,7 @@
 //! Concrete backend implementations live here, one file each, once written.
 
-#[cfg(feature = "cpu")]
+// Always built for tests: the contract's tests run on it.
+#[cfg(any(feature = "cpu", test))]
 mod cpu;
-#[cfg(feature = "cpu")]
+#[cfg(any(feature = "cpu", test))]
 pub use cpu::{CpuBackend, CpuBuffer, CpuInfo, CpuNode};
-
-#[cfg(test)]
-pub(crate) mod toy;

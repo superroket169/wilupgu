@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::backend::dtype::{DataKind, HostData};
-use crate::tools::core::id::TensorId;
 use crate::backend::pool::BufferPool;
 use crate::backend::{Buffer, Storage};
+use crate::tools::core::id::TensorId;
 
 struct Entry<Buf> {
     buf: Buf,

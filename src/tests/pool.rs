@@ -1,23 +1,23 @@
 use super::*;
-use crate::backends::toy::ToyBuffer;
-use std::sync::Arc;
+use crate::backend::{Storage, Topology};
+use crate::backends::{CpuBackend, CpuBuffer};
 
-fn buf(bytes: usize) -> ToyBuffer {
-    ToyBuffer(Arc::new(Mutex::new(vec![0u8; bytes])))
-}
-
-fn same(a: &ToyBuffer, b: &ToyBuffer) -> bool {
-    Arc::ptr_eq(&a.0, &b.0)
+fn buf(bytes: u64) -> CpuBuffer {
+    CpuBackend::attach(crate::backends::CpuInfo)
+        .unwrap()
+        .alloc_raw(bytes)
+        .unwrap()
 }
 
 #[test]
 fn take_returns_only_the_same_kind_and_length() {
     let pool = BufferPool::new(1024);
     let a = buf(64);
-    assert!(pool.recycle(DataKind::F32, 16, a.clone()).is_none());
+    let a_addr = a.address();
+    assert!(pool.recycle(DataKind::F32, 16, a).is_none());
     assert!(pool.take(DataKind::F16, 16).is_none());
     assert!(pool.take(DataKind::F32, 32).is_none());
-    assert!(same(&pool.take(DataKind::F32, 16).unwrap(), &a));
+    assert_eq!(pool.take(DataKind::F32, 16).unwrap().address(), a_addr);
     assert!(pool.take(DataKind::F32, 16).is_none());
 }
 
@@ -26,10 +26,11 @@ fn recycle_refuses_past_the_byte_limit() {
     let pool = BufferPool::new(100);
     assert!(pool.recycle(DataKind::F32, 15, buf(60)).is_none());
     let b = buf(60);
-    assert!(same(
-        &pool.recycle(DataKind::F32, 15, b.clone()).unwrap(),
-        &b
-    ));
+    let b_addr = b.address();
+    assert_eq!(
+        pool.recycle(DataKind::F32, 15, b).unwrap().address(),
+        b_addr
+    );
     assert!(pool.recycle(DataKind::F32, 10, buf(40)).is_none());
     assert_eq!(pool.free_bytes(), 100);
 }

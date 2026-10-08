@@ -233,3 +233,32 @@ fn wgsl_follows_the_standards() {
         }
     }
 }
+
+// --- native code on the CPU backend ---
+
+#[test]
+fn add_runs_on_the_cpu_backend() {
+    use crate::backend::shader::Workgroups;
+    use crate::backend::{Access, Dispatch, Storage, Topology};
+    use crate::backends::CpuBackend;
+
+    let ctx = CpuBackend::attach(CpuBackend::choosable_devices().remove(0)).unwrap();
+    let mut x = ctx.alloc_raw(12).unwrap();
+    let mut y = ctx.alloc_raw(12).unwrap();
+    // SAFETY: both buffers were made for exactly 12 bytes.
+    unsafe {
+        ctx.upload_raw(&mut x, bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]));
+        ctx.upload_raw(&mut y, bytemuck::cast_slice(&[10.0f32, 20.0, 30.0]));
+    }
+    let node = ctx.build_node(&ADD, &[3], Workgroups::linear(1));
+    // SAFETY: ADD's layout is (x accumulate, y in), both hold 3 F32s, n = 3,
+    // and nothing touches them before `synchronize`.
+    unsafe {
+        ctx.execute_raw(&node, &mut [Access::Write(&mut x), Access::Read(&y)])
+            .unwrap();
+    }
+    ctx.synchronize();
+    // SAFETY: 12 bytes fit in x.
+    let out: Vec<f32> = bytemuck::pod_collect_to_vec(&unsafe { ctx.download_raw(&x, 12) });
+    assert_eq!(out, vec![11.0, 22.0, 33.0]);
+}
