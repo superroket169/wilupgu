@@ -2,7 +2,7 @@
 name = "wilupgu"
 version = "0.4.3"
 edition = "2021"
-description = "Backend-independent tensor/dispatch library for Rust: GPU math on low-end hardware (wgpu / CUDA / CPU) with no autograd and no shape system."
+description = "Backend-independent GPU compute for Rust, built on an ownership-based backend contract. Aimed at low-end hardware; no autograd, no shape system."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/superroket169/wilupgu"
 readme = "docs/README.md"
@@ -17,17 +17,13 @@ pollster = { version = "0.3", optional = true }
 futures-intrusive = { version = "0.5", optional = true }
 # parses WGSL in the shader standards tests
 naga = { version = "30", optional = true, features = ["wgsl-in"] }
-# cuda build system version ('cuda-13030') feature should compatible with the devices driver version
-# do NOT use 'cuda-version-from-build-system' flag for this. That version can't found new cuda versions
-# use spesific cuda build system version
-cudarc = { version = "0.19", optional = true, features = ["cublas", "nvrtc", "cuda-13030", "f16"] }
 half = { version = "2", features = ["bytemuck"] }
-rayon = { version = "1", optional = true }
 
 [features]
 default = ["tool-builtins"]
 tool-builtins = []
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:naga"]
-cuda = ["cudarc"]
 cpu = []
-rayon = ["dep:rayon"]
+
+[package.metadata.docs.rs]
+features = ["cpu"]

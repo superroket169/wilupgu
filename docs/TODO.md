@@ -53,6 +53,9 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   `Resolvable` handed to SysTopology is resolved to the largest value these
   devices can hold. Which backends are usable at runtime is decided here,
   not by `cfg`s on shader code.
+- **CUDA backend** (cudarc). Use a fixed CUDA build-system version feature
+  (like `cuda-13030`) that matches the driver; `cuda-version-from-build-system`
+  can't find new CUDA versions.
 - **cuda-blas backend**, separate from the plain CUDA backend: cuBLAS for the
   matmul family, for training-sized GEMMs.
 - **wgpu backend**, rewritten on the new contract, with f16 and other dtypes.
