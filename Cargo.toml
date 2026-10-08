@@ -1,12 +1,12 @@
 [package]
 name = "wilupgu"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 description = "Backend-independent GPU compute for Rust, built on an ownership-based backend contract. Aimed at low-end hardware; no autograd, no shape system."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/superroket169/wilupgu"
 readme = "docs/README.md"
-keywords = ["gpu", "wgpu", "cuda", "tensor", "compute"]
+keywords = ["gpu", "shader", "backend", "tensor", "compute"]
 categories = ["science", "hardware-support"]
 include = ["src/**", "Cargo.toml", "licenses/*", "docs/README.md"]
 
