@@ -122,8 +122,6 @@ pub trait Dispatch: Storage {
     /// Blocks until all queued work on this device is done.
     fn synchronize(&self);
 
-    // TODO: capture methods, waiting on the capture shape decision.
-
     /// True if this device can copy straight to `other`, without going
     /// through the host. Both must be devices of the same backend.
     fn supports_p2p(&self, other: &Self) -> bool {
@@ -136,6 +134,19 @@ pub trait Dispatch: Storage {
 /// asks for this.
 pub trait Backend: Dispatch {}
 impl<T: Dispatch> Backend for T {}
+
+/// A backend that can capture a execute
+pub trait Capturable: Dispatch {
+    type Capture: Send + Sync + 'static;
+
+    fn begin_capture(&self);
+
+    fn end_capture(&self) -> Result<Self::Capture, String>;
+
+    unsafe fn replay(&self, capture: &Self::Capture) -> Result<(), String>;
+
+    fn release_capture(&self, capture: Self::Capture);
+}
 
 /// One large block of device memory, reserved up front. Tensors are then
 /// cut out of it instead of being allocated one by one.
