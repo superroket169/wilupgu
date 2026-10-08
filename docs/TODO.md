@@ -45,6 +45,11 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   - `pool.rs` and `io_log.rs` stay as backend tools.
   - Still to review: `SupportsDType` / `copy_to`, `Topology` /
     `DeviceInfo`, `dtype.rs`, `shader.rs`.
+- **`Device<X>`** (idea). The tools' `Device` enum keeps one variant per
+  in-tree backend, each behind its feature, plus `Extra(X)` for a user's
+  own backend (`X: Backend`, default an empty enum). A user with several
+  backends of their own writes their own enum, implements `Backend` on it
+  and passes it as `X`. No `dyn`, no fork of wilupgu.
 - **SysTopology** (no draft yet). Built when wilupgu starts up: discovers
   the machine's devices, enables the backends that can run on them,
   computes device capacities and exposes the result as data. That data is
