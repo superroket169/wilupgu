@@ -8,7 +8,8 @@ use crate::backend::{Access, Buffer, DeviceInfo, Dispatch, Node, Storage, Topolo
 // buffer from another device is rejected in `execute_raw`.
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(0);
 
-// `u32` words keep the bytes 4-aligned for the native shaders.
+/// A [`CpuBackend`] buffer: host memory, kept as `u32` words so the bytes
+/// the native shaders see are 4-aligned.
 pub struct CpuBuffer {
     words: Vec<u32>,
     owner: u64,
@@ -34,6 +35,7 @@ impl Buffer for CpuBuffer {
     }
 }
 
+/// A [`CpuBackend`] node: the shader's native code and its meta.
 pub struct CpuNode {
     shader: &'static Shader,
     code: NativeCode,
@@ -51,6 +53,7 @@ impl Node for CpuNode {
     }
 }
 
+/// The one device [`CpuBackend`] offers: the host.
 #[derive(Clone, Debug)]
 pub struct CpuInfo;
 
@@ -69,6 +72,8 @@ impl DeviceInfo for CpuInfo {
     }
 }
 
+/// Runs [`NativeCode`] on the host, single-threaded. `execute_raw` finishes
+/// the work before it returns, so `synchronize` has nothing to wait for.
 pub struct CpuBackend {
     info: CpuInfo,
     owner: u64,

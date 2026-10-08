@@ -7,6 +7,8 @@ use crate::backend::Buffer;
 /// A free buffer is only handed back for the exact kind and length it was made for.
 type Key = (DataKind, usize);
 
+/// Freed buffers kept for reuse, up to a byte limit in total
+/// A buffer is only handed back for the exact kind and length it was made for.
 pub struct BufferPool<Buf: Buffer> {
     max_free_bytes: u64,
     free: Mutex<Free<Buf>>,
@@ -18,6 +20,7 @@ struct Free<Buf> {
 }
 
 impl<Buf: Buffer> BufferPool<Buf> {
+    /// An empty pool that keeps at most `max_free_bytes` of free buffers.
     pub fn new(max_free_bytes: u64) -> Self {
         Self {
             max_free_bytes,
@@ -58,6 +61,7 @@ impl<Buf: Buffer> BufferPool<Buf> {
         free.blocks.drain().flat_map(|(_, bufs)| bufs).collect()
     }
 
+    /// Bytes the free buffers hold now.
     pub fn free_bytes(&self) -> u64 {
         self.free.lock().unwrap().bytes
     }

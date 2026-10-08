@@ -1,3 +1,8 @@
+//! General-purpose GPU math shaders, ready to run.
+//! Each one has WGSL, native and CUDA code.
+//! The catalog, with every shader's formula, meta and tensor layout, is
+//! [`docs/SHADERS.md`](https://github.com/superroket169/wilupgu/blob/main/docs/SHADERS.md).
+
 use crate::backend::dtype::DataKind::F32;
 use crate::backend::shader::BindingRole::{Accumulate, InOut, Input, Output};
 use crate::backend::shader::{
@@ -51,6 +56,7 @@ macro_rules! code {
 macro_rules! builtins {
     ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt { $($format:ident)* } )*) => {
         $(
+            #[doc = concat!("The `", stringify!($name), "` builtin; see the catalog in the module docs.")]
             pub static $static: Shader = Shader {
                 name: stringify!($name),
                 meta: &[$($field),*],
@@ -63,6 +69,7 @@ macro_rules! builtins {
             };
         )*
 
+        /// Every builtin, in catalog order.
         pub static ALL: &[&Shader] = &[$(&$static),*];
     };
 }
