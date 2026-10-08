@@ -25,7 +25,8 @@ half = { version = "2", features = ["bytemuck"] }
 rayon = { version = "1", optional = true }
 
 [features]
-default = []
+default = ["tool-builtins"]
+tool-builtins = []
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:naga"]
 cuda = ["cudarc"]
 cpu = []

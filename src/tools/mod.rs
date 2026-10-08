@@ -1,3 +1,4 @@
+#[cfg(feature = "tool-builtins")]
 pub mod builtins;
 // TODO: core and spread are out of the build until they move to the ownership contract.
 #[cfg(any())]
