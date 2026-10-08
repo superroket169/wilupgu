@@ -4,12 +4,9 @@ Open wilupgu work only. Finished items are deleted; history is in git log.
 Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list.
 
 - Graph going to be deleted, will replaced by run.rs parts (RunPart)
-- docs.rs creation
 - pool size rolling discuison
 - nn tools : tools/nn : maybe could come from sequexa-core
 - tool import check, tool importations should be dag
-- Device::contains and io_log is not using
-- there is writing exploids at graph::run and device::upload_kind
 
 ## Design
 
