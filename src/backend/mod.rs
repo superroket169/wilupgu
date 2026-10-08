@@ -8,33 +8,30 @@ pub(crate) mod pool;
 pub mod shader;
 pub mod table;
 
-use crate::backend::dtype::{DataKind, DataType, HostData};
-use crate::backend::id::DeviceId;
-use crate::backend::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
-use crate::backend::table::BufferTable;
+use std::marker::PhantomData;
+
+use crate::backend::dtype::DataKind;
+use crate::backend::shader::{Shader, ShaderFormat, Workgroups};
 
 /// A backend's handle to one block of device memory.
-///
-/// Cloning a `Buffer` must not copy the memory: every clone points to the same
-/// block, and the block lives until the last clone is dropped.
-///
-/// Core keeps a clone of each buffer a built node uses
-/// so a buffer can't be freed while that node can still run.
-pub trait Buffer: Clone + Send + Sync + 'static {
+pub trait Buffer: Send + Sync + 'static {
     /// The real size of the memory block. It can be larger than the tensor
     /// stored in it; shaders take their bounds from the meta, not from this.
     fn size_bytes(&self) -> u64;
 
-    /// How many clones of this buffer exist, this one included.
-    /// 1 means nobody else holds it, so it can go back to the pool.
-    fn holders(&self) -> usize;
+    fn address(&self) -> u64;
 }
 
-/// One built dispatch, ready to run: a shader, its buffers, its meta and its
-/// workgroup count, in the backend's own form.
+pub enum Access<'a, Buf> {
+    Read(&'a Buf),
+    Write(&'a mut Buf),
+}
+
+/// One built dispatch, ready to run: a shader, its meta and its workgroup
+/// count, in the backend's own form.
 ///
 /// Made by `Dispatch::build_node`
-pub trait Node: Clone + Send + Sync + 'static {
+pub trait Node: Send + Sync + 'static {
     /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
@@ -59,11 +56,15 @@ pub trait DeviceInfo: Clone + std::fmt::Debug + Send + Sync + 'static {
     /// A name for people to read, like the GPU's model name.
     fn label(&self) -> String;
     fn total_memory_bytes(&self) -> u64;
+    fn supports_kind(&self, kind: DataKind) -> bool;
 }
 
 /// How a backend finds devices on this machine and opens them.
 pub trait Topology: Sized + Send + Sync + 'static {
     type Info: DeviceInfo;
+
+    /// The backend's name, like `"cuda"`.
+    const NAME: &'static str;
 
     /// Every device this backend can open on this machine.
     fn choosable_devices() -> Vec<Self::Info>;
@@ -71,8 +72,7 @@ pub trait Topology: Sized + Send + Sync + 'static {
     /// Opens the device that `info` describes.
     fn attach(info: Self::Info) -> Result<Self, String>;
 
-    /// The backend's name, like `"cuda"`.
-    fn name(&self) -> &'static str;
+    fn info(&self) -> &Self::Info;
 }
 
 /// The memory side of a device.
@@ -83,30 +83,12 @@ pub trait Topology: Sized + Send + Sync + 'static {
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
 
-    fn device_id(&self) -> DeviceId;
+    fn alloc_raw(&self, bytes: u64) -> Result<Self::Buffer, String>;
 
-    /// This device's tensors
-    fn table(&self) -> &BufferTable<Self::Buffer>;
+    unsafe fn upload_raw(&self, buf: &mut Self::Buffer, data: &[u8]);
 
-    /// `DataKind` counterparts of `SupportsDType<D>`, for the mesh level where
-    /// the dtype is only known at runtime. Each backend matches the kinds it
-    /// has a `SupportsDType` impl for.
-    /// a default body can't see which exist.
-    fn alloc_kind(&self, kind: DataKind, elem_count: usize) -> Result<Self::Buffer, String>;
-
-    /// Writes host data into `buf`. Fails if this backend doesn't support the
-    /// data's kind.
-    fn upload_kind(&self, buf: &Self::Buffer, data: &HostData) -> Result<(), String>;
-
-    /// Reads `elem_count` elements of `kind` back from `buf` to the host.
-    /// Blocks until the device work queued before it is done. Returns only
-    /// those elements, not the rest of a larger buffer.
-    fn download_kind(
-        &self,
-        buf: &Self::Buffer,
-        kind: DataKind,
-        elem_count: usize,
-    ) -> Result<HostData, String>;
+    /// Blocks until the device work queued before it is done.
+    unsafe fn download_raw(&self, buf: &Self::Buffer, bytes: u64) -> Vec<u8>;
 }
 
 /// The compute side of a device: builds nodes and runs them.
@@ -119,42 +101,32 @@ pub trait Dispatch: Storage {
 
     /// Builds one node. `meta` is the words for slot 0; the backend makes the
     /// meta buffer and owns it.
-    ///
-    /// The graph checks the node before calling this, so a backend may
-    /// panic on input the rules would have rejected.
     fn build_node(
         &self,
         shader: &'static Shader,
         meta: &[u32],
-        bindings: &[(u32, BindingRole, Self::Buffer)],
         workgroups: Workgroups,
     ) -> Self::Node;
+
     /// Writes new words into a node's meta buffer. Called before a run, for
     /// nodes with per-run meta fields. It must be ordered before that run's
     /// dispatches and must not change the meta buffer's address.
-    fn update_meta(&self, node: &Self::Node, meta: &[u32]);
+    fn update_meta(&self, node: &mut Self::Node, meta: &[u32]);
 
-    /// Queues `nodes` to run in order. Doesn't wait for them to finish.
-    fn execute(&self, nodes: &[Self::Node]);
+    unsafe fn execute_raw(
+        &self,
+        node: &Self::Node,
+        bindings: &mut [Access<'_, Self::Buffer>],
+    ) -> Result<(), String>;
 
     /// Blocks until all queued work on this device is done.
     fn synchronize(&self);
 
-    /// Like `execute`, but the backend may record `nodes` once under `key`
-    /// and replay the recording on later calls (CUDA graphs, for example).
-    /// The default just calls `execute`.
-    ///
-    /// A recording keeps raw buffer addresses, so the nodes' buffers must stay
-    fn execute_captured(&self, _key: usize, nodes: &[Self::Node]) {
-        self.execute(nodes);
-    }
-
-    /// Drops the recording made under `key`, if there is one.
-    fn release_captured(&self, _key: usize) {}
+    // TODO: capture methods, waiting on the capture shape decision.
 
     /// True if this device can copy straight to `other`, without going
     /// through the host. Both must be devices of the same backend.
-    fn supports_p2p(&self, other: DeviceId) -> bool {
+    fn supports_p2p(&self, other: &Self) -> bool {
         let _ = other;
         false
     }
@@ -164,24 +136,6 @@ pub trait Dispatch: Storage {
 /// asks for this.
 pub trait Backend: Dispatch {}
 impl<T: Dispatch> Backend for T {}
-
-/// A backend implements this once for each data type it supports.
-/// It is the typed form of `alloc_kind`, `upload_kind` and `download_kind`:
-/// a wrong type is a compile error here instead of an `Err`.
-pub trait SupportsDType<D: DataType>: Storage {
-    /// Same contract as `Storage::alloc_kind`.
-    fn alloc(&self, elem_count: usize) -> Self::Buffer;
-    fn upload(&self, buf: &Self::Buffer, data: &[D::HostRepr]);
-    fn download(&self, buf: &Self::Buffer, elem_count: usize) -> Vec<D::HostRepr>;
-
-    /// A copy of `buf` in a new buffer on `dest`; `buf` stays.
-    fn copy_to(&self, buf: &Self::Buffer, elem_count: usize, dest: &Self) -> Self::Buffer {
-        let data = self.download(buf, elem_count);
-        let copy = dest.alloc(elem_count);
-        dest.upload(&copy, &data);
-        copy
-    }
-}
 
 /// One large block of device memory, reserved up front. Tensors are then
 /// cut out of it instead of being allocated one by one.
@@ -200,12 +154,34 @@ pub trait Areable: Storage {
 
     /// Gives the whole area back to the device.
     fn release(&self, area: Self::Area);
+
+    fn carve<'a>(
+        &self,
+        area: &'a Self::Area,
+        bytes: u64,
+    ) -> Result<Carved<'a, Self::Buffer>, String>;
 }
 
-/// Cutting tensors of type `D` out of an `Area`.
-pub trait SupportsCarve<D: DataType>: Areable + SupportsDType<D> {
-    /// Cuts a buffer for `elem_count` elements out of `area`.
-    fn carve(&self, area: &mut Self::Area, elem_count: usize) -> Self::Buffer;
+pub struct Carved<'a, Buf> {
+    buf: Buf,
+    _area: PhantomData<&'a ()>,
+}
+
+impl<Buf: Buffer> Carved<'_, Buf> {
+    pub fn new(buf: Buf) -> Self {
+        Self {
+            buf,
+            _area: PhantomData,
+        }
+    }
+
+    pub fn buffer(&self) -> &Buf {
+        &self.buf
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut Buf {
+        &mut self.buf
+    }
 }
 
 #[cfg(test)]

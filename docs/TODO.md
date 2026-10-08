@@ -14,6 +14,38 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Design
 
+- **Ownership contract** (decided, not yet in code). `backend/` is the
+  minimum safe API, built on Rust ownership:
+  - Two layers in `backend/`: the backend author's traits (raw, no checks)
+    and the user's safe types, generic over `Dev`. Raw methods take `&Raw`,
+    a token only wilupgu can construct, so only the safe layer calls them.
+    Names of the safe types are still open.
+  - `Buffer` has one owner and isn't `Clone`. Reading takes `&`, writing
+    `&mut`. `holders()` goes away.
+  - GPU work runs in a closure-based scope, like `std::thread::scope`: the
+    scope waits for the device before it returns, so every borrow given to
+    the device stays valid while the device uses it.
+  - Nodes hold no buffers, only shader, meta and workgroups. Buffers are
+    given to each `execute` as `Read(&buf)` / `Write(&mut buf)`: `Input` is
+    `&`, `Output` / `InOut` / `Accumulate` are `&mut`. `update_meta` takes
+    `&mut Node`.
+  - The safe layer runs every generic check once, for every backend: slot
+    count and roles per `execute`, upload kind and length, and on a
+    captured replay that the buffers' addresses match the recording
+    (a mismatch is an `Err`).
+  - A buffer's kind and length live in the safe buffer type.
+  - The backend itself rejects another device's buffer: wgpu and vulkano
+    check it in the library, raw backends (ash) store an owner value in
+    their buffer. TODO: an owner-value backend tool for raw backends.
+  - A carved buffer borrows its `Area`; `release` takes the area by value,
+    so it can't run while a carved buffer lives.
+  - `id.rs` and `table.rs` move to `tools/core`. `Storage::table()` and
+    `device_id()` leave the contract; `supports_p2p` takes `&Self`. Tools
+    name devices with `&Device`. The table likely goes away once `Tensor`
+    owns its buffer.
+  - `pool.rs` and `io_log.rs` stay as backend tools.
+  - Still to review: `SupportsDType` / `copy_to`, `Topology` /
+    `DeviceInfo`, `dtype.rs`, `shader.rs`.
 - **SysTopology** (no draft yet). Built when wilupgu starts up: discovers
   the machine's devices, enables the backends that can run on them,
   computes device capacities and exposes the result as data. That data is
