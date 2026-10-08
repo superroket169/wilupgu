@@ -1,23 +1,17 @@
-use crate::backend::shader::CpuBinding;
+use crate::backend::shader::NativeBinding;
 
-pub(super) fn find(bindings: &[CpuBinding], slot: u32) -> &CpuBinding {
-    bindings
-        .iter()
-        .find(|b| b.slot == slot)
-        .expect("missing binding slot")
+// Slots count from 1, like the WGSL bindings; `bindings[0]` is slot 1.
+pub(super) fn read_f32(bindings: &[NativeBinding], slot: usize) -> Vec<f32> {
+    let bytes: &[u8] = match &bindings[slot - 1] {
+        NativeBinding::Read(b) => b,
+        NativeBinding::Write(b) => b,
+    };
+    bytemuck::pod_collect_to_vec::<u8, f32>(bytes)
 }
 
-pub(super) fn read_f32(b: &CpuBinding) -> Vec<f32> {
-    let g = b.buffer.lock().unwrap();
-    bytemuck::pod_collect_to_vec::<u8, f32>(&g)
-}
-
-pub(super) fn read_u32(b: &CpuBinding) -> Vec<u32> {
-    let g = b.buffer.lock().unwrap();
-    bytemuck::pod_collect_to_vec::<u8, u32>(&g)
-}
-
-pub(super) fn write_f32(b: &CpuBinding, data: &[f32]) {
-    let mut g = b.buffer.lock().unwrap();
-    g.copy_from_slice(bytemuck::cast_slice(data));
+pub(super) fn write_f32(bindings: &mut [NativeBinding], slot: usize, data: &[f32]) {
+    match &mut bindings[slot - 1] {
+        NativeBinding::Write(b) => b.copy_from_slice(bytemuck::cast_slice(data)),
+        NativeBinding::Read(_) => panic!("slot {slot} is bound for reading only"),
+    }
 }

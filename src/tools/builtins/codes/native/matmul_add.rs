@@ -1,13 +1,12 @@
 // C[m * N + n] += sum_k A[m * K + k] * B[k * N + n]   (A: MxK, B: KxN, C: MxN)
-use super::common::{find, read_f32, read_u32, write_f32};
-use crate::backend::shader::CpuBinding;
+use super::common::{read_f32, write_f32};
+use crate::backend::shader::NativeBinding;
 
-pub(crate) fn entry(bindings: &[CpuBinding]) {
-    let meta = read_u32(find(bindings, 0));
+pub(crate) fn entry(meta: &[u32], bindings: &mut [NativeBinding]) {
     let (m, n, k) = (meta[0] as usize, meta[1] as usize, meta[2] as usize);
-    let a = read_f32(find(bindings, 1));
-    let b = read_f32(find(bindings, 2));
-    let mut c = read_f32(find(bindings, 3));
+    let a = read_f32(bindings, 1);
+    let b = read_f32(bindings, 2);
+    let mut c = read_f32(bindings, 3);
     for row in 0..m {
         for col in 0..n {
             let mut sum = 0.0f32;
@@ -17,5 +16,5 @@ pub(crate) fn entry(bindings: &[CpuBinding]) {
             c[row * n + col] += sum;
         }
     }
-    write_f32(find(bindings, 3), &c);
+    write_f32(bindings, 3, &c);
 }
