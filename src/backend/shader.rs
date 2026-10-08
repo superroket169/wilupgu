@@ -48,12 +48,9 @@ impl Workgroups {
     }
 }
 
-pub type CpuBuffer = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
-
-#[derive(Clone)]
-pub struct CpuBinding {
-    pub slot: u32,
-    pub buffer: CpuBuffer,
+pub enum NativeBinding<'a> {
+    Read(&'a [u8]),
+    Write(&'a mut [u8]),
 }
 
 /// A shader's code, keyed by code format rather than by backend
@@ -138,15 +135,15 @@ impl CudaCode {
 }
 
 #[derive(Clone, Copy)]
-pub struct NativeCode(fn(&[CpuBinding]));
+pub struct NativeCode(fn(&[u32], &mut [NativeBinding]));
 
 impl NativeCode {
-    pub const fn new(f: fn(&[CpuBinding])) -> Self {
+    pub const fn new(f: fn(&[u32], &mut [NativeBinding])) -> Self {
         Self(f)
     }
 
-    pub fn run(&self, bindings: &[CpuBinding]) {
-        (self.0)(bindings)
+    pub fn run(&self, meta: &[u32], bindings: &mut [NativeBinding]) {
+        (self.0)(meta, bindings)
     }
 }
 
