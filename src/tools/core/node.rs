@@ -1,8 +1,8 @@
 //! One dispatch's blueprint: what shader, wired to which tensors, at what
 //! size. Nothing here touches a backend.
 
-use crate::backend::id::GlobalId;
-use crate::backend::id::TensorId;
+use crate::tools::core::id::GlobalId;
+use crate::tools::core::id::TensorId;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::tools::core::deferred::{Dynamic, Resolvable};
 

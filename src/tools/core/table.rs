@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::backend::dtype::{DataKind, HostData};
-use crate::backend::id::TensorId;
+use crate::tools::core::id::TensorId;
 use crate::backend::pool::BufferPool;
 use crate::backend::{Buffer, Storage};
 
@@ -127,5 +127,5 @@ fn missing(id: TensorId) -> String {
 }
 
 #[cfg(test)]
-#[path = "../tests/table.rs"]
+#[path = "../../tests/table.rs"]
 mod tests;

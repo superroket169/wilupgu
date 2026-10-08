@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::backend::id::DeviceId;
+use crate::tools::core::id::DeviceId;
 use crate::tools::core::node::{NodeId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]

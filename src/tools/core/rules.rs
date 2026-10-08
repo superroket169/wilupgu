@@ -1,10 +1,10 @@
 //! Every build-time runtime rule, each one its own function: one rule, one
 //! check. Nothing here runs anything -- `graph.rs` calls these, then runs.
 
-use crate::backend::id::DeviceId;
-use crate::backend::id::TensorId;
+use crate::tools::core::id::DeviceId;
+use crate::tools::core::id::TensorId;
 use crate::backend::shader::BindingRole;
-use crate::backend::table::BufferTable;
+use crate::tools::core::table::BufferTable;
 use crate::backend::{Backend, Buffer, Node};
 use crate::tools::core::node::NodeSpec;
 

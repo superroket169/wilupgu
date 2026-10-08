@@ -1,12 +1,10 @@
-//! Everything a `backends/*` implementation must provide
-//! and neceserry tools (pool & table & ...)
+//! Everything a `backends/*` implementation must provide,
+//! and the backend tools (pool, io_log, ...)
 
 pub mod dtype;
-pub mod id;
 pub(crate) mod io_log;
 pub(crate) mod pool;
 pub mod shader;
-pub mod table;
 
 use std::marker::PhantomData;
 

@@ -2,7 +2,7 @@
 //! and the handle to it once one does.
 
 use crate::backend::dtype::{DataKind, DataType, HostData};
-use crate::backend::id::{GlobalId, TensorId};
+use crate::tools::core::id::{GlobalId, TensorId};
 use crate::tools::core::deferred::Resolvable;
 use crate::tools::core::device::Device;
 

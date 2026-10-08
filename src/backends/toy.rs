@@ -8,9 +8,9 @@
 use std::sync::{Arc, Mutex};
 
 use crate::backend::dtype::{DataKind, DataType, HostData, F32};
-use crate::backend::id::DeviceId;
+use crate::tools::core::id::DeviceId;
 use crate::backend::shader::{BindingRole, Shader, ShaderFormat, Workgroups};
-use crate::backend::table::BufferTable;
+use crate::tools::core::table::BufferTable;
 use crate::backend::{
     Area, Areable, Buffer, DeviceInfo, Dispatch, Node, Storage, SupportsCarve, SupportsDType,
     Topology,

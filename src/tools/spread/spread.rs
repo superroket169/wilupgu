@@ -4,7 +4,7 @@
 //! is a pure shadow of ids.
 
 use crate::backend::dtype::DataType;
-use crate::backend::id::{DeviceId, TensorId};
+use crate::tools::core::id::{DeviceId, TensorId};
 use crate::tools::core::deferred::Resolvable;
 use crate::tools::core::device::Device;
 use crate::tools::core::tensor::{Tensor, TensorSpec};

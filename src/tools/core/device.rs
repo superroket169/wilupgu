@@ -1,5 +1,5 @@
 use crate::backend::dtype::{DataKind, HostData};
-use crate::backend::id::{DeviceId, TensorId};
+use crate::tools::core::id::{DeviceId, TensorId};
 use crate::backend::{Dispatch, Storage};
 #[cfg(test)]
 use crate::backends::toy::ToyBackend;

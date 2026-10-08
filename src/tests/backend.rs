@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::id::TensorId;
+use crate::tools::core::id::TensorId;
 use crate::backend::shader::{
     BindingRole, CpuBinding, MetaField, MetaType, NativeCode, ShaderCode,
 };
