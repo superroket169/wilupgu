@@ -13,38 +13,33 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Design
 
-- **Ownership contract** (decided, not yet in code). `backend/` is the
-  minimum safe API, built on Rust ownership:
-  - Two layers in `backend/`: the backend author's traits (raw, no checks)
-    and the user's safe types, generic over `Dev`. Raw methods take `&Raw`,
-    a token only wilupgu can construct, so only the safe layer calls them.
-    Names of the safe types are still open.
-  - `Buffer` has one owner and isn't `Clone`. Reading takes `&`, writing
-    `&mut`. `holders()` goes away.
+- **Safe layer** (decided, not yet in code). The raw contract in
+  `backend/mod.rs` is done; the user's safe types sit on top of it, generic
+  over `Dev`, and are the only callers of the raw `unsafe fn`s. Their names
+  are still open.
   - GPU work runs in a closure-based scope, like `std::thread::scope`: the
     scope waits for the device before it returns, so every borrow given to
-    the device stays valid while the device uses it.
-  - Nodes hold no buffers, only shader, meta and workgroups. Buffers are
-    given to each `execute` as `Read(&buf)` / `Write(&mut buf)`: `Input` is
-    `&`, `Output` / `InOut` / `Accumulate` are `&mut`. `update_meta` takes
-    `&mut Node`.
-  - The safe layer runs every generic check once, for every backend: slot
-    count and roles per `execute`, upload kind and length, and on a
-    captured replay that the buffers' addresses match the recording
-    (a mismatch is an `Err`).
-  - A buffer's kind and length live in the safe buffer type.
-  - The backend itself rejects another device's buffer: wgpu and vulkano
-    check it in the library, raw backends (ash) store an owner value in
-    their buffer. TODO: an owner-value backend tool for raw backends.
-  - A carved buffer borrows its `Area`; `release` takes the area by value,
-    so it can't run while a carved buffer lives.
-  - `id.rs` and `table.rs` move to `tools/core`. `Storage::table()` and
-    `device_id()` leave the contract; `supports_p2p` takes `&Self`. Tools
-    name devices with `&Device`. The table likely goes away once `Tensor`
-    owns its buffer.
-  - `pool.rs` and `io_log.rs` stay as backend tools.
-  - Still to review: `SupportsDType` / `copy_to`, `Topology` /
-    `DeviceInfo`, `dtype.rs`, `shader.rs`.
+    the device stays valid while the device uses it. Inside one scope, a
+    buffer one node writes must still be readable by the next node (the
+    device queue runs in order); the scope API has to allow that.
+  - The safe buffer holds the raw buffer, its kind and its length.
+  - Checks, written once for every backend: slot count, roles and kinds per
+    `execute` (against the shader's layout and `DeviceInfo::supports_kind`),
+    upload kind and length, and on a replay that the buffers' addresses
+    match the recording (a mismatch is an `Err`).
+  - Idea: a capture package that owns its nodes and buffers, so a replay
+    needs no address check; it lends its buffers out between replays.
+- **Tools on the ownership contract.** `tools/core` and `tools/spread` are
+  out of the build until then.
+  - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
+    is reached through ownership and borrows. Tools name devices with
+    `&Device`; `DeviceId` likely goes.
+  - `Tensor` owns its buffer; the table likely goes away.
+  - Each tool gets its own feature once it builds (`tool-core`,
+    `tool-spread = ["tool-core"]`).
+- **Owner-value backend tool** for raw backends (ash): the value a buffer
+  carries so `execute_raw` can reject another device's buffer. `CpuBackend`
+  has its own copy of it.
 - **`Device<X>`** (idea). The tools' `Device` enum keeps one variant per
   in-tree backend, each behind its feature, plus `Extra(X)` for a user's
   own backend (`X: Backend`, default an empty enum). A user with several
@@ -76,9 +71,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
   `combine::sum` / `sum_to_all` are missing.
 - **ComputeMesh**: still a skeleton (`todo!()` bodies, no constructor);
   `Placement` is unused outside tests. Several design parts don't exist yet.
-- **Contract gaps in `rules.rs`:**
-  - a binding's `DataKind` is never checked against the tensor's real kind;
-  - the same slot can be bound twice.
 - **A `TensorSpec` size is `Resolvable<u32>`, a live `Tensor`'s length is
   `usize`.**
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
