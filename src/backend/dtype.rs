@@ -164,6 +164,69 @@ impl HostData {
             HostData::Int4(_) => DataKind::Int4,
         }
     }
+
+    pub fn len(&self) -> usize {
+        let words = match self {
+            HostData::F32(v) => v.len(),
+            HostData::F16(v) => v.len(),
+            HostData::Bf16(v) => v.len(),
+            HostData::Int8(v) => v.len(),
+            HostData::Int4(v) => v.len(),
+        };
+        words * self.kind().elems_per_host_word()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            HostData::F32(v) => bytemuck::cast_slice(v),
+            HostData::F16(v) => bytemuck::cast_slice(v),
+            HostData::Bf16(v) => bytemuck::cast_slice(v),
+            HostData::Int8(v) => v,
+            HostData::Int4(v) => bytemuck::cast_slice(v),
+        }
+    }
+
+    // Copies into a fresh `Vec` of the right type, so `bytes` needs no alignment.
+    pub fn from_bytes(kind: DataKind, bytes: Vec<u8>) -> HostData {
+        match kind {
+            DataKind::F32 => F32::wrap(bytemuck::pod_collect_to_vec(&bytes)),
+            DataKind::F16 => F16::wrap(bytemuck::pod_collect_to_vec(&bytes)),
+            DataKind::Bf16 => Bf16::wrap(bytemuck::pod_collect_to_vec(&bytes)),
+            DataKind::Int8 => Int8::wrap(bytes),
+            DataKind::Int4 => Int4::wrap(bytemuck::pod_collect_to_vec(&bytes)),
+        }
+    }
+}
+
+impl DataKind {
+    pub fn bits_per_elem(self) -> u32 {
+        match self {
+            DataKind::F32 => F32::BITS_PER_ELEM,
+            DataKind::F16 => F16::BITS_PER_ELEM,
+            DataKind::Bf16 => Bf16::BITS_PER_ELEM,
+            DataKind::Int8 => Int8::BITS_PER_ELEM,
+            DataKind::Int4 => Int4::BITS_PER_ELEM,
+        }
+    }
+
+    pub fn elems_per_host_word(self) -> usize {
+        let n = match self {
+            DataKind::F32 => F32::ELEMS_PER_HOST_WORD,
+            DataKind::F16 => F16::ELEMS_PER_HOST_WORD,
+            DataKind::Bf16 => Bf16::ELEMS_PER_HOST_WORD,
+            DataKind::Int8 => Int8::ELEMS_PER_HOST_WORD,
+            DataKind::Int4 => Int4::ELEMS_PER_HOST_WORD,
+        };
+        n as usize
+    }
+
+    pub fn bytes_for(self, len: usize) -> u64 {
+        (len as u64 * self.bits_per_elem() as u64).div_ceil(8)
+    }
 }
 
 #[cfg(test)]
