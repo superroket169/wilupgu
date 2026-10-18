@@ -57,6 +57,9 @@ macro_rules! builtins {
     ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt { $($format:ident)* } )*) => {
         $(
             #[doc = concat!("The `", stringify!($name), "` builtin; see the catalog in the module docs.")]
+            // `..ShaderCode::NONE` fills the formats a shader doesn't list; it is a no-op
+            // only while every builtin has all of them.
+            #[allow(clippy::needless_update)]
             pub static $static: Shader = Shader {
                 name: stringify!($name),
                 meta: &[$($field),*],
