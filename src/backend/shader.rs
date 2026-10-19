@@ -17,9 +17,9 @@ pub enum BindingRole {
 pub struct Shader {
     /// The shader's name; builtins name their code files after it.
     pub name: &'static str,
-    /// Meta is always at slot 0
+    /// The meta's fields, in order; the meta is always slot 0.
     pub meta: &'static [MetaField],
-    /// tensors are always at slots 1..=layout.len()
+    /// One role per tensor slot; tensors are slots `1..=layout.len()`.
     pub layout: &'static [BindingRole],
     /// The elements each tensor slot needs, from the meta words and the workgroup count:
     /// writes one entry per layout slot into `lens`.
@@ -35,7 +35,6 @@ pub struct Shader {
 /// The type of one meta field. Both are one 32-bit word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MetaType {
-    /// `u32`.
     Uint,
     /// `f32`, passed as its bits in a `u32` word.
     Float,
@@ -46,18 +45,14 @@ pub enum MetaType {
 pub struct MetaField {
     /// The field's name, as in the shader source.
     pub name: &'static str,
-    /// The field's type.
     pub ty: MetaType,
 }
 
 /// How many workgroups one dispatch runs, in each dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workgroups {
-    /// Workgroups along x.
     pub x: u32,
-    /// Workgroups along y.
     pub y: u32,
-    /// Workgroups along z.
     pub z: u32,
 }
 
@@ -75,22 +70,16 @@ impl Workgroups {
 /// One tensor slot's bytes, given to native code: the CPU's counterpart of
 /// [`Access`](crate::backend::Access).
 pub enum NativeBinding<'a> {
-    /// The slot is only read.
     Read(&'a [u8]),
     /// The slot is written, and may be read too.
     Write(&'a mut [u8]),
 }
 
-/// A shader's code, keyed by code format rather than by backend
-///
-/// wgpu and vulkano both take `Wgsl`
-/// cpu and rayon both take `Native`.
+/// A shader's code, keyed by code format rather than by backend:
+/// wgpu and vulkano both take `Wgsl`, cpu and rayon both take `Native`.
 pub struct ShaderCode {
-    /// WGSL code.
     pub wgsl: Option<WgslCode>,
-    /// Native Rust code.
     pub native: Option<NativeCode>,
-    /// CUDA C++ code.
     pub cuda: Option<CudaCode>,
 }
 
@@ -115,7 +104,6 @@ impl ShaderCode {
 /// A shader code format. Each backend runs one, its `Dispatch::FORMAT`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderFormat {
-    /// WGSL source.
     Wgsl,
     /// A Rust function.
     Native,
@@ -146,7 +134,6 @@ impl WgslCode {
         self.path
     }
 
-    /// The source text.
     pub fn source(&self) -> &'static str {
         self.source
     }
@@ -175,7 +162,6 @@ impl CudaCode {
         self.path
     }
 
-    /// The source text.
     pub fn source(&self) -> &'static str {
         self.source
     }
@@ -187,12 +173,10 @@ impl CudaCode {
 pub struct NativeCode(fn(&[u32], &mut [NativeBinding]));
 
 impl NativeCode {
-    /// Wraps `f`.
     pub const fn new(f: fn(&[u32], &mut [NativeBinding])) -> Self {
         Self(f)
     }
 
-    /// Runs the code on `meta` and `bindings`.
     pub fn run(&self, meta: &[u32], bindings: &mut [NativeBinding]) {
         (self.0)(meta, bindings)
     }

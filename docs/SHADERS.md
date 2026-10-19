@@ -23,7 +23,7 @@ with `--features wgpu`.
 | 4 | Bounds come from a meta field (`n`, `M`/`N`/`K`, `rows`/`cols`), never from `arrayLength`: a buffer may be larger than the tensor it holds. | text test |
 | 5 | `workgroup_size` lives in the table. WGSL's `@workgroup_size` must match it; CUDA launches with it as `blockDim`. | naga |
 | 6 | CUDA signature: `extern "C" __global__ void entry(const unsigned int* shader_meta, ...)`, then one pointer per tensor slot in slot order, `const float*` for inputs, `float*` otherwise. No scalar arguments; floats in the meta are read with `__uint_as_float`. | signature test |
-| 7 | Native code takes lengths from the meta, writes only the elements it owns, and uses `native/common.rs`. | parity tests (not yet written) |
+| 7 | Native code takes lengths from the meta, writes only the elements it owns, and uses `native/common.rs`. | min_lens test (lengths come from the meta, nothing is written past `min_lens`); `common.rs`: not checked; results against WGSL and CUDA: the backend parity tool (not yet written) |
 | 8 | Comments are in English. | ASCII test |
 | 9 | Every file starts with the same one-line formula comment in every format. | formula test |
 | 10 | `min_lens` gives, from the meta and the workgroup count, the elements each tensor slot needs. No format's code reads or writes a slot past it. The safe layer's `run` rejects a buffer shorter than that. | native: min_lens test (exact-size vs padded buffers) |

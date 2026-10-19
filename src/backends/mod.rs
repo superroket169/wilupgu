@@ -1,4 +1,4 @@
-//! Concrete backend implementations live here, one file each, once written.
+//! In-tree backend implementations, one file each.
 
 // Always built for tests: the contract's tests run on it.
 #[cfg(any(feature = "cpu", test))]

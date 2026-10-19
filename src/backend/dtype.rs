@@ -26,7 +26,6 @@ pub trait DataType: Copy + Send + Sync + 'static {
     const BITS_PER_ELEM: u32;
     /// Elements in one `HostRepr` word; more than 1 only for packed kinds.
     const ELEMS_PER_HOST_WORD: u32 = 1;
-    /// This type's `DataKind`.
     const KIND: DataKind;
 
     /// Tags host words as `HostData` of this kind.
@@ -136,25 +135,19 @@ impl DataType for Int4 {
     }
 }
 
-/// Host-side values of one tensor
-/// one tag for the whole vector
+/// Host-side values of one tensor, with one tag for the whole vector,
 /// so kinds can't mix and upload is a plain byte cast.
 #[derive(Debug, Clone)]
 pub enum HostData {
-    /// `F32` values.
     F32(Vec<f32>),
-    /// `F16` values.
     F16(Vec<half::f16>),
-    /// `Bf16` values.
     Bf16(Vec<half::bf16>),
-    /// `Int8` values.
     Int8(Vec<u8>),
     /// Packed, 8 values per word.
     Int4(Vec<u32>),
 }
 
 impl HostData {
-    /// The `DataKind` of these values.
     pub fn kind(&self) -> DataKind {
         match self {
             HostData::F32(_) => DataKind::F32,

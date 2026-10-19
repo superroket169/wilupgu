@@ -1,11 +1,13 @@
-//! Everything a `backends/*` implementation must provide,
-//! and the backend tools (pool, io_log, ...)
+//! Everything a `backends/*` implementation must provide, and the backend
+//! tools (`pool`, `io_log`). The [`safe`](crate::safe) layer is the only
+//! caller of its `unsafe fn`s.
 
 pub mod dtype;
 pub mod io_log;
 /// Backend tool: keeps freed buffers for reuse.
 pub mod pool;
-/// What a shader is: its meta, tensor layout, workgroup size and code in each format.
+/// What a shader is: its meta, tensor layout, `min_lens`, workgroup size and
+/// code in each format.
 pub mod shader;
 
 use std::marker::PhantomData;
@@ -28,11 +30,9 @@ pub trait Buffer: Send + Sync + 'static {
     fn address(&self) -> u64;
 }
 
-/// One tensor slot's buffer, given to `execute_raw`:
-/// `Read` for an `Input` slot
-/// `Write` for `Output`, `InOut` and `Accumulate`.
+/// One tensor slot's buffer, given to `execute_raw`: `Read` for an `Input`
+/// slot, `Write` for `Output`, `InOut` and `Accumulate`.
 pub enum Access<'a, Buf> {
-    /// The slot is only read.
     Read(&'a Buf),
     /// The slot is written, and may be read too.
     Write(&'a mut Buf),
@@ -41,14 +41,12 @@ pub enum Access<'a, Buf> {
 /// One built dispatch, ready to run: a shader, its meta and its workgroup
 /// count, in the backend's own form.
 ///
-/// Made by `Dispatch::build_node`
+/// Made by `Dispatch::build_node`.
 pub trait Node: Send + Sync + 'static {
     /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
-    /// The shader this node runs.
     fn shader(&self) -> &'static Shader;
-    /// How many workgroups one run dispatches.
     fn workgroups(&self) -> Workgroups;
 
     /// Fails if any dimension of `wg` is over `MAX_WORKGROUPS_PER_DIM`.
@@ -76,7 +74,6 @@ pub trait DeviceInfo: Clone + std::fmt::Debug + Send + Sync + 'static {
 
 /// How a backend finds devices on this machine and opens them.
 pub trait Topology: Sized + Send + Sync + 'static {
-    /// What this backend tells about a device before opening it.
     type Info: DeviceInfo;
 
     /// The backend's name, like `"cuda"`.
@@ -85,7 +82,6 @@ pub trait Topology: Sized + Send + Sync + 'static {
     /// Every device this backend can open on this machine.
     fn choosable_devices() -> Vec<Self::Info>;
 
-    /// Opens the device that `info` describes.
     fn attach(info: Self::Info) -> Result<Self, String>;
 
     /// The `DeviceInfo` this device was opened from.
@@ -98,7 +94,6 @@ pub trait Topology: Sized + Send + Sync + 'static {
 /// upload between two runs needs no `synchronize`. This holds for one stream
 /// per device.
 pub trait Storage: Send + Sync + 'static {
-    /// This backend's buffer.
     type Buffer: Buffer;
 
     /// A new buffer of at least `bytes` bytes. Its contents are unspecified.
@@ -120,16 +115,14 @@ pub trait Storage: Send + Sync + 'static {
 
 /// The compute side of a device: builds nodes and runs them.
 pub trait Dispatch: Storage {
-    /// This backend's built node.
     type Node: Node;
 
     /// The shader code format this backend runs. Only shaders with code in
     /// this format run on it.
     const FORMAT: ShaderFormat;
 
-    /// Builds one node
-    /// `meta` is the words for slot 0
-    /// the backend makes the meta buffer and owns it.
+    /// Builds one node. `meta` is the words for slot 0; the backend makes the
+    /// meta buffer and owns it.
     fn build_node(
         &self,
         shader: &'static Shader,
@@ -190,7 +183,8 @@ pub trait Capturable: Dispatch {
     /// Panics if this device is already recording.
     fn begin_capture(&self);
 
-    /// Stops recording and returns what was recorded.
+    /// Stops recording and returns what was recorded. Fails if this device
+    /// isn't recording.
     fn end_capture(&self) -> Result<Self::Capture, String>;
 
     /// Queues the recorded calls to run again, in order. Doesn't wait for
@@ -220,18 +214,17 @@ pub trait Area: Send + Sync + 'static {
 
 /// A backend that can reserve `Area`s.
 pub trait Areable: Storage {
-    /// This backend's area.
     type Area: Area;
 
-    /// Reserves an area of `total_bytes` bytes.
+    /// Reserves an area of at least `total_bytes` bytes.
     fn reserve(&self, total_bytes: u64) -> Self::Area;
 
     /// Gives the whole area back to the device.
     fn release(&self, area: Self::Area);
 
-    /// Cuts a buffer of `bytes` bytes out of `area`
-    /// Fails if `area` has no room left
-    /// The buffer borrows `area`, so `release` can't run while it lives.
+    /// Cuts a buffer of at least `bytes` bytes out of `area`. Fails if `area`
+    /// has no room left, or belongs to another device. The buffer borrows
+    /// `area`, so `release` can't run while it lives.
     fn carve<'a>(
         &self,
         area: &'a Self::Area,
@@ -239,10 +232,8 @@ pub trait Areable: Storage {
     ) -> Result<Carved<'a, Self::Buffer>, String>;
 }
 
-/// A buffer cut out of an `Area`
-/// It can't outlive the area
-/// and its buffer is never handed out by value
-/// so the borrow can't be escaped.
+/// A buffer cut out of an `Area`. It can't outlive the area, and its buffer
+/// is never handed out by value, so the borrow can't be escaped.
 pub struct Carved<'a, Buf> {
     buf: Buf,
     _area: PhantomData<&'a ()>,
@@ -257,12 +248,10 @@ impl<Buf: Buffer> Carved<'_, Buf> {
         }
     }
 
-    /// The carved buffer, to read.
     pub fn buffer(&self) -> &Buf {
         &self.buf
     }
 
-    /// The carved buffer, to write.
     pub fn buffer_mut(&mut self) -> &mut Buf {
         &mut self.buf
     }

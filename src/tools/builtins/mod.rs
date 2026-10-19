@@ -1,6 +1,6 @@
 //! General-purpose GPU math shaders, ready to run.
 //! Each one has WGSL, native and CUDA code.
-//! The catalog, with every shader's formula, meta and tensor layout, is
+//! The catalog, with every shader's formula, meta, tensor layout and `min_lens`, is
 //! [`docs/SHADERS.md`](https://github.com/superroket169/wilupgu/blob/main/docs/SHADERS.md).
 
 use crate::backend::dtype::DataKind::F32;

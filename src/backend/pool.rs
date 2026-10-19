@@ -4,11 +4,10 @@ use std::sync::Mutex;
 use crate::backend::dtype::DataKind;
 use crate::backend::Buffer;
 
-/// A free buffer is only handed back for the exact kind and length it was made for.
 type Key = (DataKind, usize);
 
-/// Freed buffers kept for reuse, up to a byte limit in total
-/// A buffer is only handed back for the exact kind and length it was made for.
+/// Freed buffers kept for reuse, up to a byte limit in total. A buffer is only
+/// handed back for the exact kind and length it was made for.
 pub struct BufferPool<Buf: Buffer> {
     max_free_bytes: u64,
     free: Mutex<Free<Buf>>,
@@ -31,7 +30,8 @@ impl<Buf: Buffer> BufferPool<Buf> {
         }
     }
 
-    /// The buffer's old contents are left as they were.
+    /// A free buffer made for `kind` and `elem_count`, if one is kept. Its old
+    /// contents are left as they were.
     pub fn take(&self, kind: DataKind, elem_count: usize) -> Option<Buf> {
         let mut free = self.free.lock().unwrap();
         let buf = free.blocks.get_mut(&(kind, elem_count))?.pop()?;
