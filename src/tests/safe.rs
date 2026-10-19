@@ -341,3 +341,165 @@ fn dropped_area_buf_stays_out_of_the_pool() {
     drop(area.alloc(DataKind::F32, 4).unwrap());
     assert_eq!(dev.pool.free_bytes(), 0);
 }
+
+fn scale_node(dev: &ComputeDevice<CpuBackend>, n: u32, factor: f32) -> Node<'_, CpuBackend> {
+    dev.node(
+        &SCALE_LIKE,
+        &[MetaValue::Uint(n), MetaValue::Float(factor)],
+        Workgroups::linear(1),
+    )
+    .unwrap()
+}
+
+#[test]
+fn capture_records_and_replay_runs_with_the_current_meta() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0]);
+    let mut y = f32s(&dev, &[3.0]);
+    let mut add = dev
+        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .unwrap();
+    let mut double = scale_node(&dev, 2, 2.0);
+
+    let rec = dev
+        .scope(|s| {
+            let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
+            let (add, double) = (s.bind_node(&mut add)?, s.bind_node(&mut double)?);
+            s.capture(|| {
+                s.run(double, &[Arg::Write(x)])?;
+                s.run(add, &[Arg::Write(y), Arg::Read(x)])
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        F32::unwrap(x.download()),
+        Some(vec![1.0, 2.0]),
+        "capture ran nothing"
+    );
+
+    for factor in [2.0, 10.0] {
+        double
+            .update_meta(&[MetaValue::Uint(2), MetaValue::Float(factor)])
+            .unwrap();
+        // bound in another order than the recording: buffers are found by address
+        dev.scope(|s| {
+            s.bind_node(&mut add)?;
+            s.bind(&mut y)?;
+            s.bind_node(&mut double)?;
+            s.bind(&mut x)?;
+            s.replay(&rec)
+        })
+        .unwrap();
+    }
+    // x: 1, 2 -> 2, 4 -> 20, 40; y: 3 + 2 + 20
+    assert_eq!(F32::unwrap(x.download()), Some(vec![20.0, 40.0]));
+    assert_eq!(F32::unwrap(y.download()), Some(vec![25.0]));
+}
+
+#[test]
+fn replay_needs_every_recorded_buffer_and_node_bound() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+    let rec = dev
+        .scope(|s| {
+            let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+            s.capture(|| s.run(n, &[Arg::Write(x)]))
+        })
+        .unwrap();
+
+    let no_buffer = dev.scope(|s| {
+        s.bind_node(&mut node)?;
+        s.replay(&rec)
+    });
+    assert!(no_buffer.is_err());
+    let no_node = dev.scope(|s| {
+        s.bind(&mut x)?;
+        s.replay(&rec)
+    });
+    assert!(no_node.is_err());
+
+    // a moved node is another node to the recording
+    let mut moved = Box::new(node);
+    let moved_node = dev.scope(|s| {
+        s.bind(&mut x)?;
+        s.bind_node(&mut moved)?;
+        s.replay(&rec)
+    });
+    assert!(moved_node.is_err());
+    assert_eq!(F32::unwrap(x.download()), Some(vec![1.0]), "no replay ran");
+}
+
+#[test]
+fn replay_checks_min_lens_again() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0]);
+    let mut node = scale_node(&dev, 2, 2.0);
+    let rec = dev
+        .scope(|s| {
+            let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+            s.capture(|| s.run(n, &[Arg::Write(x)]))
+        })
+        .unwrap();
+
+    node.update_meta(&[MetaValue::Uint(3), MetaValue::Float(2.0)])
+        .unwrap();
+    let too_long = dev.scope(|s| {
+        s.bind(&mut x)?;
+        s.bind_node(&mut node)?;
+        s.replay(&rec)
+    });
+    assert!(too_long.is_err());
+    assert_eq!(F32::unwrap(x.download()), Some(vec![1.0, 2.0]));
+}
+
+#[test]
+fn a_failed_or_panicking_capture_leaves_the_device_able_to_capture() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+
+    let failed = dev.scope(|s| {
+        let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+        s.capture(|| {
+            s.run(n, &[Arg::Write(x)])?;
+            Err("stop".to_string())
+        })
+    });
+    assert!(failed.is_err());
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        dev.scope(|s| s.capture(|| panic!("inside capture")))
+    }));
+    assert!(panicked.is_err());
+
+    let again = dev.scope(|s| {
+        let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+        s.capture(|| s.run(n, &[Arg::Write(x)]))
+    });
+    assert!(again.is_ok());
+}
+
+#[test]
+fn capture_and_replay_reject_misuse() {
+    let dev = device(0);
+    let other = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+    let rec = dev
+        .scope(|s| {
+            let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+            s.capture(|| s.run(n, &[Arg::Write(x)]))
+        })
+        .unwrap();
+
+    dev.scope(|s| {
+        // nested capture, and replay while capturing
+        let nested = s.capture(|| s.capture(|| Ok(())).map(drop));
+        assert!(nested.is_err());
+        let replay_inside = s.capture(|| s.replay(&rec));
+        assert!(replay_inside.is_err());
+    });
+    // another device's recording
+    assert!(other.scope(|s| s.replay(&rec)).is_err());
+}
