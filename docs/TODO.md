@@ -3,37 +3,30 @@
 Open wilupgu work only. Finished items are deleted; history is in git log.
 Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list.
 
-- Graph going to be deleted, will replaced by run.rs parts (RunPart)
-- pool size rolling discuison
-- nn tools : tools/nn : maybe could come from sequexa-core
-- tool import check, tool importations should be dag
+## Next
+
+1. **Core tools**, written from scratch on the safe layer (`ComputeDevice`,
+   `Buf`, `Node`, `Scope`, `Recording`), back in the build.
+   - Graph goes; run.rs parts (`RunPart`) take its place.
+   - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
+     is reached through ownership and borrows. Tools name devices by
+     borrowing them (`&ComputeDevice`, or the `Device<X>` enum below);
+     `DeviceId` likely goes.
+   - `Tensor` owns its `Buf`; the table likely goes away.
+2. **Spread tool**, reworked on core, back in the build.
+3. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
+4. **Backend parity tool**: every shader on every backend against the CPU
+   reference (strategy note 2), as a tool.
+
+Each tool gets its own feature once it builds (`tool-core`,
+`tool-spread = ["tool-core"]`). Tools import each other as a DAG; a check
+for that is still to write.
+
+- Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
+  over a run (rolling) is still open.
 
 ## Design
 
-- **Safe layer** (decided, not yet in code). The raw contract in
-  `backend/mod.rs` is done; the user's safe types sit on top of it, generic
-  over `Dev`, and are the only callers of the raw `unsafe fn`s. Their names
-  are still open.
-  - GPU work runs in a closure-based scope, like `std::thread::scope`: the
-    scope waits for the device before it returns, so every borrow given to
-    the device stays valid while the device uses it. Inside one scope, a
-    buffer one node writes must still be readable by the next node (the
-    device queue runs in order); the scope API has to allow that.
-  - The safe buffer holds the raw buffer, its kind and its length.
-  - Checks, written once for every backend: slot count, roles and kinds per
-    `execute` (against the shader's layout and `DeviceInfo::supports_kind`),
-    upload kind and length, and on a replay that the buffers' addresses
-    match the recording (a mismatch is an `Err`).
-  - Idea: a capture package that owns its nodes and buffers, so a replay
-    needs no address check; it lends its buffers out between replays.
-- **Tools on the ownership contract.** `tools/core` and `tools/spread` are
-  out of the build until then.
-  - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
-    is reached through ownership and borrows. Tools name devices with
-    `&Device`; `DeviceId` likely goes.
-  - `Tensor` owns its buffer; the table likely goes away.
-  - Each tool gets its own feature once it builds (`tool-core`,
-    `tool-spread = ["tool-core"]`).
 - **Owner-value backend tool** for raw backends (ash): the value a buffer
   carries so `execute_raw` can reject another device's buffer. `CpuBackend`
   has its own copy of it.
@@ -80,6 +73,15 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Checks
 
+- Run Miri over the CPU backend and the safe layer (their `unsafe` code:
+  capture, areas, scope pointers). Nightly is installed; the `miri`
+  component isn't.
+- Keep the scope's compile-time guarantees as `compile_fail` doctests: a
+  buffer allocated inside the closure can't be bound, a bound buffer can't
+  be touched by the host, a slot can't leave its scope or enter another,
+  a `Recording` can't outlive its device. They live in doc comments.
+- `min_lens` is tested for native code only; WGSL and CUDA need a GPU backend
+  for the same exact-size vs padded test (SHADERS.md standard 10).
 - Prove the GPU really runs independently of the CPU: no hidden host sync or
   copy in a steady-state loop beyond deliberate traffic.
 
