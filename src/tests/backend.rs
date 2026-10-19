@@ -256,3 +256,52 @@ fn replay_rejects_another_devices_capture() {
     // SAFETY: the call must fail before running anything.
     assert!(unsafe { ours.replay(&capture) }.is_err());
 }
+
+// --- areas on the CPU backend ---
+
+#[test]
+fn carved_buffers_sit_side_by_side_and_work_like_any_buffer() {
+    let ctx = cpu();
+    let area = ctx.reserve(24);
+    let mut src = ctx.carve(&area, 12).unwrap();
+    let mut dst = ctx.carve(&area, 12).unwrap();
+    assert_eq!(dst.buffer().address() - src.buffer().address(), 12);
+
+    // SAFETY: both parts hold 12 bytes.
+    unsafe { ctx.upload_raw(src.buffer_mut(), bytemuck::cast_slice(&[1.0f32, 2.0, 3.0])) };
+    let node = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    // SAFETY: COPY_SHADER's layout, both hold 3 F32s, untouched until `synchronize`.
+    unsafe {
+        ctx.execute_raw(
+            &node,
+            &mut [Access::Read(src.buffer()), Access::Write(dst.buffer_mut())],
+        )
+        .unwrap();
+    }
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, dst.buffer(), 3), vec![1.0, 2.0, 3.0]);
+    assert_eq!(read_back(&ctx, src.buffer(), 3), vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn carve_rounds_to_words_and_fails_when_the_area_is_full() {
+    let ctx = cpu();
+    let area = ctx.reserve(10);
+    assert_eq!(area.size_bytes(), 12);
+    let zero = ctx.carve(&area, 0).unwrap();
+    assert_eq!(zero.buffer().size_bytes(), 0);
+    let five = ctx.carve(&area, 5).unwrap();
+    assert_eq!(five.buffer().size_bytes(), 8);
+    assert_eq!(area.remaining_bytes(), 4);
+    assert!(ctx.carve(&area, 5).is_err());
+    assert_eq!(area.remaining_bytes(), 4, "a failed carve takes nothing");
+    ctx.carve(&area, 4).unwrap();
+    assert_eq!(area.remaining_bytes(), 0);
+}
+
+#[test]
+fn carve_rejects_another_devices_area() {
+    let (ours, theirs) = (cpu(), cpu());
+    let area = theirs.reserve(16);
+    assert!(ours.carve(&area, 4).is_err());
+}
