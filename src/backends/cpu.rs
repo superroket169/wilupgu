@@ -1,9 +1,13 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::UnsafeCell;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::backend::dtype::DataKind;
 use crate::backend::shader::{NativeBinding, NativeCode, Shader, ShaderFormat, Workgroups};
-use crate::backend::{Access, Buffer, Capturable, DeviceInfo, Dispatch, Node, Storage, Topology};
+use crate::backend::{
+    Access, Area, Areable, Buffer, Capturable, Carved, DeviceInfo, Dispatch, Node, Storage,
+    Topology,
+};
 
 // Every opened `CpuBackend` gets its own value; its buffers carry it, so a
 // buffer from another device is rejected in `execute_raw`.
@@ -12,27 +16,52 @@ static NEXT_OWNER: AtomicU64 = AtomicU64::new(0);
 /// A [`CpuBackend`] buffer: host memory, kept as `u32` words so the bytes
 /// the native shaders see are 4-aligned.
 pub struct CpuBuffer {
-    words: Vec<u32>,
+    mem: CpuMem,
     owner: u64,
 }
 
+enum CpuMem {
+    Owned(Vec<u32>),
+    // A part of a `CpuArea`'s words. Only reachable through the `Carved`
+    // around it, which borrows the area, so the words outlive it.
+    Part { ptr: *mut u32, words: usize },
+}
+
+/// SAFETY: an owned buffer is a plain `Vec`. A part is a range of its area that
+/// no other buffer covers, read through `&self` and written through `&mut self`
+/// only, like the `Vec`.
+unsafe impl Send for CpuBuffer {}
+unsafe impl Sync for CpuBuffer {}
+
 impl CpuBuffer {
     fn bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.words)
+        match &self.mem {
+            CpuMem::Owned(words) => bytemuck::cast_slice(words),
+            // SAFETY: see `CpuMem::Part`.
+            CpuMem::Part { ptr, words } => unsafe {
+                std::slice::from_raw_parts(ptr.cast::<u8>(), words * 4)
+            },
+        }
     }
 
     fn bytes_mut(&mut self) -> &mut [u8] {
-        bytemuck::cast_slice_mut(&mut self.words)
+        match &mut self.mem {
+            CpuMem::Owned(words) => bytemuck::cast_slice_mut(words),
+            // SAFETY: see `CpuMem::Part`.
+            CpuMem::Part { ptr, words } => unsafe {
+                std::slice::from_raw_parts_mut(ptr.cast::<u8>(), *words * 4)
+            },
+        }
     }
 }
 
 impl Buffer for CpuBuffer {
     fn size_bytes(&self) -> u64 {
-        self.words.len() as u64 * 4
+        self.bytes().len() as u64
     }
 
     fn address(&self) -> u64 {
-        self.words.as_ptr() as u64
+        self.bytes().as_ptr() as u64
     }
 }
 
@@ -109,7 +138,7 @@ impl Storage for CpuBackend {
 
     fn alloc_raw(&self, bytes: u64) -> Result<CpuBuffer, String> {
         Ok(CpuBuffer {
-            words: vec![0; bytes.div_ceil(4) as usize],
+            mem: CpuMem::Owned(vec![0; bytes.div_ceil(4) as usize]),
             owner: self.owner,
         })
     }
@@ -270,5 +299,74 @@ impl Capturable for CpuBackend {
 
     fn release_capture(&self, capture: CpuCapture) {
         drop(capture);
+    }
+}
+
+pub struct CpuArea {
+    /// `UnsafeCell` because carved buffers write into it through `&CpuArea`.
+    words: Box<[UnsafeCell<u32>]>,
+    /// Words already cut out; parts are handed out front to back.
+    next: AtomicUsize,
+    owner: u64,
+}
+
+/// SAFETY: the area itself never reads or writes its words; each carved buffer
+/// gets a range no other one covers (`next` only grows, atomically).
+unsafe impl Sync for CpuArea {}
+
+impl Area for CpuArea {
+    fn size_bytes(&self) -> u64 {
+        self.words.len() as u64 * 4
+    }
+
+    fn remaining_bytes(&self) -> u64 {
+        (self.words.len() - self.next.load(Ordering::Relaxed)) as u64 * 4
+    }
+}
+
+impl Areable for CpuBackend {
+    type Area = CpuArea;
+
+    fn reserve(&self, total_bytes: u64) -> CpuArea {
+        CpuArea {
+            words: (0..total_bytes.div_ceil(4))
+                .map(|_| UnsafeCell::new(0))
+                .collect(),
+            next: AtomicUsize::new(0),
+            owner: self.owner,
+        }
+    }
+
+    fn release(&self, area: CpuArea) {
+        drop(area);
+    }
+
+    fn carve<'a>(&self, area: &'a CpuArea, bytes: u64) -> Result<Carved<'a, CpuBuffer>, String> {
+        if area.owner != self.owner {
+            return Err("carve: the area belongs to another device".to_string());
+        }
+        let words = bytes.div_ceil(4) as usize;
+        let total = area.words.len();
+        let start = area
+            .next
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                (words <= total - next).then_some(next + words)
+            })
+            .map_err(|_| {
+                format!(
+                    "carve: {bytes} bytes asked, the area has {} left",
+                    area.remaining_bytes()
+                )
+            })?;
+        // `UnsafeCell<u32>` has the layout of `u32`.
+        let base = UnsafeCell::raw_get(area.words.as_ptr());
+        Ok(Carved::new(CpuBuffer {
+            // SAFETY: `start + words <= total`, so the part is inside the area.
+            mem: CpuMem::Part {
+                ptr: unsafe { base.add(start) },
+                words,
+            },
+            owner: self.owner,
+        }))
     }
 }

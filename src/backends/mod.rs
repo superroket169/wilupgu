@@ -4,4 +4,4 @@
 #[cfg(any(feature = "cpu", test))]
 mod cpu;
 #[cfg(any(feature = "cpu", test))]
-pub use cpu::{CpuBackend, CpuBuffer, CpuCapture, CpuInfo, CpuNode};
+pub use cpu::{CpuArea, CpuBackend, CpuBuffer, CpuCapture, CpuInfo, CpuNode};
