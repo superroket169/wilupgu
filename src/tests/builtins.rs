@@ -262,3 +262,104 @@ fn add_runs_on_the_cpu_backend() {
     let out: Vec<f32> = bytemuck::pod_collect_to_vec(&unsafe { ctx.download_raw(&x, 12) });
     assert_eq!(out, vec![11.0, 22.0, 33.0]);
 }
+
+// standard 10, for native code: each builtin runs twice on the CPU, on buffers of
+// exactly `min_lens` and on padded ones. A `min_lens` smaller than what the code
+// touches panics, changes the result or writes into the padding.
+#[test]
+fn min_lens_cover_what_native_code_touches() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use crate::backend::dtype::{DataKind, DataType, F32};
+    use crate::backend::shader::{MetaType, Workgroups};
+    use crate::backend::Topology;
+    use crate::backends::{CpuBackend, CpuInfo};
+    use crate::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
+
+    let dev = ComputeDevice::new(
+        CpuBackend::attach(CpuInfo).unwrap(),
+        DeviceConfig::default(),
+    );
+    let wg = Workgroups::linear(2);
+    for s in ALL {
+        // A different value per field, so a mixed-up M/N/K shows.
+        let meta: Vec<MetaValue> = (2..)
+            .zip(s.meta)
+            .map(|(v, field)| match field.ty {
+                MetaType::Uint => MetaValue::Uint(v),
+                MetaType::Float => MetaValue::Float(0.5),
+            })
+            .collect();
+        let words: Vec<u32> = meta
+            .iter()
+            .map(|v| match v {
+                MetaValue::Uint(u) => *u,
+                MetaValue::Float(f) => f.to_bits(),
+            })
+            .collect();
+        let mut lens = vec![0; s.layout.len()];
+        (s.min_lens)(&words, wg, &mut lens);
+
+        // Every slot after one run, with `pad` extra elements of PAD.
+        const PAD: f32 = 100.0;
+        let run = |pad: usize| -> Vec<Vec<f32>> {
+            let mut bufs: Vec<_> = lens
+                .iter()
+                .enumerate()
+                .map(|(slot, &len)| {
+                    let data = (0..len + pad)
+                        .map(|i| {
+                            if i < len {
+                                1.0 + 0.25 * (slot * 7 + i) as f32
+                            } else {
+                                PAD
+                            }
+                        })
+                        .collect();
+                    let mut buf = dev.alloc(DataKind::F32, len + pad).unwrap();
+                    buf.upload(&F32::wrap(data)).unwrap();
+                    buf
+                })
+                .collect();
+            let mut node = dev.node(s, &meta, wg).unwrap();
+            dev.scope(|sc| {
+                let node = sc.bind_node(&mut node).unwrap();
+                let args: Vec<Arg> = bufs
+                    .iter_mut()
+                    .zip(s.layout)
+                    .map(|(buf, role)| {
+                        let slot = sc.bind(buf).unwrap();
+                        match role {
+                            BindingRole::Input(_) => Arg::Read(slot),
+                            _ => Arg::Write(slot),
+                        }
+                    })
+                    .collect();
+                sc.run(node, &args).unwrap();
+            });
+            bufs.iter()
+                .map(|buf| F32::unwrap(buf.download()).unwrap())
+                .collect()
+        };
+
+        let exact = catch_unwind(AssertUnwindSafe(|| run(0)))
+            .unwrap_or_else(|_| panic!("`{}`: native code goes past min_lens", s.name));
+        let padded = run(5);
+        for (slot, &len) in lens.iter().enumerate() {
+            let (inside, padding) = padded[slot].split_at(len);
+            assert_eq!(
+                inside,
+                exact[slot],
+                "`{}` slot {}: native code reads past min_lens",
+                s.name,
+                slot + 1
+            );
+            assert!(
+                padding.iter().all(|&v| v == PAD),
+                "`{}` slot {}: native code writes past min_lens",
+                s.name,
+                slot + 1
+            );
+        }
+    }
+}

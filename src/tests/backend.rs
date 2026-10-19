@@ -40,6 +40,8 @@ static COPY_SHADER: Shader = Shader {
         BindingRole::Input(DataKind::F32),
         BindingRole::Output(DataKind::F32),
     ],
+    // takes its length from the buffers, so it asks nothing of them
+    min_lens: |_, _, l| l.fill(0),
     workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(copy)),
@@ -61,6 +63,7 @@ static META_SHADER: Shader = Shader {
         ty: MetaType::Uint,
     }],
     layout: &[BindingRole::Output(DataKind::F32)],
+    min_lens: |_, _, l| l.fill(1),
     workgroup_size: [1, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(meta_echo)),

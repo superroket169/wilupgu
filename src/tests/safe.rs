@@ -36,6 +36,7 @@ static ADD_LIKE: Shader = Shader {
         BindingRole::Accumulate(DataKind::F32),
         BindingRole::Input(DataKind::F32),
     ],
+    min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(add)),
@@ -56,6 +57,7 @@ static SCALE_LIKE: Shader = Shader {
         },
     ],
     layout: &[BindingRole::InOut(DataKind::F32)],
+    min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
     shader_code: ShaderCode {
         native: Some(NativeCode::new(scale)),
@@ -67,6 +69,7 @@ static NO_CODE: Shader = Shader {
     name: "no_code",
     meta: &[],
     layout: &[],
+    min_lens: |_, _, _| {},
     workgroup_size: [1, 1, 1],
     shader_code: ShaderCode::NONE,
 };

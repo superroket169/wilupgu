@@ -21,6 +21,7 @@ pub struct Shader {
     pub meta: &'static [MetaField],
     /// tensors are always at slots 1..=layout.len()
     pub layout: &'static [BindingRole],
+    pub min_lens: fn(meta: &[u32], workgroups: Workgroups, lens: &mut [usize]),
     /// Threads per workgroup. WGSL's `@workgroup_size` must match; CUDA
     /// launches with it as `blockDim`.
     pub workgroup_size: [u32; 3],
