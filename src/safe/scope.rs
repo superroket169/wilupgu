@@ -178,12 +178,7 @@ impl<'scope, 'env, B: Backend + Topology> Scope<'scope, 'env, B> {
                 Arg::Read(slot) => Access::Read(unsafe { &*bufs[slot.index] }.raw()),
                 Arg::Write(slot) => {
                     let buf = bufs[slot.index];
-                    Access::Write(
-                        unsafe { &mut *buf }
-                            .raw
-                            .as_mut()
-                            .expect("buffer is only taken in drop"),
-                    )
+                    Access::Write(unsafe { &mut *buf }.raw_mut())
                 }
             })
             .collect();

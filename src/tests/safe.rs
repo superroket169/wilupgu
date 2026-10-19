@@ -299,3 +299,45 @@ fn run_rejects_a_buffer_shorter_than_min_lens() {
     // the first run doubled all three, the second the first two, the third didn't run
     assert_eq!(F32::unwrap(x.download()), Some(vec![4.0, 8.0, 6.0]));
 }
+
+#[test]
+fn area_bufs_work_like_alloced_ones() {
+    let dev = device(0);
+    let area = dev.reserve(64);
+    let mut x = area.alloc(DataKind::F32, 3).unwrap();
+    let mut y = area.alloc(DataKind::F32, 3).unwrap();
+    x.upload(&F32::wrap(vec![1.0, 2.0, 3.0])).unwrap();
+    y.upload(&F32::wrap(vec![10.0, 20.0, 30.0])).unwrap();
+    let mut add = dev
+        .node(&ADD_LIKE, &[MetaValue::Uint(3)], Workgroups::linear(1))
+        .unwrap();
+
+    dev.scope(|s| -> Result<(), String> {
+        let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
+        let add = s.bind_node(&mut add)?;
+        s.run(add, &[Arg::Write(y), Arg::Read(x)])
+    })
+    .unwrap();
+
+    assert_eq!(F32::unwrap(y.download()), Some(vec![11.0, 22.0, 33.0]));
+}
+
+#[test]
+fn area_alloc_rounds_int4_and_fails_when_full() {
+    let dev = device(0);
+    let area = dev.reserve(16);
+    assert_eq!(area.alloc(DataKind::Int4, 13).unwrap().len(), 16);
+    assert_eq!(area.remaining_bytes(), 8);
+    assert!(area.alloc(DataKind::F32, 3).is_err());
+    assert_eq!(area.remaining_bytes(), 8, "a failed alloc takes nothing");
+    area.alloc(DataKind::F32, 2).unwrap();
+    assert_eq!(area.remaining_bytes(), 0);
+}
+
+#[test]
+fn dropped_area_buf_stays_out_of_the_pool() {
+    let dev = device(1024);
+    let area = dev.reserve(16);
+    drop(area.alloc(DataKind::F32, 4).unwrap());
+    assert_eq!(dev.pool.free_bytes(), 0);
+}
