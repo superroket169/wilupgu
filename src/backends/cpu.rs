@@ -1,8 +1,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::backend::dtype::DataKind;
 use crate::backend::shader::{NativeBinding, NativeCode, Shader, ShaderFormat, Workgroups};
-use crate::backend::{Access, Buffer, DeviceInfo, Dispatch, Node, Storage, Topology};
+use crate::backend::{Access, Buffer, Capturable, DeviceInfo, Dispatch, Node, Storage, Topology};
 
 // Every opened `CpuBackend` gets its own value; its buffers carry it, so a
 // buffer from another device is rejected in `execute_raw`.
@@ -77,6 +78,8 @@ impl DeviceInfo for CpuInfo {
 pub struct CpuBackend {
     info: CpuInfo,
     owner: u64,
+    /// `Some` between `begin_capture` and `end_capture`.
+    recording: Mutex<Option<Vec<CpuCall>>>,
 }
 
 impl Topology for CpuBackend {
@@ -92,6 +95,7 @@ impl Topology for CpuBackend {
         Ok(Self {
             info,
             owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
+            recording: Mutex::new(None),
         })
     }
 
@@ -157,6 +161,25 @@ impl Dispatch for CpuBackend {
                 node.shader.name
             ));
         }
+        if let Some(calls) = self.recording.lock().unwrap().as_mut() {
+            calls.push(CpuCall {
+                node,
+                slots: bindings
+                    .iter_mut()
+                    .map(|a| match a {
+                        Access::Read(b) => {
+                            let bytes = b.bytes();
+                            CpuSlot::Read(bytes.as_ptr(), bytes.len())
+                        }
+                        Access::Write(b) => {
+                            let bytes = b.bytes_mut();
+                            CpuSlot::Write(bytes.as_mut_ptr(), bytes.len())
+                        }
+                    })
+                    .collect(),
+            });
+            return Ok(());
+        }
         let mut native: Vec<NativeBinding> = bindings
             .iter_mut()
             .map(|a| match a {
@@ -169,4 +192,83 @@ impl Dispatch for CpuBackend {
     }
 
     fn synchronize(&self) {}
+}
+
+/// One recorded `execute_raw`. The node by address, so a replay sees its
+/// current meta; each slot by its bytes' address, which is what
+/// `Buffer::address` promises stays put.
+struct CpuCall {
+    node: *const CpuNode,
+    slots: Vec<CpuSlot>,
+}
+
+enum CpuSlot {
+    Read(*const u8, usize),
+    Write(*mut u8, usize),
+}
+
+pub struct CpuCapture {
+    calls: Vec<CpuCall>,
+    owner: u64,
+}
+
+/// SAFETY: the pointers are only followed in `replay`, whose caller promises
+/// that the nodes and buffers live and are left alone until it returns.
+unsafe impl Send for CpuCall {}
+unsafe impl Sync for CpuCall {}
+
+impl Capturable for CpuBackend {
+    type Capture = CpuCapture;
+
+    fn begin_capture(&self) {
+        let mut recording = self.recording.lock().unwrap();
+        assert!(
+            recording.is_none(),
+            "begin_capture: this device is already recording"
+        );
+        *recording = Some(Vec::new());
+    }
+
+    fn end_capture(&self) -> Result<CpuCapture, String> {
+        let calls = self
+            .recording
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("end_capture: this device isn't recording")?;
+        Ok(CpuCapture {
+            calls,
+            owner: self.owner,
+        })
+    }
+
+    unsafe fn replay(&self, capture: &CpuCapture) -> Result<(), String> {
+        if capture.owner != self.owner {
+            return Err("replay: the capture belongs to another device".to_string());
+        }
+        for call in &capture.calls {
+            // SAFETY: the caller keeps every recorded node and buffer alive and
+            // in place, and the recorded calls followed `execute_raw`'s rules,
+            // so no written slot aliases another.
+            let node = unsafe { &*call.node };
+            let mut native: Vec<NativeBinding> = call
+                .slots
+                .iter()
+                .map(|slot| match *slot {
+                    CpuSlot::Read(ptr, len) => {
+                        NativeBinding::Read(unsafe { std::slice::from_raw_parts(ptr, len) })
+                    }
+                    CpuSlot::Write(ptr, len) => {
+                        NativeBinding::Write(unsafe { std::slice::from_raw_parts_mut(ptr, len) })
+                    }
+                })
+                .collect();
+            node.code.run(&node.meta, &mut native);
+        }
+        Ok(())
+    }
+
+    fn release_capture(&self, capture: CpuCapture) {
+        drop(capture);
+    }
 }

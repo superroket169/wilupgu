@@ -157,3 +157,102 @@ fn supports_p2p_defaults_to_false() {
     let (a, b) = (cpu(), cpu());
     assert!(!a.supports_p2p(&b));
 }
+
+// --- capture on the CPU backend ---
+
+#[test]
+fn capture_records_instead_of_running_and_replay_runs_in_order() {
+    let ctx = cpu();
+    let mut x = buffer_with(&ctx, &[0.0]);
+    let mut y = buffer_with(&ctx, &[0.0]);
+    let echo = ctx.build_node(&META_SHADER, &[5], Workgroups::linear(1));
+    let copy = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+
+    ctx.begin_capture();
+    // SAFETY: slots follow each layout, every buffer holds one F32, and
+    // nodes and buffers stay put and untouched past the replay's `synchronize`.
+    unsafe {
+        ctx.execute_raw(&echo, &mut [Access::Write(&mut x)])
+            .unwrap();
+        ctx.execute_raw(&copy, &mut [Access::Read(&x), Access::Write(&mut y)])
+            .unwrap();
+    }
+    let capture = ctx.end_capture().unwrap();
+    assert_eq!(
+        read_back(&ctx, &y, 1),
+        vec![0.0],
+        "nothing ran while recording"
+    );
+
+    // SAFETY: as above.
+    unsafe { ctx.replay(&capture).unwrap() };
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, &y, 1), vec![5.0], "echo ran before copy");
+    ctx.release_capture(capture);
+}
+
+#[test]
+fn replay_sees_update_meta() {
+    let ctx = cpu();
+    let mut x = buffer_with(&ctx, &[0.0]);
+    let mut node = ctx.build_node(&META_SHADER, &[1], Workgroups::linear(1));
+
+    ctx.begin_capture();
+    // SAFETY: one Output slot, one F32; node and buffer stay put.
+    unsafe {
+        ctx.execute_raw(&node, &mut [Access::Write(&mut x)])
+            .unwrap()
+    };
+    let capture = ctx.end_capture().unwrap();
+
+    for n in [2, 3] {
+        ctx.update_meta(&mut node, &[n]);
+        // SAFETY: as above.
+        unsafe { ctx.replay(&capture).unwrap() };
+        ctx.synchronize();
+        assert_eq!(read_back(&ctx, &x, 1), vec![n as f32]);
+    }
+}
+
+#[test]
+fn end_capture_without_begin_fails() {
+    assert!(cpu().end_capture().is_err());
+}
+
+#[test]
+#[should_panic(expected = "already recording")]
+fn begin_capture_twice_panics() {
+    let ctx = cpu();
+    ctx.begin_capture();
+    ctx.begin_capture();
+}
+
+#[test]
+fn capture_rejects_another_devices_buffer() {
+    let (ours, theirs) = (cpu(), cpu());
+    let src = buffer_with(&theirs, &[1.0]);
+    let mut dst = buffer_with(&ours, &[0.0]);
+    let node = ours.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    ours.begin_capture();
+    // SAFETY: the call must fail before recording anything.
+    let result =
+        unsafe { ours.execute_raw(&node, &mut [Access::Read(&src), Access::Write(&mut dst)]) };
+    assert!(result.is_err());
+    let capture = ours.end_capture().unwrap();
+    // SAFETY: nothing was recorded, so the replay touches nothing.
+    unsafe { ours.replay(&capture).unwrap() };
+    assert_eq!(
+        read_back(&ours, &dst, 1),
+        vec![0.0],
+        "the rejected call wasn't recorded"
+    );
+}
+
+#[test]
+fn replay_rejects_another_devices_capture() {
+    let (ours, theirs) = (cpu(), cpu());
+    theirs.begin_capture();
+    let capture = theirs.end_capture().unwrap();
+    // SAFETY: the call must fail before running anything.
+    assert!(unsafe { ours.replay(&capture) }.is_err());
+}

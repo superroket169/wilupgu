@@ -186,18 +186,22 @@ pub trait Capturable: Dispatch {
 
     /// Starts recording. Until `end_capture`, `execute_raw` calls on this
     /// device are recorded instead of run.
+    ///
+    /// Panics if this device is already recording.
     fn begin_capture(&self);
 
     /// Stops recording and returns what was recorded.
     fn end_capture(&self) -> Result<Self::Capture, String>;
 
     /// Queues the recorded calls to run again, in order. Doesn't wait for
-    /// them to finish.
+    /// them to finish. Each node runs with its current meta, so an
+    /// `update_meta` between replays reaches the next one.
     ///
     /// # Safety
     /// - Every `execute_raw` safety rule holds for each recorded call.
     /// - Every recorded buffer still lives at the same address, and the host
     ///   doesn't touch it until `synchronize` returns.
+    /// - Every recorded node still lives, and hasn't moved since the recording.
     unsafe fn replay(&self, capture: &Self::Capture) -> Result<(), String>;
 
     /// Frees what the backend holds for `capture`.
