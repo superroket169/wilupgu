@@ -4,6 +4,9 @@ use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::backend::{Backend, DeviceInfo, Node as _, Topology};
 
+mod scope;
+pub use scope::{Arg, BufSlot, NodeSlot, Scope};
+
 #[derive(Debug, Clone, Default)]
 pub struct DeviceConfig {
     /// 0 turns the pool off.
