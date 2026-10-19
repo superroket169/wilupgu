@@ -7,13 +7,19 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 1. **Core tools**, written from scratch on the safe layer (`ComputeDevice`,
    `Buf`, `Node`, `Scope`, `Recording`), back in the build.
-   - Graph goes; run.rs parts (`RunPart`) take its place.
+   - run.rs (`RunPart`, `RunPlan`) is where specs become nodes and run: `Once`
+     meta resolved when nodes are built; each `Dynamic` read once per run,
+     however many nodes share it, then `update_meta`; parts that stream and
+     parts that replay a `Recording`.
    - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
-     is reached through ownership and borrows. Tools name devices by
-     borrowing them (`&ComputeDevice`, or the `Device<X>` enum below);
-     `DeviceId` likely goes.
-   - `Tensor` owns its `Buf`; the table likely goes away.
+     is reached through ownership and borrows.
+   - `Tensor` owns its `Buf`.
 2. **Spread tool**, reworked on core, back in the build.
+   - Placement and `SpreadSpec` name devices with an id that no longer
+     exists; how a plan names a device (an index into a device list, the
+     `Device<X>` enum below, ...) is open.
+   - Two unordered writes to one buffer are no problem on one in-order queue;
+     across devices or queues they may need a check again.
 3. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
 4. **Backend parity tool**: every shader on every backend against the CPU
    reference (strategy note 2), as a tool.

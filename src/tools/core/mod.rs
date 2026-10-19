@@ -1,9 +1,5 @@
 pub mod deferred;
-pub mod device;
-pub mod graph;
 pub mod id;
 pub mod node;
-pub(crate) mod rules;
 pub mod run;
-pub mod table;
 pub mod tensor;
