@@ -87,9 +87,16 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         let words = meta_words(shader, meta)?;
         Ok(Node {
             raw: self.raw.build_node(shader, &words, workgroups),
+            lens: min_lens(shader, &words, workgroups),
             dev: self,
         })
     }
+}
+
+fn min_lens(shader: &Shader, words: &[u32], workgroups: Workgroups) -> Vec<usize> {
+    let mut lens = vec![0; shader.layout.len()];
+    (shader.min_lens)(words, workgroups, &mut lens);
+    lens
 }
 
 fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, String> {
@@ -182,6 +189,8 @@ impl<B: Backend + Topology> Drop for Buf<'_, B> {
 
 pub struct Node<'d, B: Backend + Topology> {
     raw: B::Node,
+    /// The shader's `min_lens` for the current meta, per slot.
+    lens: Vec<usize>,
     dev: &'d ComputeDevice<B>,
 }
 
@@ -199,7 +208,9 @@ impl<B: Backend + Topology> Node<'_, B> {
     }
 
     pub fn update_meta(&mut self, meta: &[MetaValue]) -> Result<(), String> {
-        let words = meta_words(self.raw.shader(), meta)?;
+        let shader = self.raw.shader();
+        let words = meta_words(shader, meta)?;
+        self.lens = min_lens(shader, &words, self.raw.workgroups());
         self.dev.raw.update_meta(&mut self.raw, &words);
         Ok(())
     }

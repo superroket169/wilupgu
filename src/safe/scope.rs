@@ -136,12 +136,22 @@ impl<'scope, 'env, B: Backend + Topology> Scope<'scope, 'env, B> {
                 ));
             }
             // SAFETY: see `bufs`.
-            let buf_kind = unsafe { &*bufs[arg.slot().index] }.kind;
-            if buf_kind != *kind {
+            let buf = unsafe { &*bufs[arg.slot().index] };
+            if buf.kind != *kind {
                 return Err(format!(
-                    "shader `{}`: slot {} holds {kind:?}, the buffer holds {buf_kind:?}",
+                    "shader `{}`: slot {} holds {kind:?}, the buffer holds {:?}",
                     shader.name,
-                    i + 1
+                    i + 1,
+                    buf.kind
+                ));
+            }
+            if buf.len < node.lens[i] {
+                return Err(format!(
+                    "shader `{}`: slot {} needs {} elements for this meta, the buffer holds {}",
+                    shader.name,
+                    i + 1,
+                    node.lens[i],
+                    buf.len
                 ));
             }
         }
@@ -181,11 +191,10 @@ impl<'scope, 'env, B: Backend + Topology> Scope<'scope, 'env, B> {
         // SAFETY:
         // - slot count, order, roles and kinds are checked above; `ComputeDevice::node`
         //   checked that the device supports every kind in the layout.
+        // - every buffer holds at least the shader's `min_lens` for the node's meta
+        //   (checked above); the shader's code stays within them (docs/SHADERS.md).
         // - buffers and node are borrowed until the scope ends, and `SyncOnDrop`
         //   synchronizes before that, so they live and the host can't touch them.
-        // - not checked: that the meta's sizes fit the buffers. Shaders take their
-        //   bounds from the meta (docs/SHADERS.md rule 4); whoever writes the meta
-        //   answers for them.
         unsafe { self.dev.raw.execute_raw(&node.raw, &mut access) }
     }
 }
