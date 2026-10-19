@@ -4,7 +4,44 @@ use crate::backend::shader::{MetaField, NativeBinding, NativeCode, ShaderCode};
 use crate::backend::Buffer;
 use crate::backends::{CpuBackend, CpuInfo};
 
-fn noop(_meta: &[u32], _bindings: &mut [NativeBinding]) {}
+fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
+    let [NativeBinding::Write(x)] = bindings else {
+        panic!("scale_like takes one written slot")
+    };
+    let x = bytemuck::cast_slice_mut::<u8, f32>(x);
+    let factor = f32::from_bits(meta[1]);
+    for v in &mut x[..meta[0] as usize] {
+        *v *= factor;
+    }
+}
+
+fn add(meta: &[u32], bindings: &mut [NativeBinding]) {
+    let [NativeBinding::Write(acc), NativeBinding::Read(x)] = bindings else {
+        panic!("add_like takes a written and a read slot")
+    };
+    let acc = bytemuck::cast_slice_mut::<u8, f32>(acc);
+    let x = bytemuck::cast_slice::<u8, f32>(x);
+    for i in 0..meta[0] as usize {
+        acc[i] += x[i];
+    }
+}
+
+static ADD_LIKE: Shader = Shader {
+    name: "add_like",
+    meta: &[MetaField {
+        name: "n",
+        ty: MetaType::Uint,
+    }],
+    layout: &[
+        BindingRole::Accumulate(DataKind::F32),
+        BindingRole::Input(DataKind::F32),
+    ],
+    workgroup_size: [256, 1, 1],
+    shader_code: ShaderCode {
+        native: Some(NativeCode::new(add)),
+        ..ShaderCode::NONE
+    },
+};
 
 static SCALE_LIKE: Shader = Shader {
     name: "scale_like",
@@ -21,7 +58,7 @@ static SCALE_LIKE: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     workgroup_size: [256, 1, 1],
     shader_code: ShaderCode {
-        native: Some(NativeCode::new(noop)),
+        native: Some(NativeCode::new(scale)),
         ..ShaderCode::NONE
     },
 };
@@ -123,4 +160,110 @@ fn update_meta_checks_like_node() {
     assert!(node
         .update_meta(&[MetaValue::Float(8.0), MetaValue::Float(0.5)])
         .is_err());
+}
+
+fn f32s<'d>(dev: &'d ComputeDevice<CpuBackend>, values: &[f32]) -> Buf<'d, CpuBackend> {
+    let mut buf = dev.alloc(DataKind::F32, values.len()).unwrap();
+    buf.upload(&F32::wrap(values.to_vec())).unwrap();
+    buf
+}
+
+#[test]
+fn scope_chains_runs_on_the_same_buffers() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0, 3.0]);
+    let mut y = f32s(&dev, &[10.0, 20.0, 30.0]);
+    let wg = Workgroups::linear(1);
+    let mut add = dev.node(&ADD_LIKE, &[MetaValue::Uint(3)], wg).unwrap();
+    let mut double = dev
+        .node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(3), MetaValue::Float(2.0)],
+            wg,
+        )
+        .unwrap();
+
+    let inside = dev
+        .scope(|s| -> Result<HostData, String> {
+            let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
+            let (add, double) = (s.bind_node(&mut add)?, s.bind_node(&mut double)?);
+            s.run(add, &[Arg::Write(y), Arg::Read(x)])?;
+            s.run(double, &[Arg::Write(y)])?;
+            Ok(s.download(y))
+        })
+        .unwrap();
+
+    assert_eq!(F32::unwrap(inside), Some(vec![22.0, 44.0, 66.0]));
+    assert_eq!(F32::unwrap(y.download()), Some(vec![22.0, 44.0, 66.0]));
+}
+
+#[test]
+fn scope_upload_and_update_meta_apply_to_the_next_run() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[0.0, 0.0]);
+    let mut node = dev
+        .node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(2), MetaValue::Float(2.0)],
+            Workgroups::linear(1),
+        )
+        .unwrap();
+
+    dev.scope(|s| -> Result<(), String> {
+        let x = s.bind(&mut x)?;
+        let node = s.bind_node(&mut node)?;
+        s.upload(x, &F32::wrap(vec![1.0, 2.0]))?;
+        s.run(node, &[Arg::Write(x)])?;
+        s.update_meta(node, &[MetaValue::Uint(2), MetaValue::Float(10.0)])?;
+        s.run(node, &[Arg::Write(x)])
+    })
+    .unwrap();
+
+    assert_eq!(F32::unwrap(x.download()), Some(vec![20.0, 40.0]));
+}
+
+#[test]
+fn run_rejects_wrong_args() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut y = f32s(&dev, &[1.0]);
+    let mut bytes = dev.alloc(DataKind::Int8, 4).unwrap();
+    let mut add = dev
+        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .unwrap();
+
+    dev.scope(|s| {
+        let (x, y, bytes) = (
+            s.bind(&mut x).unwrap(),
+            s.bind(&mut y).unwrap(),
+            s.bind(&mut bytes).unwrap(),
+        );
+        let add = s.bind_node(&mut add).unwrap();
+        // slot count
+        assert!(s.run(add, &[Arg::Write(y)]).is_err());
+        // Read on the Accumulate slot
+        assert!(s.run(add, &[Arg::Read(y), Arg::Read(x)]).is_err());
+        // Write on the Input slot
+        assert!(s.run(add, &[Arg::Write(y), Arg::Write(x)]).is_err());
+        // buffer kind
+        assert!(s.run(add, &[Arg::Write(bytes), Arg::Read(x)]).is_err());
+        // a written buffer also in another slot
+        assert!(s.run(add, &[Arg::Write(y), Arg::Read(y)]).is_err());
+        assert!(s.run(add, &[Arg::Write(y), Arg::Read(x)]).is_ok());
+    });
+}
+
+#[test]
+fn bind_rejects_another_devices_buffer_and_node() {
+    let dev = device(0);
+    let other = device(0);
+    let mut buf = f32s(&other, &[1.0]);
+    let mut node = other
+        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .unwrap();
+
+    dev.scope(|s| {
+        assert!(s.bind(&mut buf).is_err());
+        assert!(s.bind_node(&mut node).is_err());
+    });
 }
