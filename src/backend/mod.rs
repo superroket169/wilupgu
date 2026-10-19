@@ -152,7 +152,8 @@ pub trait Dispatch: Storage {
     /// - An `Input` slot gets `Read`; every other slot gets `Write`.
     /// - Each buffer holds the kind its slot declares, and this device
     ///   supports that kind.
-    /// - The node's meta describes sizes that fit the bound buffers.
+    /// - Each buffer holds at least the elements the shader's `min_lens`
+    ///   gives for the node's meta and workgroup count.
     /// - Every buffer lives, and the host doesn't touch it, until
     ///   `synchronize` returns.
     unsafe fn execute_raw(

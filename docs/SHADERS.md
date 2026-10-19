@@ -4,7 +4,8 @@ Builtin shaders are general-purpose GPU math. Each one has a source file per
 format under `src/tools/builtins/codes/{wgsl,native,cuda}/`, named after the shader.
 
 The table in `src/tools/builtins/mod.rs` is the single source for every builtin:
-its name, meta fields, tensor layout, workgroup size and which formats it has.
+its name, meta fields, tensor layout, workgroup size, `min_lens` and which
+formats it has.
 File paths, file names and native function names are all derived from the
 shader's name, so a missing or misnamed file is a compile error.
 
@@ -25,22 +26,25 @@ with `--features wgpu`.
 | 7 | Native code takes lengths from the meta, writes only the elements it owns, and uses `native/common.rs`. | parity tests (not yet written) |
 | 8 | Comments are in English. | ASCII test |
 | 9 | Every file starts with the same one-line formula comment in every format. | formula test |
+| 10 | `min_lens` gives, from the meta and the workgroup count, the elements each tensor slot needs. No format's code reads or writes a slot past it. The safe layer's `run` rejects a buffer shorter than that. | native: min_lens test (exact-size vs padded buffers) |
 
 ## Catalog
 
-Every builtin has all three formats: WGSL, native and CUDA.
+Every builtin has all three formats: WGSL, native and CUDA. In the Tensors
+column, the length in parentheses is the slot's `min_lens`; elementwise and
+buffer init shaders need `n` elements in every slot.
 
 ### Linear algebra
 
 | Shader | Formula | Meta | Tensors | Workgroup |
 |---|---|---|---|---|
-| `matmul` | `C[m*N+n] = sum_k A[m*K+k] * B[k*N+n]` | `M N K` | A in, B in, C out | 16x16 |
-| `matmul_add` | `C[m*N+n] += sum_k A[m*K+k] * B[k*N+n]` | `M N K` | A in, B in, C accumulate | 16x16 |
-| `matmul_trp` | `C[m*N+n] = sum_k A[m*K+k] * B[n*K+k]` (B is NxK) | `M N K` | A in, B in, C out | 16x16 |
-| `gemv` | `C[n] = sum_k A[k] * B[k*N+n]` | `M N K` (M ignored) | A in, B in, C out | 256 |
-| `gemv_add` | `C[n] += sum_k A[k] * B[k*N+n]` | `M N K` (M ignored) | A in, B in, C accumulate | 256 |
-| `transpose` | `dst[c*rows+r] = src[r*cols+c]` | `rows cols` | src in, dst out | 16x16 |
-| `dot` | `partial[w] = sum a[i] * b[i]` over workgroup `w` | `n` | a in, b in, partial out | 256 |
+| `matmul` | `C[m*N+n] = sum_k A[m*K+k] * B[k*N+n]` | `M N K` | A in (M\*K), B in (K\*N), C out (M\*N) | 16x16 |
+| `matmul_add` | `C[m*N+n] += sum_k A[m*K+k] * B[k*N+n]` | `M N K` | A in (M\*K), B in (K\*N), C accumulate (M\*N) | 16x16 |
+| `matmul_trp` | `C[m*N+n] = sum_k A[m*K+k] * B[n*K+k]` (B is NxK) | `M N K` | A in (M\*K), B in (N\*K), C out (M\*N) | 16x16 |
+| `gemv` | `C[n] = sum_k A[k] * B[k*N+n]` | `M N K` (M ignored) | A in (K), B in (K\*N), C out (N) | 256 |
+| `gemv_add` | `C[n] += sum_k A[k] * B[k*N+n]` | `M N K` (M ignored) | A in (K), B in (K\*N), C accumulate (N) | 256 |
+| `transpose` | `dst[c*rows+r] = src[r*cols+c]` | `rows cols` | src in (rows\*cols), dst out (rows\*cols) | 16x16 |
+| `dot` | `partial[w] = sum a[i] * b[i]` over workgroup `w` | `n` | a in (n), b in (n), partial out (workgroups) | 256 |
 
 ### Elementwise
 
@@ -57,12 +61,13 @@ Every builtin has all three formats: WGSL, native and CUDA.
 
 | Shader | Formula | Meta | Tensors | Workgroup |
 |---|---|---|---|---|
-| `sum` | `partial[w] = sum x[i]` over workgroup `w` | `n` | x in, partial out | 256 |
+| `sum` | `partial[w] = sum x[i]` over workgroup `w` | `n` | x in (n), partial out (workgroups) | 256 |
 
 `sum` and `dot` reduce one workgroup's slice into one partial. On the GPU,
 when more than one workgroup ran, `sum` is called again with the partials as
 its input (and their count as `n`) until one value is left. Native code runs
-as a single workgroup and writes the whole result to `partial[0]`.
+as a single workgroup and writes the whole result to `partial[0]`, so `partial`
+needs one element per workgroup, and at least one.
 
 ### Buffer init
 
