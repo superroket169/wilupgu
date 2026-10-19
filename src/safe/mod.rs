@@ -5,7 +5,7 @@ use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::backend::{Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology};
 
 mod scope;
-pub use scope::{Arg, BufSlot, NodeSlot, Scope};
+pub use scope::{Arg, BufSlot, NodeSlot, Recording, Scope};
 
 #[derive(Debug, Clone, Default)]
 pub struct DeviceConfig {
