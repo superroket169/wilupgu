@@ -270,3 +270,32 @@ fn bind_rejects_another_devices_buffer_and_node() {
         assert!(s.bind_node(&mut node).is_err());
     });
 }
+
+#[test]
+fn run_rejects_a_buffer_shorter_than_min_lens() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0, 3.0]);
+    let mut node = dev
+        .node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(3), MetaValue::Float(2.0)],
+            Workgroups::linear(1),
+        )
+        .unwrap();
+
+    dev.scope(|s| {
+        let x = s.bind(&mut x).unwrap();
+        let node = s.bind_node(&mut node).unwrap();
+        // n = len, n < len: fine
+        assert!(s.run(node, &[Arg::Write(x)]).is_ok());
+        s.update_meta(node, &[MetaValue::Uint(2), MetaValue::Float(2.0)])
+            .unwrap();
+        assert!(s.run(node, &[Arg::Write(x)]).is_ok());
+        // n = len + 1: the buffer is one element short
+        s.update_meta(node, &[MetaValue::Uint(4), MetaValue::Float(2.0)])
+            .unwrap();
+        assert!(s.run(node, &[Arg::Write(x)]).is_err());
+    });
+    // the first run doubled all three, the second the first two, the third didn't run
+    assert_eq!(F32::unwrap(x.download()), Some(vec![4.0, 8.0, 6.0]));
+}
