@@ -158,6 +158,7 @@ impl HostData {
         }
     }
 
+    /// How many elements it holds; for a packed kind, 8 per `Int4` word.
     pub fn len(&self) -> usize {
         let words = match self {
             HostData::F32(v) => v.len(),
@@ -169,10 +170,12 @@ impl HostData {
         words * self.kind().elems_per_host_word()
     }
 
+    /// True if it holds no elements.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// The values as bytes, as a buffer holds them.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             HostData::F32(v) => bytemuck::cast_slice(v),
@@ -183,7 +186,8 @@ impl HostData {
         }
     }
 
-    // Copies into a fresh `Vec` of the right type, so `bytes` needs no alignment.
+    /// Values of `kind` from the bytes a buffer holds. Copies into a fresh
+    /// `Vec` of the right type, so `bytes` needs no alignment.
     pub fn from_bytes(kind: DataKind, bytes: Vec<u8>) -> HostData {
         match kind {
             DataKind::F32 => F32::wrap(bytemuck::pod_collect_to_vec(&bytes)),
@@ -196,6 +200,7 @@ impl HostData {
 }
 
 impl DataKind {
+    /// Bits one element takes: [`DataType::BITS_PER_ELEM`] of its marker.
     pub fn bits_per_elem(self) -> u32 {
         match self {
             DataKind::F32 => F32::BITS_PER_ELEM,
@@ -206,6 +211,8 @@ impl DataKind {
         }
     }
 
+    /// Elements in one host word: [`DataType::ELEMS_PER_HOST_WORD`] of its
+    /// marker.
     pub fn elems_per_host_word(self) -> usize {
         let n = match self {
             DataKind::F32 => F32::ELEMS_PER_HOST_WORD,
@@ -217,6 +224,7 @@ impl DataKind {
         n as usize
     }
 
+    /// Bytes that `len` elements take, rounded up to a whole byte.
     pub fn bytes_for(self, len: usize) -> u64 {
         (len as u64 * self.bits_per_elem() as u64).div_ceil(8)
     }

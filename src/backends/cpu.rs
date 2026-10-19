@@ -27,9 +27,9 @@ enum CpuMem {
     Part { ptr: *mut u32, words: usize },
 }
 
-/// SAFETY: an owned buffer is a plain `Vec`. A part is a range of its area that
-/// no other buffer covers, read through `&self` and written through `&mut self`
-/// only, like the `Vec`.
+// SAFETY: an owned buffer is a plain `Vec`. A part is a range of its area that
+// no other buffer covers, read through `&self` and written through `&mut self`
+// only, like the `Vec`.
 unsafe impl Send for CpuBuffer {}
 unsafe impl Sync for CpuBuffer {}
 
@@ -236,13 +236,14 @@ enum CpuSlot {
     Write(*mut u8, usize),
 }
 
+/// A [`CpuBackend`] recording: the recorded calls, by address.
 pub struct CpuCapture {
     calls: Vec<CpuCall>,
     owner: u64,
 }
 
-/// SAFETY: the pointers are only followed in `replay`, whose caller promises
-/// that the nodes and buffers live and are left alone until it returns.
+// SAFETY: the pointers are only followed in `replay`, whose caller promises
+// that the nodes and buffers live and are left alone until it returns.
 unsafe impl Send for CpuCall {}
 unsafe impl Sync for CpuCall {}
 
@@ -302,6 +303,7 @@ impl Capturable for CpuBackend {
     }
 }
 
+/// A [`CpuBackend`] area: one block of host words, cut out front to back.
 pub struct CpuArea {
     /// `UnsafeCell` because carved buffers write into it through `&CpuArea`.
     words: Box<[UnsafeCell<u32>]>,
@@ -310,8 +312,8 @@ pub struct CpuArea {
     owner: u64,
 }
 
-/// SAFETY: the area itself never reads or writes its words; each carved buffer
-/// gets a range no other one covers (`next` only grows, atomically).
+// SAFETY: the area itself never reads or writes its words; each carved buffer
+// gets a range no other one covers (`next` only grows, atomically).
 unsafe impl Sync for CpuArea {}
 
 impl Area for CpuArea {

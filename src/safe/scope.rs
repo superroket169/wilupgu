@@ -10,8 +10,11 @@ use super::{Buf, ComputeDevice, MetaValue, Node};
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
 
+/// GPU work on one device, made by [`ComputeDevice::scope`]. Buffers and nodes
+/// are bound to it once, then named by their slots in as many runs as needed.
+///
 /// 'env is what the closure borrows from outside, 'd the device. They are
-/// apart so a `Recording` borrows only the device, not the buffers.
+/// apart so a [`Recording`] borrows only the device, not the buffers.
 pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
     /// Each pointer comes from a `&'scope mut` given to `bind`/`bind_node`,
@@ -24,21 +27,28 @@ pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     _env: PhantomData<&'env mut &'env ()>,
 }
 
+/// A buffer bound to a scope, by [`Scope::bind`]. It can't leave the scope
+/// or be given to another one.
 #[derive(Clone, Copy)]
 pub struct BufSlot<'scope> {
     index: usize,
     _brand: Brand<'scope>,
 }
 
+/// A node bound to a scope, by [`Scope::bind_node`]. It can't leave the scope
+/// or be given to another one.
 #[derive(Clone, Copy)]
 pub struct NodeSlot<'scope> {
     index: usize,
     _brand: Brand<'scope>,
 }
 
+/// One tensor slot's buffer in [`Scope::run`].
 #[derive(Clone, Copy)]
 pub enum Arg<'scope> {
+    /// For an `Input` slot.
     Read(BufSlot<'scope>),
+    /// For an `Output`, `InOut` or `Accumulate` slot.
     Write(BufSlot<'scope>),
 }
 
@@ -51,6 +61,10 @@ impl<'scope> Arg<'scope> {
 }
 
 impl<B: Backend + Topology> ComputeDevice<B> {
+    /// Runs `f` with a new [`Scope`] on this device, then waits for the device:
+    /// on return and on panic, so every buffer and node bound in it stays
+    /// alive and untouched by the host while the device uses it. Buffers and
+    /// nodes are made before the scope, since a bound one has to outlive it.
     pub fn scope<'d, 'env, R>(
         &'d self,
         f: impl for<'scope> FnOnce(&'scope Scope<'scope, 'env, 'd, B>) -> R,
@@ -73,6 +87,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
 }
 
 impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
+    /// Binds `buf` until the scope ends. Fails if it belongs to another device.
     pub fn bind<'b>(&self, buf: &'scope mut Buf<'b, B>) -> Result<BufSlot<'scope>, String> {
         if !std::ptr::eq(buf.dev, self.dev) {
             return Err("bind: the buffer belongs to another device".to_string());
@@ -86,6 +101,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         })
     }
 
+    /// Binds `node` until the scope ends. Fails if it belongs to another device.
     pub fn bind_node<'b>(&self, node: &'scope mut Node<'b, B>) -> Result<NodeSlot<'scope>, String> {
         if !std::ptr::eq(node.dev, self.dev) {
             return Err("bind_node: the node belongs to another device".to_string());
@@ -99,24 +115,35 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         })
     }
 
+    /// [`Buf::upload`] on a bound buffer. It lands before the runs queued after it.
     pub fn upload(&self, slot: BufSlot<'scope>, data: &HostData) -> Result<(), String> {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`; no other reference to this buffer lives during the call.
         unsafe { &mut *buf }.upload(data)
     }
 
+    /// [`Buf::download`] on a bound buffer: waits for the runs queued before it.
     pub fn download(&self, slot: BufSlot<'scope>) -> HostData {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`.
         unsafe { &*buf }.download()
     }
 
+    /// [`Node::update_meta`] on a bound node; the runs queued after it use it.
     pub fn update_meta(&self, slot: NodeSlot<'scope>, meta: &[MetaValue]) -> Result<(), String> {
         let node = self.nodes.borrow()[slot.index];
         // SAFETY: see `nodes`; no other reference to this node lives during the call.
         unsafe { &mut *node }.update_meta(meta)
     }
 
+    /// Queues `node` to run on `args`, one per tensor slot in slot order.
+    /// Doesn't wait for it to finish.
+    ///
+    /// Fails, before anything reaches the device, if the slot count is wrong,
+    /// an `Input` slot doesn't get [`Arg::Read`] or another slot
+    /// [`Arg::Write`], a buffer's kind isn't its slot's, a buffer is shorter
+    /// than the shader's `min_lens` for the node's meta, or a written buffer is
+    /// in another slot too.
     pub fn run(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), String> {
         // SAFETY: see `nodes`.
         let node = unsafe { &*self.nodes.borrow()[node.index] };
@@ -253,6 +280,8 @@ enum RecordedArg {
     Write(u64),
 }
 
+/// Runs recorded by [`Scope::capture`], to run again with [`Scope::replay`].
+/// It borrows only the device; dropping it frees what the device holds for it.
 pub struct Recording<'d, B: Backend + Topology + Capturable> {
     // `Some` until `Drop` releases it.
     raw: Option<B::Capture>,
@@ -287,7 +316,12 @@ impl<B: Backend + Topology + Capturable> Drop for EndCaptureOnDrop<'_, B> {
 }
 
 impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, 'd, B> {
-    // Records the `run`s that `f` makes instead of running them.
+    /// Records the [`Scope::run`]s that `f` makes instead of running them;
+    /// each one is checked as usual. Uploads and downloads inside `f` aren't
+    /// recorded: they happen right away.
+    ///
+    /// Fails if this scope is already capturing, or if `f` fails; then nothing
+    /// is kept, also when `f` panics.
     pub fn capture(
         &self,
         f: impl FnOnce() -> Result<(), String>,
@@ -321,6 +355,14 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
         result.map(|()| recording)
     }
 
+    /// Queues the recorded runs again, in order, each node with its current
+    /// meta. Doesn't wait for them to finish.
+    ///
+    /// Every recorded buffer and node must be bound in this scope, in any
+    /// order; a node that has moved since the recording counts as another node.
+    /// Every run's checks are made again first, so a fail leaves the buffers
+    /// untouched. Also fails for another device's recording, or inside
+    /// [`Scope::capture`].
     pub fn replay(&self, recording: &Recording<'_, B>) -> Result<(), String> {
         if !std::ptr::eq(recording.dev, self.dev) {
             return Err("replay: the recording belongs to another device".to_string());

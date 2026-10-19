@@ -1,3 +1,10 @@
+//! The safe layer: the API users call. Generic over the backend, it holds
+//! every check that can be written once for all backends, and it is the only
+//! caller of the [`backend`](crate::backend) contract's `unsafe fn`s.
+//!
+//! Buffers ([`Buf`]) and nodes ([`Node`]) are made outside a [`Scope`]; GPU
+//! work runs inside one, and the scope waits for the device before it returns.
+
 use crate::backend::dtype::{DataKind, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
@@ -7,18 +14,26 @@ use crate::backend::{Area as _, Areable, Backend, Carved, DeviceInfo, Node as _,
 mod scope;
 pub use scope::{Arg, BufSlot, NodeSlot, Recording, Scope};
 
+/// How a [`ComputeDevice`] is set up.
 #[derive(Debug, Clone, Default)]
 pub struct DeviceConfig {
-    /// 0 turns the pool off.
+    /// The most bytes the pool keeps in freed buffers for reuse; 0 turns the
+    /// pool off.
     pub pool_bytes: u64,
 }
 
+/// One meta field's value. [`ComputeDevice::node`] and [`Node::update_meta`]
+/// check each against the type of the shader's field.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MetaValue {
+    /// For a [`MetaType::Uint`] field.
     Uint(u32),
+    /// For a [`MetaType::Float`] field.
     Float(f32),
 }
 
+/// An opened device: the raw backend and a pool of freed buffers. Buffers,
+/// nodes and areas borrow it, so it outlives them.
 pub struct ComputeDevice<B: Backend + Topology> {
     /// Declared before `raw` so the pooled buffers are freed while the device is still open.
     pool: BufferPool<B::Buffer>,
@@ -26,6 +41,7 @@ pub struct ComputeDevice<B: Backend + Topology> {
 }
 
 impl<B: Backend + Topology> ComputeDevice<B> {
+    /// Wraps a raw device opened with [`Topology::attach`].
     pub fn new(raw: B, config: DeviceConfig) -> Self {
         Self {
             pool: BufferPool::new(config.pool_bytes),
@@ -33,10 +49,17 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         }
     }
 
+    /// The raw device. Its methods that can cause undefined behavior are
+    /// `unsafe fn`, so lending it out is harmless.
     pub fn raw(&self) -> &B {
         &self.raw
     }
 
+    /// A buffer of `len` elements of `kind`, from the pool or newly allocated.
+    /// A packed kind's length is rounded up to whole host words (a multiple of
+    /// 8 for `Int4`). Its contents are unspecified.
+    ///
+    /// Fails if the device is out of memory, even after the pool is emptied.
     pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Buf<'_, B>, String> {
         let len = whole_words(kind, len);
         let raw = match self.pool.take(kind, len) {
@@ -57,6 +80,11 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         })
     }
 
+    /// Builds a node that runs `shader` with `meta`, `workgroups` at a time.
+    ///
+    /// Fails if the shader has no code in the backend's format, `workgroups`
+    /// is over the backend's limit, the device doesn't support a kind in the
+    /// layout, or `meta` doesn't match the shader's fields in count and type.
     pub fn node(
         &self,
         shader: &'static Shader,
@@ -128,6 +156,9 @@ fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, String> {
         .collect()
 }
 
+/// A buffer: the raw buffer, the kind of its elements and their count. It
+/// borrows its device, or the area it was cut out of. Dropping it gives an
+/// allocated buffer to the pool.
 pub struct Buf<'d, B: Backend + Topology> {
     mem: BufMem<'d, B>,
     kind: DataKind,
@@ -136,18 +167,22 @@ pub struct Buf<'d, B: Backend + Topology> {
 }
 
 impl<B: Backend + Topology> Buf<'_, B> {
+    /// The kind of its elements.
     pub fn kind(&self) -> DataKind {
         self.kind
     }
 
+    /// How many elements it holds.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// True if it holds no elements.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// The raw buffer, to read.
     pub fn raw(&self) -> &B::Buffer {
         match &self.mem {
             BufMem::Alloc(raw) => raw.as_ref().expect("buffer is only taken in drop"),
@@ -162,6 +197,8 @@ impl<B: Backend + Topology> Buf<'_, B> {
         }
     }
 
+    /// Writes `data` to the buffer. Fails unless `data` has the buffer's kind
+    /// and length.
     pub fn upload(&mut self, data: &HostData) -> Result<(), String> {
         if data.kind() != self.kind || data.len() != self.len {
             return Err(format!(
@@ -182,6 +219,8 @@ impl<B: Backend + Topology> Buf<'_, B> {
         Ok(())
     }
 
+    /// Reads the whole buffer back. Blocks until the device work queued before
+    /// it is done.
     pub fn download(&self) -> HostData {
         let bytes = self.kind.bytes_for(self.len);
         io_log::log("dtoh", "-", bytes);
@@ -212,6 +251,8 @@ impl<B: Backend + Topology> Drop for Buf<'_, B> {
 }
 
 impl<B: Backend + Topology + Areable> ComputeDevice<B> {
+    /// Reserves one block of at least `bytes` bytes, to cut buffers out of
+    /// with [`DeviceArea::alloc`].
     pub fn reserve(&self, bytes: u64) -> DeviceArea<'_, B> {
         DeviceArea {
             raw: Some(self.raw.reserve(bytes)),
@@ -220,6 +261,8 @@ impl<B: Backend + Topology + Areable> ComputeDevice<B> {
     }
 }
 
+/// One block of device memory, reserved up front. Buffers cut out of it
+/// borrow it; dropping it gives the block back to the device.
 pub struct DeviceArea<'d, B: Backend + Topology + Areable> {
     // `Some` until `Drop` gives it back to the device.
     raw: Option<B::Area>,
@@ -231,14 +274,19 @@ impl<B: Backend + Topology + Areable> DeviceArea<'_, B> {
         self.raw.as_ref().expect("area is only taken in drop")
     }
 
+    /// The whole area's size, in bytes.
     pub fn size_bytes(&self) -> u64 {
         self.raw().size_bytes()
     }
 
+    /// Bytes not yet cut out.
     pub fn remaining_bytes(&self) -> u64 {
         self.raw().remaining_bytes()
     }
 
+    /// A buffer of `len` elements of `kind`, cut out of the area, with
+    /// [`ComputeDevice::alloc`]'s length rule. Its memory goes back with the
+    /// area, not to the pool. Fails if the area has no room left.
     pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Buf<'_, B>, String> {
         let len = whole_words(kind, len);
         let carved = self.dev.raw.carve(self.raw(), kind.bytes_for(len))?;
@@ -259,6 +307,8 @@ impl<B: Backend + Topology + Areable> Drop for DeviceArea<'_, B> {
     }
 }
 
+/// One dispatch of a shader, built by [`ComputeDevice::node`]: the raw node
+/// and the elements each slot needs for its current meta.
 pub struct Node<'d, B: Backend + Topology> {
     raw: B::Node,
     /// The shader's `min_lens` for the current meta, per slot.
@@ -267,18 +317,23 @@ pub struct Node<'d, B: Backend + Topology> {
 }
 
 impl<B: Backend + Topology> Node<'_, B> {
+    /// The shader it runs.
     pub fn shader(&self) -> &'static Shader {
         self.raw.shader()
     }
 
+    /// How many workgroups one run dispatches.
     pub fn workgroups(&self) -> Workgroups {
         self.raw.workgroups()
     }
 
+    /// The raw node, to read.
     pub fn raw(&self) -> &B::Node {
         &self.raw
     }
 
+    /// Sets new meta values, checked like [`ComputeDevice::node`]'s. The next
+    /// run uses them, and so does the next replay of a recording it is in.
     pub fn update_meta(&mut self, meta: &[MetaValue]) -> Result<(), String> {
         let shader = self.raw.shader();
         let words = meta_words(shader, meta)?;
