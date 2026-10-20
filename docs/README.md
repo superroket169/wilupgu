@@ -15,8 +15,8 @@ In this release:
   over the backend and holds every check that can be written once for all
   of them:
   - `ComputeDevice`: an opened device, with a buffer pool (`DeviceConfig`).
-  - `Buf`: a buffer with its kind and length, from the pool or cut out of
-    a `DeviceArea`.
+  - `Tensor`: a flat buffer (no shape) with its kind and length, from the
+    pool or cut out of a `DeviceArea`.
   - `Node`: one dispatch of a shader, its meta given as typed `MetaValue`s.
   - `Scope`: GPU work runs in a closure, like `std::thread::scope`, and the
     scope waits for the device before it returns. `run` checks slot count,

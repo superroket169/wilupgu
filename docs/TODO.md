@@ -6,14 +6,13 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 ## Next
 
 1. **Core tools**, written from scratch on the safe layer (`ComputeDevice`,
-   `Buf`, `Node`, `Scope`, `Recording`), back in the build.
+   `Tensor`, `Node`, `Scope`, `Recording`), back in the build.
    - run.rs (`RunPart`, `RunPlan`) is where specs become nodes and run: `Once`
      meta resolved when nodes are built; each `Dynamic` read once per run,
      however many nodes share it, then `update_meta`; parts that stream and
      parts that replay a `Recording`.
    - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
      is reached through ownership and borrows.
-   - `Tensor` owns its `Buf`.
 2. **Spread tool**, reworked on core, back in the build.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the

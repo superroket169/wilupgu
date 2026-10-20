@@ -5,7 +5,7 @@ use crate::backend::dtype::HostData;
 use crate::backend::shader::BindingRole;
 use crate::backend::{Access, Backend, Buffer as _, Capturable, Topology};
 
-use super::{Buf, ComputeDevice, MetaValue, Node};
+use super::{ComputeDevice, MetaValue, Node, Tensor};
 
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
@@ -19,7 +19,7 @@ pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
     /// Each pointer comes from a `&'scope mut` given to `bind`/`bind_node`,
     /// so it stays valid and unaliased until the scope ends.
-    bufs: RefCell<Vec<*mut Buf<'d, B>>>,
+    bufs: RefCell<Vec<*mut Tensor<'d, B>>>,
     nodes: RefCell<Vec<*mut Node<'d, B>>>,
     /// `Some` while `capture` runs: what each `run` queued, by address.
     recording: RefCell<Option<Vec<RecordedCall>>>,
@@ -30,7 +30,7 @@ pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
 /// A buffer bound to a scope, by [`Scope::bind`]. It can't leave the scope
 /// or be given to another one.
 #[derive(Clone, Copy)]
-pub struct BufSlot<'scope> {
+pub struct TensorSlot<'scope> {
     index: usize,
     _brand: Brand<'scope>,
 }
@@ -47,13 +47,13 @@ pub struct NodeSlot<'scope> {
 #[derive(Clone, Copy)]
 pub enum Arg<'scope> {
     /// For an `Input` slot.
-    Read(BufSlot<'scope>),
+    Read(TensorSlot<'scope>),
     /// For an `Output`, `InOut` or `Accumulate` slot.
-    Write(BufSlot<'scope>),
+    Write(TensorSlot<'scope>),
 }
 
 impl<'scope> Arg<'scope> {
-    fn slot(self) -> BufSlot<'scope> {
+    fn slot(self) -> TensorSlot<'scope> {
         match self {
             Arg::Read(slot) | Arg::Write(slot) => slot,
         }
@@ -88,14 +88,14 @@ impl<B: Backend + Topology> ComputeDevice<B> {
 
 impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     /// Binds `buf` until the scope ends. Fails if it belongs to another device.
-    pub fn bind<'b>(&self, buf: &'scope mut Buf<'b, B>) -> Result<BufSlot<'scope>, String> {
+    pub fn bind<'b>(&self, buf: &'scope mut Tensor<'b, B>) -> Result<TensorSlot<'scope>, String> {
         if !std::ptr::eq(buf.dev, self.dev) {
             return Err("bind: the buffer belongs to another device".to_string());
         }
         let mut bufs = self.bufs.borrow_mut();
-        bufs.push((buf as *mut Buf<'b, B>).cast());
+        bufs.push((buf as *mut Tensor<'b, B>).cast());
 
-        Ok(BufSlot {
+        Ok(TensorSlot {
             index: bufs.len() - 1,
             _brand: PhantomData,
         })
@@ -115,15 +115,15 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         })
     }
 
-    /// [`Buf::upload`] on a bound buffer. It lands before the runs queued after it.
-    pub fn upload(&self, slot: BufSlot<'scope>, data: &HostData) -> Result<(), String> {
+    /// [`Tensor::upload`] on a bound buffer. It lands before the runs queued after it.
+    pub fn upload(&self, slot: TensorSlot<'scope>, data: &HostData) -> Result<(), String> {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`; no other reference to this buffer lives during the call.
         unsafe { &mut *buf }.upload(data)
     }
 
-    /// [`Buf::download`] on a bound buffer: waits for the runs queued before it.
-    pub fn download(&self, slot: BufSlot<'scope>) -> HostData {
+    /// [`Tensor::download`] on a bound buffer: waits for the runs queued before it.
+    pub fn download(&self, slot: TensorSlot<'scope>) -> HostData {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`.
         unsafe { &*buf }.download()
@@ -401,7 +401,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                             "replay: shader `{}`: a recorded buffer isn't bound in this scope",
                             node.shader().name
                         ))?;
-                    let slot = BufSlot {
+                    let slot = TensorSlot {
                         index,
                         _brand: PhantomData,
                     };

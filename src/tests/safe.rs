@@ -165,7 +165,7 @@ fn update_meta_checks_like_node() {
         .is_err());
 }
 
-fn f32s<'d>(dev: &'d ComputeDevice<CpuBackend>, values: &[f32]) -> Buf<'d, CpuBackend> {
+fn f32s<'d>(dev: &'d ComputeDevice<CpuBackend>, values: &[f32]) -> Tensor<'d, CpuBackend> {
     let mut buf = dev.alloc(DataKind::F32, values.len()).unwrap();
     buf.upload(&F32::wrap(values.to_vec())).unwrap();
     buf

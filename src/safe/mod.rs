@@ -2,7 +2,7 @@
 //! every check that can be written once for all backends, and it is the only
 //! caller of the [`backend`](crate::backend) contract's `unsafe fn`s.
 //!
-//! Buffers ([`Buf`]) and nodes ([`Node`]) are made outside a [`Scope`]; GPU
+//! Buffers ([`Tensor`]) and nodes ([`Node`]) are made outside a [`Scope`]; GPU
 //! work runs inside one, and the scope waits for the device before it returns.
 
 use crate::backend::dtype::{DataKind, HostData};
@@ -12,7 +12,7 @@ use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::backend::{Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology};
 
 mod scope;
-pub use scope::{Arg, BufSlot, NodeSlot, Recording, Scope};
+pub use scope::{Arg, NodeSlot, Recording, Scope, TensorSlot};
 
 /// How a [`ComputeDevice`] is set up.
 #[derive(Debug, Clone, Default)]
@@ -60,7 +60,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
     /// 8 for `Int4`). Its contents are unspecified.
     ///
     /// Fails if the device is out of memory, even after the pool is emptied.
-    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Buf<'_, B>, String> {
+    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, String> {
         let len = whole_words(kind, len);
         let raw = match self.pool.take(kind, len) {
             Some(buf) => buf,
@@ -72,8 +72,8 @@ impl<B: Backend + Topology> ComputeDevice<B> {
                 }
             },
         };
-        Ok(Buf {
-            mem: BufMem::Alloc(Some(raw)),
+        Ok(Tensor {
+            mem: TensorMem::Alloc(Some(raw)),
             kind,
             len,
             dev: self,
@@ -156,17 +156,17 @@ fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, String> {
         .collect()
 }
 
-/// A buffer: the raw buffer, the kind of its elements and their count. It
-/// borrows its device, or the area it was cut out of. Dropping it gives an
-/// allocated buffer to the pool.
-pub struct Buf<'d, B: Backend + Topology> {
-    mem: BufMem<'d, B>,
+/// A tensor: a flat buffer, with no shape. It holds the raw buffer, the kind
+/// of its elements and their count, and borrows its device, or the area it
+/// was cut out of. Dropping it gives an allocated buffer to the pool.
+pub struct Tensor<'d, B: Backend + Topology> {
+    mem: TensorMem<'d, B>,
     kind: DataKind,
     len: usize,
     dev: &'d ComputeDevice<B>,
 }
 
-impl<B: Backend + Topology> Buf<'_, B> {
+impl<B: Backend + Topology> Tensor<'_, B> {
     /// The kind of its elements.
     pub fn kind(&self) -> DataKind {
         self.kind
@@ -185,15 +185,15 @@ impl<B: Backend + Topology> Buf<'_, B> {
     /// The raw buffer, to read.
     pub fn raw(&self) -> &B::Buffer {
         match &self.mem {
-            BufMem::Alloc(raw) => raw.as_ref().expect("buffer is only taken in drop"),
-            BufMem::Carved(carved) => carved.buffer(),
+            TensorMem::Alloc(raw) => raw.as_ref().expect("buffer is only taken in drop"),
+            TensorMem::Carved(carved) => carved.buffer(),
         }
     }
 
     fn raw_mut(&mut self) -> &mut B::Buffer {
         match &mut self.mem {
-            BufMem::Alloc(raw) => raw.as_mut().expect("buffer is only taken in drop"),
-            BufMem::Carved(carved) => carved.buffer_mut(),
+            TensorMem::Alloc(raw) => raw.as_mut().expect("buffer is only taken in drop"),
+            TensorMem::Carved(carved) => carved.buffer_mut(),
         }
     }
 
@@ -232,16 +232,16 @@ impl<B: Backend + Topology> Buf<'_, B> {
 }
 
 /// Where a buffer's memory comes from.
-enum BufMem<'d, B: Backend + Topology> {
+enum TensorMem<'d, B: Backend + Topology> {
     /// `Some` until `Drop` moves it to the pool.
     Alloc(Option<B::Buffer>),
     /// Part of a `DeviceArea`; its memory goes back with the area.
     Carved(Carved<'d, B::Buffer>),
 }
 
-impl<B: Backend + Topology> Drop for Buf<'_, B> {
+impl<B: Backend + Topology> Drop for Tensor<'_, B> {
     fn drop(&mut self) {
-        if let BufMem::Alloc(raw) = &mut self.mem {
+        if let TensorMem::Alloc(raw) = &mut self.mem {
             if let Some(raw) = raw.take() {
                 // A full pool hands the buffer back; dropping it frees it.
                 drop(self.dev.pool.recycle(self.kind, self.len, raw));
@@ -287,11 +287,11 @@ impl<B: Backend + Topology + Areable> DeviceArea<'_, B> {
     /// A buffer of `len` elements of `kind`, cut out of the area, with
     /// [`ComputeDevice::alloc`]'s length rule. Its memory goes back with the
     /// area, not to the pool. Fails if the area has no room left.
-    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Buf<'_, B>, String> {
+    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, String> {
         let len = whole_words(kind, len);
         let carved = self.dev.raw.carve(self.raw(), kind.bytes_for(len))?;
-        Ok(Buf {
-            mem: BufMem::Carved(carved),
+        Ok(Tensor {
+            mem: TensorMem::Carved(carved),
             kind,
             len,
             dev: self.dev,

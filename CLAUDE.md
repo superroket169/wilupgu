@@ -13,7 +13,7 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
 - `src/safe/` is the safe layer, the API users call and the only caller of
   the contract's `unsafe fn`s. Every check that can be written once for all
   backends lives here.
-  - `mod.rs`: `ComputeDevice`, `DeviceConfig`, `Buf`, `DeviceArea`, `Node`,
+  - `mod.rs`: `ComputeDevice`, `DeviceConfig`, `Tensor`, `DeviceArea`, `Node`,
     `MetaValue`.
   - `scope.rs`: `Scope`, slots, `Arg`, `run`, and capture/replay
     (`Recording`).
