@@ -4,10 +4,10 @@
 //! is a pure shadow of ids.
 
 use crate::backend::dtype::DataType;
-use crate::tools::core::deferred::Resolvable;
-use crate::tools::core::device::Device;
-use crate::tools::core::id::{DeviceId, TensorId};
-use crate::tools::core::tensor::{Tensor, TensorSpec};
+use crate::tools::plan::deferred::Resolvable;
+use crate::tools::plan::device::Device;
+use crate::tools::plan::id::{DeviceId, TensorId};
+use crate::tools::plan::tensor::{Tensor, TensorSpec};
 
 /// How a `SpreadTensor` is made: target device + size per part, in order.
 /// A plain `fn`, so it's `Copy` and fits in a `SpreadSpec`;

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::tools::core::id::DeviceId;
-use crate::tools::core::node::{NodeId, NodeSpec};
+use crate::tools::plan::id::DeviceId;
+use crate::tools::plan::node::{NodeId, NodeSpec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Placement {

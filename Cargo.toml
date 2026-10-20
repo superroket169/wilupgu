@@ -22,7 +22,7 @@ half = { version = "2", features = ["bytemuck"] }
 [features]
 default = ["tool-builtins"]
 tool-builtins = []
-tool-core = []
+tool-plan = []
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:naga"]
 cpu = []
 

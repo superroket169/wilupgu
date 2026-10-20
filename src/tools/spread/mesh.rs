@@ -1,5 +1,5 @@
-use crate::tools::core::node::NodeId;
-use crate::tools::core::run::RunPlan;
+use crate::tools::plan::node::NodeId;
+use crate::tools::plan::run::RunPlan;
 
 /// Multi-device execution over a compiled graph
 ///
