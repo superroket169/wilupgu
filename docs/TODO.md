@@ -5,7 +5,7 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Next
 
-1. **Core tools**, written from scratch on the safe layer (`ComputeDevice`,
+1. **Plan tool**, written from scratch on the safe layer (`ComputeDevice`,
    `Tensor`, `Node`, `Scope`, `Recording`), back in the build.
    - run.rs (`RunPart`, `RunPlan`) is where specs become nodes and run: `Once`
      meta resolved when nodes are built; each `Dynamic` read once per run,
@@ -13,7 +13,7 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
      parts that replay a `Recording`.
    - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
      is reached through ownership and borrows.
-2. **Spread tool**, reworked on core, back in the build.
+2. **Spread tool**, reworked on plan, back in the build.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the
      `Device<X>` enum below, ...) is open.
@@ -23,8 +23,8 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 4. **Backend parity tool**: every shader on every backend against the CPU
    reference (strategy note 2), as a tool.
 
-Each tool gets its own feature once it builds (`tool-core`,
-`tool-spread = ["tool-core"]`). Tools import each other as a DAG; a check
+Each tool gets its own feature once it builds (`tool-plan`,
+`tool-spread = ["tool-plan"]`). Tools import each other as a DAG; a check
 for that is still to write.
 
 - Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
@@ -69,8 +69,6 @@ for that is still to write.
   `combine::sum` / `sum_to_all` are missing.
 - **ComputeMesh**: still a skeleton (`todo!()` bodies, no constructor);
   `Placement` is unused outside tests. Several design parts don't exist yet.
-- **A `TensorSpec` size is `Resolvable<u32>`, a live `Tensor`'s length is
-  `usize`.**
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /

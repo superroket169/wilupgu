@@ -25,9 +25,10 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `builtins/` (`tool-builtins`, default): the builtin shader table;
     `codes/{wgsl,native,cuda}/` has one file per shader per format.
     Directory names mirror `ShaderCode` fields.
-  - `core/` (`tool-core`, always built for tests): `deferred` (`Resolvable`,
-    `Relation`, `Dynamic`) and `id` build; `node`, `run` and `tensor` are out
-    of the build (`#[cfg(any())]`) until they are rewritten as specs.
+  - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
+    `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
+    (`TensorSpec`) and `node` (`NodeSpec`); `run` is out of the build
+    (`#[cfg(any())]`) until it is rewritten on the specs.
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module

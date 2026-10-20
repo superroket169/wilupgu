@@ -13,16 +13,8 @@ pub struct GlobalId<T> {
     _of: PhantomData<fn() -> T>,
 }
 
-/// Tag for `TensorId`.
-pub enum TensorTag {}
-
-/// Names one tensor; a node's bindings point to tensors with it.
-pub type TensorId = GlobalId<TensorTag>;
-
 impl<T> GlobalId<T> {
     /// Crate-only, so users can't mint ids; they get them from specs.
-    // TODO: used by the specs once node.rs and tensor.rs are rewritten.
-    #[allow(dead_code)]
     pub(crate) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Self {
