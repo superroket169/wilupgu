@@ -1,126 +1,143 @@
 use super::*;
 
 #[test]
-fn resolves_and_reads() {
+fn given_value_reads_back() {
     let r = Resolvable::new();
-    r.resolver().resolve(42);
-    assert_eq!(*r.value(), 42);
+    r.resolver().unwrap().resolve(42u32);
+    assert_eq!(r.value(), Ok(&42));
 }
 
 #[test]
-#[should_panic(expected = "read before it was resolved")]
-fn value_before_resolve_panics() {
+fn value_before_it_is_given_fails_then_succeeds_once_given() {
     let r: Resolvable<u32> = Resolvable::new();
-    r.value();
+    let resolver = r.resolver().unwrap();
+    assert!(r.value().is_err());
+    resolver.resolve(7);
+    assert_eq!(r.value(), Ok(&7));
 }
 
 #[test]
-#[should_panic(expected = "resolver() called more than once")]
-fn second_resolver_panics() {
+fn resolver_can_be_taken_once() {
     let r: Resolvable<u32> = Resolvable::new();
-    let _first = r.resolver();
-    let _second = r.resolver();
-}
-
-#[test]
-fn clones_share_the_same_resolved_value() {
-    let a = Resolvable::new();
-    let b = a.clone();
-    a.resolver().resolve("batch_size");
-    assert_eq!(*b.value(), "batch_size");
-}
-
-#[test]
-fn fixed_is_resolved_from_the_start() {
-    let r = Resolvable::fixed(1024u32);
-    assert_eq!(*r.value(), 1024);
-}
-
-#[test]
-#[should_panic(expected = "resolver() called more than once")]
-fn fixed_has_no_resolver_left() {
-    Resolvable::fixed(1u32).resolver();
-}
-
-#[test]
-fn relation_resolves_every_output() {
-    let (m, n, k) = (Resolvable::new(), Resolvable::new(), Resolvable::new());
-    let (lengths, [len_a, len_b, len_c]) =
-        Relation::new([&m, &n, &k], |[m, n, k]| [m * k, k * n, m * n]);
-    m.resolver().resolve(2u32);
-    n.resolver().resolve(3);
-    k.resolver().resolve(5);
-    lengths.resolve();
-    assert_eq!(
-        (*len_a.value(), *len_b.value(), *len_c.value()),
-        (10, 15, 6)
+    let _first = r.resolver().unwrap();
+    assert!(r.resolver().is_err());
+    assert!(
+        r.clone().resolver().is_err(),
+        "a clone shares the taken resolver"
     );
 }
 
 #[test]
-fn relations_chain() {
+fn clones_share_the_given_value() {
+    let a = Resolvable::new();
+    let b = a.clone();
+    a.resolver().unwrap().resolve("batch_size");
+    assert_eq!(b.value(), Ok(&"batch_size"));
+}
+
+#[test]
+fn fixed_is_known_from_the_start_and_has_no_resolver() {
+    let r = Resolvable::fixed(1024u32);
+    assert_eq!(r.value(), Ok(&1024));
+    assert!(r.resolver().is_err());
+}
+
+#[test]
+fn relation_computes_from_its_inputs() {
+    let (m, k) = (Resolvable::new(), Resolvable::new());
+    let len = Relation::new([&m, &k], |[m, k]| m * k);
+    m.resolver().unwrap().resolve(2u32);
+    k.resolver().unwrap().resolve(5);
+    assert_eq!(len.value(), Ok(&10));
+}
+
+#[test]
+fn relation_needs_no_resolve_call_and_follows_its_chain() {
     let batch = Resolvable::new();
-    let (tokens, [len]) = Relation::new([&batch], |[b]| [b * 64 + 1]);
-    let (bytes, [size]) = Relation::new([&len], |[l]| [l * 4]);
-    batch.resolver().resolve(2u32);
-    tokens.resolve();
-    bytes.resolve();
-    assert_eq!(*size.value(), 129 * 4);
+    let tokens = Relation::new([&batch], |[b]| b * 64 + 1);
+    let bytes = Relation::new([&tokens], |[t]| t * 4);
+    batch.resolver().unwrap().resolve(2u32);
+    // read the end of the chain first: the middle is computed on the way
+    assert_eq!(bytes.value(), Ok(&(129 * 4)));
+    assert_eq!(tokens.value(), Ok(&129));
 }
 
 #[test]
-fn relation_works_for_floats() {
-    let base = Resolvable::fixed(0.5f32);
-    let (half, [h]) = Relation::new([&base], |[b]| [b / 2.0]);
-    half.resolve();
-    assert_eq!(*h.value(), 0.25);
-}
-
-#[test]
-#[should_panic(expected = "read before it was resolved")]
-fn relation_before_its_inputs_panics() {
+fn relation_fails_while_an_input_is_missing_then_succeeds() {
     let batch: Resolvable<u32> = Resolvable::new();
-    let (tokens, _) = Relation::new([&batch], |[b]| [b * 64]);
-    tokens.resolve();
+    let resolver = batch.resolver().unwrap();
+    let tokens = Relation::new([&batch], |[b]| b * 64);
+    assert!(tokens.value().is_err());
+    resolver.resolve(3);
+    assert_eq!(tokens.value(), Ok(&192));
 }
 
 #[test]
-#[should_panic(expected = "resolver() called more than once")]
-fn relation_output_has_one_source_only() {
-    let batch: Resolvable<u32> = Resolvable::new();
-    let (_tokens, [len]) = Relation::new([&batch], |[b]| [b * 64]);
-    len.resolver();
+fn relation_output_can_have_another_type() {
+    let n = Resolvable::fixed(1000u32);
+    let workgroups = Relation::new([&n], |[n]| (n.div_ceil(256), 1u32, 1u32));
+    let inv = Relation::new([&n], |[n]| 1.0 / n as f32);
+    assert_eq!(workgroups.value(), Ok(&(4, 1, 1)));
+    assert_eq!(inv.value(), Ok(&0.001));
+}
+
+#[test]
+fn relation_computes_once() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let calls = Arc::new(AtomicU32::new(0));
+    let counted = calls.clone();
+    let n = Resolvable::fixed(3u32);
+    let doubled = Relation::new([&n], move |[n]| {
+        counted.fetch_add(1, Ordering::Relaxed);
+        n * 2
+    });
+    let copy = doubled.clone();
+    assert_eq!(doubled.value(), Ok(&6));
+    assert_eq!(copy.value(), Ok(&6));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn relation_output_has_no_resolver() {
+    let n = Resolvable::fixed(1u32);
+    assert!(Relation::new([&n], |[n]| n).resolver().is_err());
+}
+
+#[test]
+fn relation_with_no_inputs_is_a_constant() {
+    let r = Relation::new::<u32, _, 0>([], |[]| 9u32);
+    assert_eq!(r.value(), Ok(&9));
 }
 
 #[test]
 fn dynamic_reads_what_was_set() {
     let lr = Dynamic::new();
     lr.set(0.1f32);
-    assert_eq!(lr.read_for_run(), 0.1);
+    assert_eq!(lr.read_for_run(), Ok(0.1));
 }
 
 #[test]
-#[should_panic(expected = "before it was ever set")]
-fn dynamic_read_before_set_panics() {
-    Dynamic::<u32>::new().read_for_run();
+fn dynamic_read_before_set_fails() {
+    assert!(Dynamic::<u32>::new().read_for_run().is_err());
 }
 
 #[test]
-#[should_panic(expected = "without a set since the last run")]
-fn dynamic_read_twice_without_set_panics() {
+fn dynamic_read_twice_without_set_fails() {
     let step = Dynamic::new();
     step.set(1u32);
-    step.read_for_run();
-    step.read_for_run();
+    step.read_for_run().unwrap();
+    assert!(step.read_for_run().is_err());
 }
 
 #[test]
 fn dynamic_set_to_the_same_value_counts() {
     let lr = Dynamic::new();
     lr.set(0.1f32);
-    lr.read_for_run();
+    lr.read_for_run().unwrap();
     lr.set(0.1);
-    assert_eq!(lr.read_for_run(), 0.1);
+    assert_eq!(lr.read_for_run(), Ok(0.1));
 }
 
 #[test]
@@ -128,7 +145,7 @@ fn dynamic_last_set_wins() {
     let step = Dynamic::new();
     step.set(1u32);
     step.set(2);
-    assert_eq!(step.read_for_run(), 2);
+    assert_eq!(step.read_for_run(), Ok(2));
 }
 
 #[test]
@@ -136,5 +153,5 @@ fn dynamic_clones_share_one_cell() {
     let step = Dynamic::new();
     let handle = step.clone();
     handle.set(7u32);
-    assert_eq!(step.read_for_run(), 7);
+    assert_eq!(step.read_for_run(), Ok(7));
 }
