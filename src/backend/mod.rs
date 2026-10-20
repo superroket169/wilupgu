@@ -88,29 +88,64 @@ pub trait Topology: Sized + Send + Sync + 'static {
     fn info(&self) -> &Self::Info;
 }
 
+/// Offsets and lengths given to [`Storage`]'s methods are in bytes and are
+/// multiples of this, which every backend can copy at (wgpu's rule).
+pub const COPY_ALIGN: u64 = 4;
+
 /// The memory side of a device.
 ///
-/// Uploads, downloads and dispatches run in the order they are called, so an
-/// upload between two runs needs no `synchronize`. This holds for one stream
-/// per device.
+/// Uploads, downloads, copies, clears and dispatches run in the order they
+/// are called, so an upload between two runs needs no `synchronize`. This
+/// holds for one stream per device.
 pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
 
     /// A new buffer of at least `bytes` bytes. Its contents are unspecified.
     fn alloc_raw(&self, bytes: u64) -> Result<Self::Buffer, String>;
 
-    /// Writes `data` to the start of `buf`.
+    /// Writes `data` to `buf`, starting `offset` bytes in.
     ///
     /// # Safety
-    /// `data.len()` must not be over `buf.size_bytes()`.
-    unsafe fn upload_raw(&self, buf: &mut Self::Buffer, data: &[u8]);
+    /// - `offset` and `data.len()` are multiples of [`COPY_ALIGN`].
+    /// - `offset + data.len()` isn't over `buf.size_bytes()`.
+    unsafe fn upload_raw(&self, buf: &mut Self::Buffer, offset: u64, data: &[u8]);
 
-    /// Reads the first `bytes` bytes of `buf` back to the host. Blocks until
-    /// the device work queued before it is done.
+    /// Reads `bytes` bytes of `buf`, starting `offset` bytes in, back to the
+    /// host. Blocks until the device work queued before it is done.
     ///
     /// # Safety
-    /// `bytes` must not be over `buf.size_bytes()`.
-    unsafe fn download_raw(&self, buf: &Self::Buffer, bytes: u64) -> Vec<u8>;
+    /// - `offset` and `bytes` are multiples of [`COPY_ALIGN`].
+    /// - `offset + bytes` isn't over `buf.size_bytes()`.
+    unsafe fn download_raw(&self, buf: &Self::Buffer, offset: u64, bytes: u64) -> Vec<u8>;
+
+    /// Queues a copy of `bytes` bytes from `src`, starting `src_offset` bytes
+    /// in, to `dst`, starting `dst_offset` bytes in, on the device. Doesn't
+    /// wait for it to finish.
+    ///
+    /// Fails if either buffer belongs to another device.
+    ///
+    /// # Safety
+    /// - The offsets and `bytes` are multiples of [`COPY_ALIGN`].
+    /// - Both ranges are inside their buffer.
+    /// - Both buffers live, and the host doesn't touch them, until
+    ///   `synchronize` returns.
+    unsafe fn copy_raw(
+        &self,
+        src: &Self::Buffer,
+        src_offset: u64,
+        dst: &mut Self::Buffer,
+        dst_offset: u64,
+        bytes: u64,
+    ) -> Result<(), String>;
+
+    /// Queues filling the whole of `buf` with zero bytes. Doesn't wait for it
+    /// to finish.
+    ///
+    /// Fails if `buf` belongs to another device.
+    ///
+    /// # Safety
+    /// `buf` lives, and the host doesn't touch it, until `synchronize` returns.
+    unsafe fn clear_raw(&self, buf: &mut Self::Buffer) -> Result<(), String>;
 }
 
 /// The compute side of a device: builds nodes and runs them.

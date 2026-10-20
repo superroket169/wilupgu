@@ -503,3 +503,19 @@ fn capture_and_replay_reject_misuse() {
     // another device's recording
     assert!(other.scope(|s| s.replay(&rec)).is_err());
 }
+
+#[test]
+fn odd_byte_lengths_round_trip() {
+    use crate::backend::dtype::{Int8, F16};
+
+    let dev = device(0);
+    // 3 F16s are 6 bytes, 5 Int8s are 5: neither is a multiple of COPY_ALIGN
+    let mut halves = dev.alloc(DataKind::F16, 3).unwrap();
+    let values: Vec<half::f16> = [1.0f32, 2.0, 3.0].map(half::f16::from_f32).to_vec();
+    halves.upload(&F16::wrap(values.clone())).unwrap();
+    assert_eq!(F16::unwrap(halves.download()), Some(values));
+
+    let mut bytes = dev.alloc(DataKind::Int8, 5).unwrap();
+    bytes.upload(&Int8::wrap(vec![1, 2, 3, 4, 5])).unwrap();
+    assert_eq!(Int8::unwrap(bytes.download()), Some(vec![1, 2, 3, 4, 5]));
+}

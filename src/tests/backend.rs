@@ -12,13 +12,13 @@ fn buffer_with(ctx: &CpuBackend, data: &[f32]) -> CpuBuffer {
     let bytes: &[u8] = bytemuck::cast_slice(data);
     let mut buf = ctx.alloc_raw(bytes.len() as u64).unwrap();
     // SAFETY: the buffer was made for exactly these bytes.
-    unsafe { ctx.upload_raw(&mut buf, bytes) };
+    unsafe { ctx.upload_raw(&mut buf, 0, bytes) };
     buf
 }
 
 fn read_back(ctx: &CpuBackend, buf: &CpuBuffer, len: usize) -> Vec<f32> {
     // SAFETY: every caller asks for no more than the buffer holds.
-    let bytes = unsafe { ctx.download_raw(buf, len as u64 * 4) };
+    let bytes = unsafe { ctx.download_raw(buf, 0, len as u64 * 4) };
     bytemuck::pod_collect_to_vec(&bytes)
 }
 
@@ -268,7 +268,13 @@ fn carved_buffers_sit_side_by_side_and_work_like_any_buffer() {
     assert_eq!(dst.buffer().address() - src.buffer().address(), 12);
 
     // SAFETY: both parts hold 12 bytes.
-    unsafe { ctx.upload_raw(src.buffer_mut(), bytemuck::cast_slice(&[1.0f32, 2.0, 3.0])) };
+    unsafe {
+        ctx.upload_raw(
+            src.buffer_mut(),
+            0,
+            bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]),
+        )
+    };
     let node = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
     // SAFETY: COPY_SHADER's layout, both hold 3 F32s, untouched until `synchronize`.
     unsafe {
@@ -304,4 +310,63 @@ fn carve_rejects_another_devices_area() {
     let (ours, theirs) = (cpu(), cpu());
     let area = theirs.reserve(16);
     assert!(ours.carve(&area, 4).is_err());
+}
+
+// --- offsets, copies and clears ---
+
+#[test]
+fn upload_at_an_offset_and_download_a_range() {
+    let ctx = cpu();
+    let mut buf = buffer_with(&ctx, &[1.0, 2.0, 3.0, 4.0]);
+    // SAFETY: offsets and lengths are multiples of 4 and inside the 16 bytes.
+    let middle = unsafe {
+        ctx.upload_raw(&mut buf, 8, bytemuck::cast_slice(&[30.0f32]));
+        ctx.download_raw(&buf, 4, 8)
+    };
+    assert_eq!(
+        bytemuck::pod_collect_to_vec::<u8, f32>(&middle),
+        vec![2.0, 30.0]
+    );
+    assert_eq!(read_back(&ctx, &buf, 4), vec![1.0, 2.0, 30.0, 4.0]);
+}
+
+#[test]
+fn copy_raw_copies_a_range_between_buffers() {
+    let ctx = cpu();
+    let src = buffer_with(&ctx, &[1.0, 2.0, 3.0, 4.0]);
+    let mut dst = buffer_with(&ctx, &[0.0; 4]);
+    // SAFETY: both ranges are 8 bytes inside 16, at multiples of 4, and
+    // nothing touches the buffers before `synchronize`.
+    unsafe { ctx.copy_raw(&src, 4, &mut dst, 8, 8).unwrap() };
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, &dst, 4), vec![0.0, 0.0, 2.0, 3.0]);
+}
+
+#[test]
+fn copy_raw_rejects_another_devices_buffer() {
+    let (ours, theirs) = (cpu(), cpu());
+    let src = buffer_with(&theirs, &[1.0]);
+    let mut dst = buffer_with(&ours, &[0.0]);
+    // SAFETY: the call must fail before copying anything.
+    assert!(unsafe { ours.copy_raw(&src, 0, &mut dst, 0, 4) }.is_err());
+    assert_eq!(read_back(&ours, &dst, 1), vec![0.0]);
+}
+
+#[test]
+fn clear_raw_zeroes_the_whole_buffer() {
+    let ctx = cpu();
+    let mut buf = buffer_with(&ctx, &[1.0, 2.0, 3.0]);
+    // SAFETY: nothing touches the buffer before `synchronize`.
+    unsafe { ctx.clear_raw(&mut buf).unwrap() };
+    ctx.synchronize();
+    assert_eq!(read_back(&ctx, &buf, 3), vec![0.0; 3]);
+}
+
+#[test]
+fn clear_raw_rejects_another_devices_buffer() {
+    let (ours, theirs) = (cpu(), cpu());
+    let mut buf = buffer_with(&theirs, &[1.0]);
+    // SAFETY: the call must fail before clearing anything.
+    assert!(unsafe { ours.clear_raw(&mut buf) }.is_err());
+    assert_eq!(read_back(&theirs, &buf, 1), vec![1.0]);
 }

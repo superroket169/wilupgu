@@ -143,12 +143,39 @@ impl Storage for CpuBackend {
         })
     }
 
-    unsafe fn upload_raw(&self, buf: &mut CpuBuffer, data: &[u8]) {
-        buf.bytes_mut()[..data.len()].copy_from_slice(data);
+    unsafe fn upload_raw(&self, buf: &mut CpuBuffer, offset: u64, data: &[u8]) {
+        let start = offset as usize;
+        buf.bytes_mut()[start..start + data.len()].copy_from_slice(data);
     }
 
-    unsafe fn download_raw(&self, buf: &CpuBuffer, bytes: u64) -> Vec<u8> {
-        buf.bytes()[..bytes as usize].to_vec()
+    unsafe fn download_raw(&self, buf: &CpuBuffer, offset: u64, bytes: u64) -> Vec<u8> {
+        let start = offset as usize;
+        buf.bytes()[start..start + bytes as usize].to_vec()
+    }
+
+    // Runs right away, like `execute_raw`.
+    unsafe fn copy_raw(
+        &self,
+        src: &CpuBuffer,
+        src_offset: u64,
+        dst: &mut CpuBuffer,
+        dst_offset: u64,
+        bytes: u64,
+    ) -> Result<(), String> {
+        if src.owner != self.owner || dst.owner != self.owner {
+            return Err("copy_raw: a buffer belongs to another device".to_string());
+        }
+        let (from, to, len) = (src_offset as usize, dst_offset as usize, bytes as usize);
+        dst.bytes_mut()[to..to + len].copy_from_slice(&src.bytes()[from..from + len]);
+        Ok(())
+    }
+
+    unsafe fn clear_raw(&self, buf: &mut CpuBuffer) -> Result<(), String> {
+        if buf.owner != self.owner {
+            return Err("clear_raw: the buffer belongs to another device".to_string());
+        }
+        buf.bytes_mut().fill(0);
+        Ok(())
     }
 }
 

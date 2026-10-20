@@ -247,8 +247,8 @@ fn add_runs_on_the_cpu_backend() {
     let mut y = ctx.alloc_raw(12).unwrap();
     // SAFETY: both buffers were made for exactly 12 bytes.
     unsafe {
-        ctx.upload_raw(&mut x, bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]));
-        ctx.upload_raw(&mut y, bytemuck::cast_slice(&[10.0f32, 20.0, 30.0]));
+        ctx.upload_raw(&mut x, 0, bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]));
+        ctx.upload_raw(&mut y, 0, bytemuck::cast_slice(&[10.0f32, 20.0, 30.0]));
     }
     let node = ctx.build_node(&ADD, &[3], Workgroups::linear(1));
     // SAFETY: ADD's layout is (x accumulate, y in), both hold 3 F32s, n = 3,
@@ -259,7 +259,7 @@ fn add_runs_on_the_cpu_backend() {
     }
     ctx.synchronize();
     // SAFETY: 12 bytes fit in x.
-    let out: Vec<f32> = bytemuck::pod_collect_to_vec(&unsafe { ctx.download_raw(&x, 12) });
+    let out: Vec<f32> = bytemuck::pod_collect_to_vec(&unsafe { ctx.download_raw(&x, 0, 12) });
     assert_eq!(out, vec![11.0, 22.0, 33.0]);
 }
 

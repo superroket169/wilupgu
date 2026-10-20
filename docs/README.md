@@ -143,7 +143,8 @@ In your own crate, on your own type, implement:
 
 - `Topology`: find devices and open one (`choosable_devices`, `attach`,
   `info`), with a `DeviceInfo` for each device;
-- `Storage`: buffers (`alloc_raw`, `upload_raw`, `download_raw`);
+- `Storage`: buffers (`alloc_raw`, `upload_raw`, `download_raw`, `copy_raw`,
+  `clear_raw`); offsets and lengths are bytes, multiples of `COPY_ALIGN` (4);
 - `Dispatch`: the shader code format it runs (`FORMAT`), and nodes and runs
   (`build_node`, `update_meta`, `execute_raw`, `synchronize`).
 

@@ -9,7 +9,9 @@ use crate::backend::dtype::{DataKind, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
-use crate::backend::{Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology};
+use crate::backend::{
+    Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology, COPY_ALIGN,
+};
 
 mod scope;
 pub use scope::{Arg, NodeSlot, Recording, Scope, TensorSlot};
@@ -64,11 +66,11 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         let len = whole_words(kind, len);
         let raw = match self.pool.take(kind, len) {
             Some(buf) => buf,
-            None => match self.raw.alloc_raw(kind.bytes_for(len)) {
+            None => match self.raw.alloc_raw(buffer_bytes(kind, len)) {
                 Ok(buf) => buf,
                 Err(_) => {
                     drop(self.pool.drain());
-                    self.raw.alloc_raw(kind.bytes_for(len))?
+                    self.raw.alloc_raw(buffer_bytes(kind, len))?
                 }
             },
         };
@@ -124,6 +126,12 @@ impl<B: Backend + Topology> ComputeDevice<B> {
 // A packed kind's length is rounded up to whole host words.
 fn whole_words(kind: DataKind, len: usize) -> usize {
     len.next_multiple_of(kind.elems_per_host_word())
+}
+
+// The bytes a tensor's buffer is asked for: its elements' bytes, rounded up
+// to `COPY_ALIGN` so the whole of it can always be copied.
+fn buffer_bytes(kind: DataKind, len: usize) -> u64 {
+    kind.bytes_for(len).next_multiple_of(COPY_ALIGN)
 }
 
 fn min_lens(shader: &Shader, words: &[u32], workgroups: Workgroups) -> Vec<usize> {
@@ -211,11 +219,20 @@ impl<B: Backend + Topology> Tensor<'_, B> {
         }
         let bytes = data.as_bytes();
         io_log::log("htod", "-", bytes.len() as u64);
+        // Zero-padded to `COPY_ALIGN`; the padding lands past the last element.
+        let padded;
+        let bytes = if (bytes.len() as u64).is_multiple_of(COPY_ALIGN) {
+            bytes
+        } else {
+            padded = [bytes, &[0; COPY_ALIGN as usize]].concat();
+            &padded[..buffer_bytes(self.kind, self.len) as usize]
+        };
         let dev = self.dev;
 
-        // SAFETY: kind and length match, so `bytes` is `kind.bytes_for(len)`,
-        // which `alloc` asked for (a pooled buffer has the same kind and length).
-        unsafe { dev.raw.upload_raw(self.raw_mut(), bytes) };
+        // SAFETY: kind and length match, so `bytes` is `buffer_bytes(kind, len)`
+        // long, a multiple of `COPY_ALIGN`, and that is what `alloc` asked for
+        // (a pooled buffer has the same kind and length).
+        unsafe { dev.raw.upload_raw(self.raw_mut(), 0, bytes) };
         Ok(())
     }
 
@@ -225,8 +242,14 @@ impl<B: Backend + Topology> Tensor<'_, B> {
         let bytes = self.kind.bytes_for(self.len);
         io_log::log("dtoh", "-", bytes);
 
-        // SAFETY: `alloc` asked for `kind.bytes_for(len)` bytes.
-        let data = unsafe { self.dev.raw.download_raw(self.raw(), bytes) };
+        // SAFETY: `alloc` asked for `buffer_bytes(kind, len)` bytes, a multiple
+        // of `COPY_ALIGN`.
+        let mut data = unsafe {
+            self.dev
+                .raw
+                .download_raw(self.raw(), 0, buffer_bytes(self.kind, self.len))
+        };
+        data.truncate(bytes as usize);
         HostData::from_bytes(self.kind, data)
     }
 }
@@ -289,7 +312,7 @@ impl<B: Backend + Topology + Areable> DeviceArea<'_, B> {
     /// area, not to the pool. Fails if the area has no room left.
     pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, String> {
         let len = whole_words(kind, len);
-        let carved = self.dev.raw.carve(self.raw(), kind.bytes_for(len))?;
+        let carved = self.dev.raw.carve(self.raw(), buffer_bytes(kind, len))?;
         Ok(Tensor {
             mem: TensorMem::Carved(carved),
             kind,
