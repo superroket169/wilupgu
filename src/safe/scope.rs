@@ -5,7 +5,7 @@ use crate::backend::dtype::HostData;
 use crate::backend::shader::BindingRole;
 use crate::backend::{Access, Backend, Buffer as _, Capturable, Topology};
 
-use super::{ComputeDevice, MetaValue, Node, Tensor};
+use super::{copy_ranges, ComputeDevice, MetaValue, Node, Tensor};
 
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
@@ -127,6 +127,40 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`.
         unsafe { &*buf }.download()
+    }
+
+    /// [`Tensor::copy_into`] between two bound tensors, without waiting: it
+    /// lands before the runs queued after it. Not recorded by a capture; it
+    /// happens right away. Also fails if `src` and `dst` are the same tensor.
+    pub fn copy(
+        &self,
+        src: TensorSlot<'scope>,
+        src_offset: usize,
+        dst: TensorSlot<'scope>,
+        dst_offset: usize,
+        len: usize,
+    ) -> Result<(), String> {
+        if src.index == dst.index {
+            return Err("copy: src and dst are the same tensor".to_string());
+        }
+        let bufs = self.bufs.borrow();
+        // SAFETY: see `bufs`; the two slots are different tensors, so the `&`
+        // and the `&mut` don't alias.
+        let (from_ptr, to_ptr) = (bufs[src.index], bufs[dst.index]);
+        let (from_tensor, to_tensor) = unsafe { (&*from_ptr, &mut *to_ptr) };
+        let (from, to) = copy_ranges(from_tensor, src_offset, to_tensor, dst_offset, len)?;
+
+        // SAFETY: `copy_ranges` checked both ranges; both tensors are bound
+        // until the scope ends, and `SyncOnDrop` synchronizes before that.
+        unsafe {
+            self.dev.raw.copy_raw(
+                from_tensor.raw(),
+                from.start,
+                to_tensor.raw_mut(),
+                to.start,
+                to.bytes,
+            )
+        }
     }
 
     /// [`Node::update_meta`] on a bound node; the runs queued after it use it.

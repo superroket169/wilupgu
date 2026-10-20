@@ -16,7 +16,10 @@ In this release:
   of them:
   - `ComputeDevice`: an opened device, with a buffer pool (`DeviceConfig`).
   - `Tensor`: a flat buffer (no shape) with its kind and length, from the
-    pool or cut out of a `DeviceArea`.
+    pool or cut out of a `DeviceArea`. Helpers: `ComputeDevice::tensor_from`,
+    typed `upload_slice`/`download_vec`, ranges (`upload_at`,
+    `download_range`), `copy_into` and `zero` on the device, `copy_to`
+    another device. `Scope::copy` copies between bound tensors.
   - `Node`: one dispatch of a shader, its meta given as typed `MetaValue`s.
   - `Scope`: GPU work runs in a closure, like `std::thread::scope`, and the
     scope waits for the device before it returns. `run` checks slot count,

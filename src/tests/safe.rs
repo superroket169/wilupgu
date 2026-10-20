@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::dtype::{DataType, Int4, F32};
+use crate::backend::dtype::{DataType, Int4, Int8, F32};
 use crate::backend::shader::{MetaField, NativeBinding, NativeCode, ShaderCode};
 use crate::backend::Buffer;
 use crate::backends::{CpuBackend, CpuInfo};
@@ -506,7 +506,7 @@ fn capture_and_replay_reject_misuse() {
 
 #[test]
 fn odd_byte_lengths_round_trip() {
-    use crate::backend::dtype::{Int8, F16};
+    use crate::backend::dtype::F16;
 
     let dev = device(0);
     // 3 F16s are 6 bytes, 5 Int8s are 5: neither is a multiple of COPY_ALIGN
@@ -518,4 +518,127 @@ fn odd_byte_lengths_round_trip() {
     let mut bytes = dev.alloc(DataKind::Int8, 5).unwrap();
     bytes.upload(&Int8::wrap(vec![1, 2, 3, 4, 5])).unwrap();
     assert_eq!(Int8::unwrap(bytes.download()), Some(vec![1, 2, 3, 4, 5]));
+}
+
+// --- helpers ---
+
+#[test]
+fn tensor_from_and_typed_access() {
+    let dev = device(0);
+    let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 2.0])).unwrap();
+    assert_eq!(x.download_vec::<F32>(), Ok(vec![1.0, 2.0]));
+    x.upload_slice::<F32>(&[3.0, 4.0]).unwrap();
+    assert_eq!(x.download_vec::<F32>(), Ok(vec![3.0, 4.0]));
+    assert!(x.download_vec::<Int4>().is_err(), "another kind");
+    assert!(x.upload_slice::<Int4>(&[0]).is_err(), "another kind");
+    assert!(x.upload_slice::<F32>(&[1.0]).is_err(), "another length");
+}
+
+#[test]
+fn copy_to_makes_an_independent_copy_on_another_device() {
+    let (dev, other) = (device(0), device(0));
+    let mut x = f32s(&dev, &[1.0, 2.0]);
+    let copy = x.copy_to(&other).unwrap();
+    x.upload_slice::<F32>(&[9.0, 9.0]).unwrap();
+    assert_eq!(copy.download_vec::<F32>(), Ok(vec![1.0, 2.0]));
+}
+
+#[test]
+fn upload_at_and_download_range_touch_only_their_range() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[0.0; 4]);
+    x.upload_at(1, &F32::wrap(vec![5.0, 6.0])).unwrap();
+    assert_eq!(x.download_vec::<F32>(), Ok(vec![0.0, 5.0, 6.0, 0.0]));
+    assert_eq!(
+        F32::unwrap(x.download_range(1, 2).unwrap()),
+        Some(vec![5.0, 6.0])
+    );
+    assert!(
+        x.upload_at(3, &F32::wrap(vec![1.0, 1.0])).is_err(),
+        "past the end"
+    );
+    assert!(x.download_range(4, 1).is_err(), "past the end");
+    assert!(
+        x.upload_at(0, &Int8::wrap(vec![1; 4])).is_err(),
+        "another kind"
+    );
+}
+
+#[test]
+fn ranges_follow_copy_align() {
+    use crate::backend::dtype::F16;
+    let h = |v: f32| half::f16::from_f32(v);
+
+    let dev = device(0);
+    let mut x = dev
+        .tensor_from(&F16::wrap([1.0, 2.0, 3.0, 4.0, 5.0].map(h).to_vec()))
+        .unwrap();
+    // element 1 of F16 starts at byte 2
+    assert!(x.upload_at(1, &F16::wrap(vec![h(0.0)])).is_err());
+    assert!(x.download_range(1, 1).is_err());
+    // starts at byte 4, but ends at byte 6, inside the tensor
+    assert!(x.upload_at(2, &F16::wrap(vec![h(0.0)])).is_err());
+    // a read may end anywhere
+    assert_eq!(
+        F16::unwrap(x.download_range(2, 1).unwrap()),
+        Some(vec![h(3.0)])
+    );
+    // ends at the tensor's end: the rounding is padding, nothing else moves
+    x.upload_at(4, &F16::wrap(vec![h(50.0)])).unwrap();
+    assert_eq!(
+        F16::unwrap(x.download()),
+        Some([1.0, 2.0, 3.0, 4.0, 50.0].map(h).to_vec())
+    );
+
+    let packed = dev.alloc(DataKind::Int4, 16).unwrap();
+    // 4 Int4s are 2 bytes, 8 are 4
+    assert!(packed.download_range(4, 4).is_err());
+    assert!(packed.download_range(8, 8).is_ok());
+}
+
+#[test]
+fn copy_into_copies_a_range_on_the_device() {
+    let dev = device(0);
+    let src = f32s(&dev, &[1.0, 2.0, 3.0, 4.0]);
+    let mut dst = f32s(&dev, &[0.0; 4]);
+    src.copy_into(1, &mut dst, 2, 2).unwrap();
+    assert_eq!(dst.download_vec::<F32>(), Ok(vec![0.0, 0.0, 2.0, 3.0]));
+
+    let other = device(0);
+    let mut far = f32s(&other, &[0.0; 4]);
+    assert!(src.copy_into(0, &mut far, 0, 1).is_err(), "another device");
+    let mut bytes = dev.alloc(DataKind::Int8, 16).unwrap();
+    assert!(src.copy_into(0, &mut bytes, 0, 1).is_err(), "another kind");
+    assert!(src.copy_into(3, &mut dst, 0, 2).is_err(), "past src's end");
+}
+
+#[test]
+fn zero_clears_the_tensor() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0, 3.0]);
+    x.zero().unwrap();
+    assert_eq!(x.download_vec::<F32>(), Ok(vec![0.0; 3]));
+}
+
+#[test]
+fn scope_copy_lands_between_runs() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0, 2.0]);
+    let mut y = f32s(&dev, &[0.0, 0.0]);
+    let mut double = scale_node(&dev, 2, 2.0);
+
+    dev.scope(|s| -> Result<(), String> {
+        let (xs, ys) = (s.bind(&mut x)?, s.bind(&mut y)?);
+        let double = s.bind_node(&mut double)?;
+        s.run(double, &[Arg::Write(xs)])?;
+        s.copy(xs, 0, ys, 0, 2)?;
+        s.run(double, &[Arg::Write(xs)])?;
+        assert!(s.copy(xs, 0, xs, 1, 1).is_err(), "same tensor");
+        Ok(())
+    })
+    .unwrap();
+
+    // y got x after the first run only
+    assert_eq!(y.download_vec::<F32>(), Ok(vec![2.0, 4.0]));
+    assert_eq!(x.download_vec::<F32>(), Ok(vec![4.0, 8.0]));
 }

@@ -5,7 +5,7 @@
 //! Buffers ([`Tensor`]) and nodes ([`Node`]) are made outside a [`Scope`]; GPU
 //! work runs inside one, and the scope waits for the device before it returns.
 
-use crate::backend::dtype::{DataKind, HostData};
+use crate::backend::dtype::{DataKind, DataType, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
@@ -80,6 +80,13 @@ impl<B: Backend + Topology> ComputeDevice<B> {
             len,
             dev: self,
         })
+    }
+
+    /// A tensor holding `data`: [`ComputeDevice::alloc`] then [`Tensor::upload`].
+    pub fn tensor_from(&self, data: &HostData) -> Result<Tensor<'_, B>, String> {
+        let mut tensor = self.alloc(data.kind(), data.len())?;
+        tensor.upload(data)?;
+        Ok(tensor)
     }
 
     /// Builds a node that runs `shader` with `meta`, `workgroups` at a time.
@@ -205,53 +212,207 @@ impl<B: Backend + Topology> Tensor<'_, B> {
         }
     }
 
-    /// Writes `data` to the buffer. Fails unless `data` has the buffer's kind
-    /// and length.
+    /// Writes `data` to the whole tensor. Fails unless `data` has its kind and length.
     pub fn upload(&mut self, data: &HostData) -> Result<(), String> {
-        if data.kind() != self.kind || data.len() != self.len {
+        if data.len() != self.len {
             return Err(format!(
-                "upload of {} {:?} elements into a buffer of {} {:?}",
+                "upload of {} elements into a tensor of {}",
                 data.len(),
+                self.len
+            ));
+        }
+        self.upload_at(0, data)
+    }
+
+    /// Reads the whole tensor back. Blocks until the device work queued before
+    /// it is done.
+    pub fn download(&self) -> HostData {
+        self.download_range(0, self.len)
+            .expect("the whole tensor is always a valid range")
+    }
+}
+
+// Helpers on top of upload and download: shortcuts, typed access, ranges and
+// copies. Every range is in elements.
+impl<'d, B: Backend + Topology> Tensor<'d, B> {
+    /// Writes `data` into the tensor, starting at element `offset`.
+    ///
+    /// Fails if `data` has another kind, the range doesn't fit, `offset`
+    /// doesn't start at a multiple of [`COPY_ALIGN`] bytes, or the range ends
+    /// neither at such a multiple nor at the tensor's end.
+    pub fn upload_at(&mut self, offset: usize, data: &HostData) -> Result<(), String> {
+        if data.kind() != self.kind {
+            return Err(format!(
+                "upload of {:?} elements into a tensor of {:?}",
                 data.kind(),
-                self.len,
                 self.kind
             ));
         }
+        let range = byte_range(self.kind, self.len, offset, data.len(), true)?;
         let bytes = data.as_bytes();
         io_log::log("htod", "-", bytes.len() as u64);
-        // Zero-padded to `COPY_ALIGN`; the padding lands past the last element.
-        let padded;
-        let bytes = if (bytes.len() as u64).is_multiple_of(COPY_ALIGN) {
-            bytes
-        } else {
-            padded = [bytes, &[0; COPY_ALIGN as usize]].concat();
-            &padded[..buffer_bytes(self.kind, self.len) as usize]
-        };
+
+        // Zero-padded to `COPY_ALIGN`; `byte_range` let it only into the
+        // tensor's padding.
+        let mut padded = bytes.to_vec();
+        padded.resize(range.bytes as usize, 0);
         let dev = self.dev;
 
-        // SAFETY: kind and length match, so `bytes` is `buffer_bytes(kind, len)`
-        // long, a multiple of `COPY_ALIGN`, and that is what `alloc` asked for
-        // (a pooled buffer has the same kind and length).
-        unsafe { dev.raw.upload_raw(self.raw_mut(), 0, bytes) };
+        // SAFETY: `byte_range` checked that the range is aligned and inside the
+        // `buffer_bytes(kind, len)` that `alloc` asked for (a pooled buffer has
+        // the same kind and length).
+        unsafe { dev.raw.upload_raw(self.raw_mut(), range.start, &padded) };
         Ok(())
     }
 
-    /// Reads the whole buffer back. Blocks until the device work queued before
-    /// it is done.
-    pub fn download(&self) -> HostData {
-        let bytes = self.kind.bytes_for(self.len);
-        io_log::log("dtoh", "-", bytes);
+    /// Reads `len` elements back, starting at element `offset`. Blocks until
+    /// the device work queued before it is done.
+    ///
+    /// Fails if the range doesn't fit, or `offset` doesn't start at a multiple
+    /// of [`COPY_ALIGN`] bytes.
+    pub fn download_range(&self, offset: usize, len: usize) -> Result<HostData, String> {
+        let range = byte_range(self.kind, self.len, offset, len, false)?;
+        io_log::log("dtoh", "-", range.exact);
 
-        // SAFETY: `alloc` asked for `buffer_bytes(kind, len)` bytes, a multiple
-        // of `COPY_ALIGN`.
+        // SAFETY: `byte_range` checked that the range is aligned and inside the
+        // `buffer_bytes(kind, len)` that `alloc` asked for.
         let mut data = unsafe {
             self.dev
                 .raw
-                .download_raw(self.raw(), 0, buffer_bytes(self.kind, self.len))
+                .download_raw(self.raw(), range.start, range.bytes)
         };
-        data.truncate(bytes as usize);
-        HostData::from_bytes(self.kind, data)
+        data.truncate(range.exact as usize);
+        Ok(HostData::from_bytes(self.kind, data))
     }
+
+    /// [`Tensor::upload`] from host words of `D`. Fails unless `D` is the
+    /// tensor's kind and `data` its length.
+    pub fn upload_slice<D: DataType>(&mut self, data: &[D::HostRepr]) -> Result<(), String> {
+        self.upload(&D::wrap(data.to_vec()))
+    }
+
+    /// [`Tensor::download`] as host words of `D`. Fails unless `D` is the
+    /// tensor's kind.
+    pub fn download_vec<D: DataType>(&self) -> Result<Vec<D::HostRepr>, String> {
+        if D::KIND != self.kind {
+            return Err(format!("a tensor of {:?} read as {:?}", self.kind, D::KIND));
+        }
+        Ok(D::unwrap(self.download()).expect("the download has the tensor's kind"))
+    }
+
+    /// A full copy on `dev`, which may be another device or backend. Goes
+    /// through the host.
+    pub fn copy_to<'e, B2: Backend + Topology>(
+        &self,
+        dev: &'e ComputeDevice<B2>,
+    ) -> Result<Tensor<'e, B2>, String> {
+        dev.tensor_from(&self.download())
+    }
+
+    /// Copies `len` elements, starting at element `src_offset` of this tensor,
+    /// into `dst` at element `dst_offset`, on the device. Blocks until done.
+    ///
+    /// Fails if `dst` is on another device (see [`Tensor::copy_to`]) or holds
+    /// another kind, or a range breaks [`Tensor::upload_at`]'s rules.
+    pub fn copy_into(
+        &self,
+        src_offset: usize,
+        dst: &mut Tensor<'_, B>,
+        dst_offset: usize,
+        len: usize,
+    ) -> Result<(), String> {
+        if !std::ptr::eq(self.dev, dst.dev) {
+            return Err("copy_into: dst is on another device; use copy_to".to_string());
+        }
+        let (from, to) = copy_ranges(self, src_offset, dst, dst_offset, len)?;
+
+        // SAFETY: `copy_ranges` checked both ranges against `byte_range`'s
+        // rules; both tensors are borrowed until `synchronize` returns.
+        unsafe {
+            self.dev
+                .raw
+                .copy_raw(self.raw(), from.start, dst.raw_mut(), to.start, to.bytes)
+        }?;
+        self.dev.raw.synchronize();
+        Ok(())
+    }
+
+    /// Fills the tensor with zero bytes, on the device. Blocks until done.
+    pub fn zero(&mut self) -> Result<(), String> {
+        let dev = self.dev;
+        // SAFETY: the tensor is borrowed until `synchronize` returns.
+        unsafe { dev.raw.clear_raw(self.raw_mut()) }?;
+        dev.raw.synchronize();
+        Ok(())
+    }
+}
+
+// A range of elements as `Storage` takes it.
+struct ByteRange {
+    start: u64,
+    // `COPY_ALIGN`-rounded, what is moved.
+    bytes: u64,
+    // The range's own bytes, what the caller wants.
+    exact: u64,
+}
+
+// The bytes of elements `offset..offset + len` of a tensor of `tensor_len`.
+// The start must be a multiple of `COPY_ALIGN`; the length is rounded up to
+// one. A write may only round past its last element at the tensor's end,
+// where the rounding falls into the buffer's padding (`buffer_bytes`).
+fn byte_range(
+    kind: DataKind,
+    tensor_len: usize,
+    offset: usize,
+    len: usize,
+    write: bool,
+) -> Result<ByteRange, String> {
+    let end = offset
+        .checked_add(len)
+        .filter(|&end| end <= tensor_len)
+        .ok_or_else(|| {
+            format!("elements {offset}..{offset} + {len} don't fit a tensor of {tensor_len}")
+        })?;
+    let bits = kind.bits_per_elem() as u64;
+    let align_bits = COPY_ALIGN * 8;
+    if !(offset as u64 * bits).is_multiple_of(align_bits) {
+        return Err(format!(
+            "element {offset} of {kind:?} doesn't start at a multiple of {COPY_ALIGN} bytes"
+        ));
+    }
+    if write && end != tensor_len && !(end as u64 * bits).is_multiple_of(align_bits) {
+        return Err(format!(
+            "a write ending at element {end} of {kind:?} ends neither at a multiple of \
+             {COPY_ALIGN} bytes nor at the tensor's end"
+        ));
+    }
+    let exact = kind.bytes_for(len);
+    Ok(ByteRange {
+        start: offset as u64 * bits / 8,
+        bytes: exact.next_multiple_of(COPY_ALIGN),
+        exact,
+    })
+}
+
+// The checks of a copy on one device: same kind, `byte_range`'s rules for
+// reading `src` and writing `dst`.
+fn copy_ranges<B: Backend + Topology>(
+    src: &Tensor<'_, B>,
+    src_offset: usize,
+    dst: &Tensor<'_, B>,
+    dst_offset: usize,
+    len: usize,
+) -> Result<(ByteRange, ByteRange), String> {
+    if src.kind != dst.kind {
+        return Err(format!(
+            "copy of {:?} elements into a tensor of {:?}",
+            src.kind, dst.kind
+        ));
+    }
+    Ok((
+        byte_range(src.kind, src.len, src_offset, len, false)?,
+        byte_range(dst.kind, dst.len, dst_offset, len, true)?,
+    ))
 }
 
 /// Where a buffer's memory comes from.
