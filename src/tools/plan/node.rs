@@ -2,9 +2,9 @@
 //! size. Nothing here touches a backend.
 
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
-use crate::tools::core::deferred::{Dynamic, Resolvable};
-use crate::tools::core::id::GlobalId;
-use crate::tools::core::id::TensorId;
+use crate::tools::plan::deferred::{Dynamic, Resolvable};
+use crate::tools::plan::id::GlobalId;
+use crate::tools::plan::id::TensorId;
 
 pub type NodeId = GlobalId<NodeSpec>;
 

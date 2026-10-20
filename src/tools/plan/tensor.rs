@@ -2,9 +2,9 @@
 //! and the handle to it once one does.
 
 use crate::backend::dtype::{DataKind, DataType, HostData};
-use crate::tools::core::deferred::Resolvable;
-use crate::tools::core::device::Device;
-use crate::tools::core::id::{GlobalId, TensorId};
+use crate::tools::plan::deferred::Resolvable;
+use crate::tools::plan::device::Device;
+use crate::tools::plan::id::{GlobalId, TensorId};
 
 pub enum InitRecipe {
     UploadFromHost(HostData),
