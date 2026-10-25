@@ -27,8 +27,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     Directory names mirror `ShaderCode` fields.
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
-    (`TensorSpec`), `node` (`NodeSpec`), `run` (`RunPlan`) and `runnable`
-    (`Runnable`, `CapturedRunnable`).
+    (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
+    (`RunPlan`) and `runnable` (`Runnable`, `CapturedRunnable`).
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
