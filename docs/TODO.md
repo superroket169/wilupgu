@@ -5,8 +5,8 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Next
 
-1. **Plan tool**: parts of a `Runnable` that replay a `Recording` instead of
-   streaming, on a `Capturable` backend. Then release 0.7.0.
+1. **Plan tool**: `Runnable` and `CapturedRunnable` are in; their design is
+   still being settled (streaming, edits). Then release 0.7.0.
 2. **Spread tool**, reworked on plan, back in the build.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the

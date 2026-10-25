@@ -4,11 +4,9 @@ use crate::backend::shader::{
     MetaField, MetaType, NativeBinding, NativeCode, Shader, ShaderCode, Workgroups,
 };
 use crate::backends::{CpuBackend, CpuInfo};
-use crate::safe::DeviceConfig;
-use crate::safe::{Arg, MetaValue};
+use crate::safe::{Arg, DeviceConfig, MetaValue};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
-use crate::tools::plan::node::MetaSource;
-use crate::tools::plan::node::{Binding, NodeDesc};
+use crate::tools::plan::node::{Binding, MetaSource, NodeDesc};
 use crate::tools::plan::runnable::Runnable;
 use crate::tools::plan::tensor::{TensorDesc, TensorInit};
 
@@ -117,17 +115,15 @@ fn fixed(v: f32) -> MetaSource {
     MetaSource::Float(Resolvable::fixed(v))
 }
 
-fn part(nodes: &[&NodeSpec]) -> RunPart {
-    RunPart {
-        nodes: nodes.iter().map(|n| n.id()).collect(),
-    }
+fn ids(nodes: &[&NodeSpec]) -> Vec<NodeId> {
+    nodes.iter().map(|n| n.id()).collect()
 }
 
-fn plan(tensors: Vec<TensorSpec>, nodes: Vec<NodeSpec>, parts: Vec<RunPart>) -> RunPlan {
+fn plan(tensors: Vec<TensorSpec>, nodes: Vec<NodeSpec>, order: Vec<NodeId>) -> RunPlan {
     RunPlan::new(PlanDesc {
         tensors,
         nodes,
-        parts,
+        order,
     })
     .unwrap()
 }
@@ -136,25 +132,25 @@ fn values(r: &Runnable<'_, CpuBackend>, id: TensorId) -> Vec<f32> {
     r.tensor(id).unwrap().download_vec::<F32>().unwrap()
 }
 
-// x doubles in part 0, then y += x in part 1.
+// x doubles, then y += x.
 fn double_then_add() -> (RunPlan, TensorId, TensorId) {
     let (x, y) = (f32_tensor(vec![1.0, 2.0]), f32_tensor(vec![10.0, 20.0]));
     let (x_id, y_id) = (x.id(), y.id());
     let double = scale_node(x_id, 2, fixed(2.0));
     let add = add_node(y_id, x_id, 2);
-    let parts = vec![part(&[&double]), part(&[&add])];
-    (plan(vec![x, y], vec![add, double], parts), x_id, y_id)
+    let order = ids(&[&double, &add]);
+    (plan(vec![x, y], vec![add, double], order), x_id, y_id)
 }
 
 #[test]
 fn new_rejects_a_binding_outside_the_plan_or_of_another_kind() {
     let x = f32_tensor(vec![1.0]);
     let node = scale_node(x.id(), 1, fixed(2.0));
-    let parts = vec![part(&[&node])];
+    let order = ids(&[&node]);
     assert!(RunPlan::new(PlanDesc {
         tensors: vec![],
         nodes: vec![node],
-        parts,
+        order,
     })
     .is_err());
 
@@ -165,36 +161,36 @@ fn new_rejects_a_binding_outside_the_plan_or_of_another_kind() {
     })
     .unwrap();
     let node = scale_node(half.id(), 1, fixed(2.0));
-    let parts = vec![part(&[&node])];
+    let order = ids(&[&node]);
     assert!(RunPlan::new(PlanDesc {
         tensors: vec![half],
         nodes: vec![node],
-        parts,
+        order,
     })
     .is_err());
 }
 
 #[test]
-fn new_rejects_an_unknown_node_in_a_part_and_a_node_in_no_part() {
+fn new_rejects_an_unknown_node_in_the_order_and_a_node_not_in_it() {
     let x = f32_tensor(vec![1.0]);
     let a = scale_node(x.id(), 1, fixed(2.0));
     let stranger = scale_node(x.id(), 1, fixed(2.0));
-    let parts = vec![part(&[&a, &stranger])];
+    let order = ids(&[&a, &stranger]);
     assert!(RunPlan::new(PlanDesc {
         tensors: vec![x],
         nodes: vec![a],
-        parts,
+        order,
     })
     .is_err());
 
     let x = f32_tensor(vec![1.0]);
     let a = scale_node(x.id(), 1, fixed(2.0));
     let idle = scale_node(x.id(), 1, fixed(2.0));
-    let parts = vec![part(&[&a])];
+    let order = ids(&[&a]);
     assert!(RunPlan::new(PlanDesc {
         tensors: vec![x],
         nodes: vec![a, idle],
-        parts,
+        order,
     })
     .is_err());
 }
@@ -210,8 +206,8 @@ fn ready_waits_for_every_spec() {
     })
     .unwrap();
     let node = scale_node(x.id(), 2, fixed(2.0));
-    let parts = vec![part(&[&node])];
-    let plan = plan(vec![x], vec![node], parts);
+    let order = ids(&[&node]);
+    let plan = plan(vec![x], vec![node], order);
     assert!(plan.ready().is_err());
     assert!(plan.build(&device()).is_err());
     resolver.resolve(2);
@@ -219,7 +215,7 @@ fn ready_waits_for_every_spec() {
 }
 
 #[test]
-fn runs_in_one_scope_follow_the_parts_in_order() {
+fn runs_in_one_scope_follow_the_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
     let mut runnable = plan.build(&dev).unwrap();
@@ -234,13 +230,13 @@ fn runs_in_one_scope_follow_the_parts_in_order() {
 }
 
 #[test]
-fn a_node_can_run_twice_in_a_part() {
+fn a_node_can_be_twice_in_the_order() {
     let x = f32_tensor(vec![1.0]);
     let x_id = x.id();
     let double = scale_node(x_id, 1, fixed(2.0));
-    let parts = vec![part(&[&double, &double])];
+    let order = ids(&[&double, &double]);
     let dev = device();
-    let mut runnable = plan(vec![x], vec![double], parts).build(&dev).unwrap();
+    let mut runnable = plan(vec![x], vec![double], order).build(&dev).unwrap();
     dev.scope(|s| runnable.bind(s)?.run()).unwrap();
     assert_eq!(values(&runnable, x_id), vec![4.0]);
 }
@@ -252,9 +248,9 @@ fn a_shared_dynamic_is_read_once_per_run() {
     let factor = Dynamic::new();
     let sx = scale_node(x_id, 1, MetaSource::FloatPerRun(factor.clone()));
     let sy = scale_node(y_id, 1, MetaSource::FloatPerRun(factor.clone()));
-    let parts = vec![part(&[&sx, &sy])];
+    let order = ids(&[&sx, &sy]);
     let dev = device();
-    let mut runnable = plan(vec![x, y], vec![sx, sy], parts).build(&dev).unwrap();
+    let mut runnable = plan(vec![x, y], vec![sx, sy], order).build(&dev).unwrap();
 
     dev.scope(|s| {
         let r = runnable.bind(s)?;
@@ -268,7 +264,7 @@ fn a_shared_dynamic_is_read_once_per_run() {
     .unwrap();
     assert_eq!(values(&runnable, x_id), vec![30.0]);
     assert_eq!(values(&runnable, y_id), vec![60.0]);
-    let sx = runnable.parts()[0].nodes[0];
+    let sx = runnable.order().next().unwrap();
     assert_eq!(
         runnable.node(sx).unwrap().meta()[1],
         MetaValue::Float(10.0),
@@ -283,9 +279,9 @@ fn a_failed_run_reads_no_dynamic() {
     let (a, b) = (Dynamic::new(), Dynamic::new());
     let sa = scale_node(x_id, 1, MetaSource::FloatPerRun(a.clone()));
     let sb = scale_node(x_id, 1, MetaSource::FloatPerRun(b.clone()));
-    let parts = vec![part(&[&sa, &sb])];
+    let order = ids(&[&sa, &sb]);
     let dev = device();
-    let mut runnable = plan(vec![x], vec![sa, sb], parts).build(&dev).unwrap();
+    let mut runnable = plan(vec![x], vec![sa, sb], order).build(&dev).unwrap();
 
     a.set(2.0);
     dev.scope(|s| {
@@ -327,18 +323,20 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
 }
 
 #[test]
-fn stream_runs_parts_in_the_order_it_picks() {
+fn stream_runs_nodes_in_the_order_it_picks() {
     let (plan, x, y) = double_then_add();
     let dev = device();
     let mut runnable = plan.build(&dev).unwrap();
+    let [double, add] = runnable.order().collect::<Vec<_>>()[..] else {
+        panic!("two nodes")
+    };
     dev.scope(|s| {
         let r = runnable.bind(s)?;
         r.stream(|st| {
-            assert_eq!(st.parts(), 2);
-            st.run_part(1)?; // y += x, before x doubles
-            st.run_part(0)?;
-            st.run_part(0)?;
-            assert!(st.run_part(2).is_err());
+            st.run_node(add)?; // y += x, before x doubles
+            st.run_node(double)?;
+            st.run_node(double)?;
+            assert!(st.run_node(f32_node_id()).is_err());
             Ok(())
         })
     })
@@ -347,12 +345,16 @@ fn stream_runs_parts_in_the_order_it_picks() {
     assert_eq!(values(&runnable, x), vec![4.0, 8.0]);
 }
 
+fn f32_node_id() -> NodeId {
+    scale_node(f32_tensor(vec![0.0]).id(), 1, fixed(1.0)).id()
+}
+
 #[test]
 fn edit_lends_tensors_and_sets_meta() {
     let (plan, x, y) = double_then_add();
     let dev = device();
     let mut runnable = plan.build(&dev).unwrap();
-    let double = runnable.parts()[0].nodes[0];
+    let double = runnable.order().next().unwrap();
 
     let old = runnable
         .edit(|e| {
@@ -379,7 +381,7 @@ fn edit_fails_if_a_node_of_another_shader_is_left() {
     let (plan, _, _) = double_then_add();
     let dev = device();
     let mut runnable = plan.build(&dev).unwrap();
-    let double = runnable.parts()[0].nodes[0];
+    let double = runnable.order().next().unwrap();
     let result = runnable.edit(|e| {
         *e.node(double)? = dev.node(
             &ADD_LIKE,
@@ -404,11 +406,11 @@ fn edit_fails_if_a_tensor_of_another_kind_is_left() {
 }
 
 #[test]
-fn reads_reach_every_part_of_a_runnable() {
+fn reads_reach_everything_in_a_runnable() {
     let (plan, x, _) = double_then_add();
     let dev = device();
     let runnable = plan.build(&dev).unwrap();
-    let double = runnable.parts()[0].nodes[0];
+    let double = runnable.order().next().unwrap();
     assert_eq!(runnable.node(double).unwrap().shader().name, "scale_like");
     assert_eq!(
         runnable.node(double).unwrap().workgroups(),
@@ -422,9 +424,9 @@ fn reads_reach_every_part_of_a_runnable() {
 fn run_fails_on_a_tensor_shorter_than_the_node_needs() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let short = scale_node(x.id(), 4, fixed(2.0));
-    let parts = vec![part(&[&short])];
+    let order = ids(&[&short]);
     let dev = device();
-    let mut runnable = plan(vec![x], vec![short], parts).build(&dev).unwrap();
+    let mut runnable = plan(vec![x], vec![short], order).build(&dev).unwrap();
     assert!(dev.scope(|s| runnable.bind(s)?.run()).is_err());
 }
 
@@ -434,9 +436,9 @@ fn captured_replays_with_this_runs_dynamics() {
     let x_id = x.id();
     let factor = Dynamic::new();
     let node = scale_node(x_id, 2, MetaSource::FloatPerRun(factor.clone()));
-    let parts = vec![part(&[&node])];
+    let order = ids(&[&node]);
     let dev = device();
-    let runnable = plan(vec![x], vec![node], parts).build(&dev).unwrap();
+    let runnable = plan(vec![x], vec![node], order).build(&dev).unwrap();
     let mut captured = runnable.capture().map_err(|(_, e)| e).unwrap();
     assert_eq!(
         captured.tensor(x_id).unwrap().download_vec::<F32>(),
@@ -489,9 +491,9 @@ fn a_failed_capture_gives_the_runnable_back() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
     let short = scale_node(x_id, 4, fixed(2.0));
-    let parts = vec![part(&[&short])];
+    let order = ids(&[&short]);
     let dev = device();
-    let runnable = plan(vec![x], vec![short], parts).build(&dev).unwrap();
+    let runnable = plan(vec![x], vec![short], order).build(&dev).unwrap();
     let Err((runnable, _)) = runnable.capture() else {
         panic!("a node needs more than its tensor holds")
     };
