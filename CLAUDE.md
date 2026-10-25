@@ -27,8 +27,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     Directory names mirror `ShaderCode` fields.
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
-    (`TensorSpec`) and `node` (`NodeSpec`); `run` is out of the build
-    (`#[cfg(any())]`) until it is rewritten on the specs.
+    (`TensorSpec`), `node` (`NodeSpec`), `run` (`RunPlan`) and `runnable`
+    (`Runnable`, `CapturedRunnable`).
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
@@ -41,6 +41,12 @@ attention-specific ops are not builtins; they go to sequexa-core.
 Every shader declares `min_lens`, and its code never goes past it; the
 standards are in `docs/SHADERS.md`. Update the catalog there when a shader
 is added or removed.
+
+## Tools
+
+- Everything a tool holds can be read back: a `&` accessor for each part
+  (tensors, nodes, workgroups, meta, ...). Changes go through narrower
+  methods that can't move what the tool owns.
 
 ## Checks
 

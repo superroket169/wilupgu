@@ -5,14 +5,8 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Next
 
-1. **Plan tool**, written from scratch on the safe layer (`ComputeDevice`,
-   `Tensor`, `Node`, `Scope`, `Recording`), back in the build.
-   - run.rs (`RunPart`, `RunPlan`) is where specs become nodes and run: `Once`
-     meta resolved when nodes are built; each `Dynamic` read once per run,
-     however many nodes share it, then `update_meta`; parts that stream and
-     parts that replay a `Recording`.
-   - Ids only describe what will exist: an `XSpec` carries an id, a live `X`
-     is reached through ownership and borrows.
+1. **Plan tool**: parts of a `Runnable` that replay a `Recording` instead of
+   streaming, on a `Capturable` backend. Then release 0.7.0.
 2. **Spread tool**, reworked on plan, back in the build.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the
@@ -73,6 +67,10 @@ for that is still to write.
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
   pipeline API has no such concept.
+- **Scope's name.** `device.scope(|s| ..)` follows `std::thread::scope`;
+  `device.submit(|s| ..)` says what it does (hands work to the device).
+- **Error enum** in place of `String` errors, for the safe layer and the
+  tools.
 
 ## Checks
 
