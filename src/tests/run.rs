@@ -387,6 +387,48 @@ fn edit_fails_if_a_tensor_or_node_of_another_device_is_left() {
 }
 
 #[test]
+fn edit_fails_if_a_node_with_other_meta_is_left() {
+    let x = f32_tensor(vec![1.0]);
+    let x_id = x.id();
+    let dev = device();
+    let mut runnable = plan(vec![x], vec![scale_call(x_id, 1, fixed(2.0))])
+        .build(&dev)
+        .unwrap();
+    let scale = runnable.order()[0];
+    // the same slots, but meta [Uint, Uint] where the call's sources are [Uint, Float]
+    let result = runnable.edit(|e| {
+        *e.node(scale)? = dev.node(
+            &SCALE_UINT,
+            &[MetaValue::Uint(1), MetaValue::Uint(2)],
+            Workgroups { x: 1, y: 1, z: 1 },
+        )?;
+        Ok(())
+    });
+    assert!(result.is_err());
+}
+
+static SCALE_UINT: Shader = Shader {
+    name: "scale_uint",
+    meta: &[
+        MetaField {
+            name: "n",
+            ty: MetaType::Uint,
+        },
+        MetaField {
+            name: "factor",
+            ty: MetaType::Uint,
+        },
+    ],
+    layout: &[BindingRole::InOut(DataKind::F32)],
+    min_lens: |m, _, l| l.fill(m[0] as usize),
+    workgroup_size: [256, 1, 1],
+    shader_code: ShaderCode {
+        native: Some(NativeCode::new(scale)),
+        ..ShaderCode::NONE
+    },
+};
+
+#[test]
 fn edit_fails_if_a_tensor_of_another_kind_is_left() {
     let (plan, _, y) = double_then_add();
     let dev = device();

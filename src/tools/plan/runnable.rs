@@ -72,7 +72,8 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
     /// Lends every tensor and every call's node to `f` as `&mut`, through an
     /// [`Edit`], to change them or put others in their place between runs.
     /// Fails if `f` does, if it left a tensor or node of another device, or a
-    /// call whose node's slots don't fit its tensors in count or kind.
+    /// call whose node doesn't fit it: slots against its tensors in count or
+    /// kind, meta fields against its meta sources in count or type.
     pub fn edit<R>(
         &mut self,
         f: impl FnOnce(&mut Edit<'_, 'd, B>) -> Result<R, String>,
@@ -110,6 +111,14 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
                         tensor.kind()
                     ));
                 }
+            }
+            let types: Vec<_> = shader.meta.iter().map(|f| f.ty).collect();
+            let sources: Vec<_> = call.sources.iter().map(MetaSource::ty).collect();
+            if types != sources {
+                return Err(format!(
+                    "edit: shader `{}` takes meta {types:?}, its call gives {sources:?}",
+                    shader.name
+                ));
             }
         }
         out
@@ -181,8 +190,10 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     }
 
     /// The node of the call built from the spec with `id`. A node put in its
-    /// place must be of its device and take tensors of the same kinds.
-    /// [`Bound::apply_dynamics`] still sets the per-run fields of its meta.
+    /// place must be of its device, take tensors of the same kinds and meta
+    /// fields of the same types. [`Bound::apply_dynamics`] still sets the
+    /// per-run fields of its meta, by position: a field that means something
+    /// else there gets the same `Dynamic`.
     pub fn node(&mut self, id: CallId) -> Result<&mut Node<'d, B>, String> {
         let call = self
             .runnable
@@ -296,8 +307,9 @@ impl<'d, B: Backend + Topology + Capturable> Runnable<'d, B> {
 /// where they were recorded: only their contents and the `Dynamic` meta
 /// change between replays.
 pub struct CapturedRunnable<'d, B: Backend + Topology + Capturable> {
-    runnable: Runnable<'d, B>,
+    // Declared first, so the recording is released while its nodes and tensors still live.
     recording: Recording<'d, B>,
+    runnable: Runnable<'d, B>,
 }
 
 impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
