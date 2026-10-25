@@ -1,3 +1,6 @@
+//! [`GlobalId`]: the ids specs carry, so what they describe can be named
+//! before it exists and found once it's built.
+
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};

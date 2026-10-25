@@ -13,6 +13,9 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
      `Device<X>` enum below, ...) is open.
    - Two unordered writes to one buffer are no problem on one in-order queue;
      across devices or queues they may need a check again.
+   - A `RunPlan` owns all its tensors; runnables on one device that share
+     tensors are one plan. Spread moves parts in and out of per-device
+     runnables through `edit`, so the plan needs no outside tensors.
 3. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
 4. **Backend parity tool**: every shader on every backend against the CPU
    reference (strategy note 2), as a tool.

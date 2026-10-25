@@ -20,6 +20,8 @@ pub trait Spec: Sized {
     fn new(description: Self::Description) -> Result<Self, String>;
 
     /// This spec's id; nothing else carries it.
+    // Only `TensorSpec` and `CallSpec` ids are looked up for now; `NodeSpec`
+    // and `RunPlan` keep theirs for the tools to come (autograd, mesh).
     fn id(&self) -> GlobalId<Self>;
 
     /// Fails, naming what is missing, while a value the build needs isn't

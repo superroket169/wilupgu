@@ -181,8 +181,8 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     }
 
     /// The node of the call built from the spec with `id`. A node put in its
-    /// place must be of its device and take tensors of the same kinds. A run still puts its
-    /// `Dynamic`s' values in the per-run fields of its meta.
+    /// place must be of its device and take tensors of the same kinds.
+    /// [`Bound::apply_dynamics`] still sets the per-run fields of its meta.
     pub fn node(&mut self, id: CallId) -> Result<&mut Node<'d, B>, String> {
         let call = self
             .runnable

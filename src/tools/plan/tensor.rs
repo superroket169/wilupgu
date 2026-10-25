@@ -7,7 +7,7 @@ use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::spec::Spec;
 
-/// Names one tensor of a plan; a node's bindings point to tensors with it.
+/// Names one tensor of a plan; calls name their tensors with it.
 pub type TensorId = GlobalId<TensorSpec>;
 
 /// What a tensor holds right after it's built.

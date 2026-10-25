@@ -19,9 +19,11 @@ pub enum MetaSource {
     Uint(Resolvable<u32>),
     /// Known once, when the node is built.
     Float(Resolvable<f32>),
-    /// Set again before every run, like an optimizer's step count.
+    /// Read from a [`Dynamic`] when the runnable's `apply_dynamics` is
+    /// called, like an optimizer's step count.
     UintPerRun(Dynamic<u32>),
-    /// Set again before every run, like a scheduled learning rate.
+    /// Read from a [`Dynamic`] when the runnable's `apply_dynamics` is
+    /// called, like a scheduled learning rate.
     FloatPerRun(Dynamic<f32>),
 }
 
@@ -34,12 +36,12 @@ impl MetaSource {
         }
     }
 
-    /// Whether it is set again before every run.
+    /// Whether it is read from a [`Dynamic`].
     pub fn is_per_run(&self) -> bool {
         matches!(self, MetaSource::UintPerRun(_) | MetaSource::FloatPerRun(_))
     }
 
-    // The value a node is built with; a per-run value is 0 until the run sets it.
+    // The value a node is built with; a per-run value is 0 until `apply_dynamics` sets it.
     pub(crate) fn build_value(&self) -> Result<MetaValue, String> {
         Ok(match self {
             MetaSource::Uint(r) => MetaValue::Uint(*r.value()?),
@@ -130,7 +132,7 @@ impl Spec for NodeSpec {
     }
 
     /// Builds the node with every value known once; a per-run value is 0
-    /// until a run sets it.
+    /// until the runnable's `apply_dynamics` sets it.
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
