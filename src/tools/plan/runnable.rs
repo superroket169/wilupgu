@@ -71,13 +71,25 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
 
     /// Lends every tensor and every call's node to `f` as `&mut`, through an
     /// [`Edit`], to change them or put others in their place between runs.
-    /// Fails if `f` does, or if it left a call whose node's slots don't fit
-    /// its tensors in count or kind.
+    /// Fails if `f` does, if it left a tensor or node of another device, or a
+    /// call whose node's slots don't fit its tensors in count or kind.
     pub fn edit<R>(
         &mut self,
         f: impl FnOnce(&mut Edit<'_, 'd, B>) -> Result<R, String>,
     ) -> Result<R, String> {
         let out = f(&mut Edit { runnable: self });
+        let device = self.device;
+        if self
+            .tensors
+            .values()
+            .any(|t| !std::ptr::eq(t.device(), device))
+            || self
+                .calls
+                .values()
+                .any(|c| !std::ptr::eq(c.node.device(), device))
+        {
+            return Err("edit: a tensor or node of another device was left".to_string());
+        }
         for call in self.calls.values() {
             let shader = call.node.shader();
             if shader.layout.len() != call.tensors.len() {
@@ -159,8 +171,7 @@ pub struct Edit<'a, 'd, B: Backend + Topology> {
 
 impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// The tensor built from the spec with `id`. A tensor put in its place
-    /// must be of its kind; one of another device fails the next bind, one
-    /// too short the next run.
+    /// must be of its kind and device; one too short fails the next run.
     pub fn tensor(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
         Ok(self
             .runnable
@@ -170,7 +181,7 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     }
 
     /// The node of the call built from the spec with `id`. A node put in its
-    /// place must take tensors of the same kinds. A run still puts its
+    /// place must be of its device and take tensors of the same kinds. A run still puts its
     /// `Dynamic`s' values in the per-run fields of its meta.
     pub fn node(&mut self, id: CallId) -> Result<&mut Node<'d, B>, String> {
         let call = self

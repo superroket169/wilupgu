@@ -182,7 +182,12 @@ pub struct Tensor<'d, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
 }
 
-impl<B: Backend + Topology> Tensor<'_, B> {
+impl<'d, B: Backend + Topology> Tensor<'d, B> {
+    /// The device it lives on.
+    pub fn device(&self) -> &'d ComputeDevice<B> {
+        self.dev
+    }
+
     /// The kind of its elements.
     pub fn kind(&self) -> DataKind {
         self.kind
@@ -502,7 +507,12 @@ pub struct Node<'d, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
 }
 
-impl<B: Backend + Topology> Node<'_, B> {
+impl<'d, B: Backend + Topology> Node<'d, B> {
+    /// The device it was built on.
+    pub fn device(&self) -> &'d ComputeDevice<B> {
+        self.dev
+    }
+
     /// The shader it runs.
     pub fn shader(&self) -> &'static Shader {
         self.raw.shader()

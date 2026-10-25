@@ -665,3 +665,18 @@ fn node_meta_reads_back_as_built_and_updated() {
         "a failed update keeps the meta"
     );
 }
+
+#[test]
+fn tensors_and_nodes_know_their_device() {
+    let (a, b) = (device(0), device(0));
+    let tensor = a.alloc(DataKind::F32, 1).unwrap();
+    let node = b
+        .node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(1), MetaValue::Float(1.0)],
+            Workgroups { x: 1, y: 1, z: 1 },
+        )
+        .unwrap();
+    assert!(std::ptr::eq(tensor.device(), &a));
+    assert!(std::ptr::eq(node.device(), &b));
+}

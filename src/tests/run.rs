@@ -363,6 +363,30 @@ fn edit_fails_if_a_node_of_another_shader_is_left() {
 }
 
 #[test]
+fn edit_fails_if_a_tensor_or_node_of_another_device_is_left() {
+    let (plan, x, _) = double_then_add();
+    let (dev, other) = (device(), device());
+    let mut runnable = plan.build(&dev).unwrap();
+    let result = runnable.edit(|e| {
+        *e.tensor(x)? = other.tensor_from(&F32::wrap(vec![0.0, 0.0]))?;
+        Ok(())
+    });
+    assert!(result.is_err());
+
+    let mut runnable = double_then_add().0.build(&dev).unwrap();
+    let double = runnable.order()[0];
+    let result = runnable.edit(|e| {
+        *e.node(double)? = other.node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(2), MetaValue::Float(2.0)],
+            Workgroups { x: 1, y: 1, z: 1 },
+        )?;
+        Ok(())
+    });
+    assert!(result.is_err());
+}
+
+#[test]
 fn edit_fails_if_a_tensor_of_another_kind_is_left() {
     let (plan, _, y) = double_then_add();
     let dev = device();
