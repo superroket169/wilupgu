@@ -177,8 +177,14 @@ fn main() -> Result<(), String> {
     let plan = RunPlan::new(PlanDesc {
         tensors: vec![x, y],
         calls: vec![
-            CallSpec::new(CallDesc { node: scale, tensors: vec![x_id] })?,
-            CallSpec::new(CallDesc { node: add, tensors: vec![y_id, x_id] })?,
+            CallSpec::new(CallDesc {
+                node: scale,
+                tensors: vec![x_id],
+            })?,
+            CallSpec::new(CallDesc {
+                node: add,
+                tensors: vec![y_id, x_id],
+            })?,
         ],
     })?;
 
@@ -193,8 +199,14 @@ fn main() -> Result<(), String> {
         Ok::<_, String>(())
     })?;
 
-    assert_eq!(runnable.tensor(x_id)?.download_vec::<F32>()?, vec![6.0, 12.0, 18.0]);
-    assert_eq!(runnable.tensor(y_id)?.download_vec::<F32>()?, vec![8.0, 16.0, 24.0]);
+    assert_eq!(
+        runnable.tensor(x_id)?.download_vec::<F32>()?,
+        vec![6.0, 12.0, 18.0]
+    );
+    assert_eq!(
+        runnable.tensor(y_id)?.download_vec::<F32>()?,
+        vec![8.0, 16.0, 24.0]
+    );
     Ok(())
 }
 ```
