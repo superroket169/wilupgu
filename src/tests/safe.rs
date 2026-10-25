@@ -642,3 +642,26 @@ fn scope_copy_lands_between_runs() {
     assert_eq!(y.download_vec::<F32>(), Ok(vec![2.0, 4.0]));
     assert_eq!(x.download_vec::<F32>(), Ok(vec![4.0, 8.0]));
 }
+
+#[test]
+fn node_meta_reads_back_as_built_and_updated() {
+    let dev = device(0);
+    let wg = Workgroups { x: 1, y: 1, z: 1 };
+    let mut node = dev
+        .node(
+            &SCALE_LIKE,
+            &[MetaValue::Uint(4), MetaValue::Float(2.0)],
+            wg,
+        )
+        .unwrap();
+    assert_eq!(node.meta(), &[MetaValue::Uint(4), MetaValue::Float(2.0)]);
+    node.update_meta(&[MetaValue::Uint(3), MetaValue::Float(0.5)])
+        .unwrap();
+    assert_eq!(node.meta(), &[MetaValue::Uint(3), MetaValue::Float(0.5)]);
+    assert!(node.update_meta(&[MetaValue::Uint(3)]).is_err());
+    assert_eq!(
+        node.meta()[0],
+        MetaValue::Uint(3),
+        "a failed update keeps the meta"
+    );
+}

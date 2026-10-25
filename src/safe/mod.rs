@@ -125,6 +125,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         Ok(Node {
             raw: self.raw.build_node(shader, &words, workgroups),
             lens: min_lens(shader, &words, workgroups),
+            meta: meta.to_vec(),
             dev: self,
         })
     }
@@ -497,6 +498,7 @@ pub struct Node<'d, B: Backend + Topology> {
     raw: B::Node,
     /// The shader's `min_lens` for the current meta, per slot.
     lens: Vec<usize>,
+    meta: Vec<MetaValue>,
     dev: &'d ComputeDevice<B>,
 }
 
@@ -504,6 +506,11 @@ impl<B: Backend + Topology> Node<'_, B> {
     /// The shader it runs.
     pub fn shader(&self) -> &'static Shader {
         self.raw.shader()
+    }
+
+    /// Its meta values, as built or last updated.
+    pub fn meta(&self) -> &[MetaValue] {
+        &self.meta
     }
 
     /// How many workgroups one run dispatches.
@@ -523,6 +530,7 @@ impl<B: Backend + Topology> Node<'_, B> {
         let words = meta_words(shader, meta)?;
         self.lens = min_lens(shader, &words, self.raw.workgroups());
         self.dev.raw.update_meta(&mut self.raw, &words);
+        self.meta = meta.to_vec();
         Ok(())
     }
 }
