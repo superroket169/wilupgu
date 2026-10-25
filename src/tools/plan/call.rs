@@ -4,7 +4,7 @@
 use crate::backend::{Backend, Topology};
 use crate::safe::{ComputeDevice, Node};
 use crate::tools::plan::id::GlobalId;
-use crate::tools::plan::node::NodeSpec;
+use crate::tools::plan::node::{MetaSource, NodeSpec};
 use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorId;
 
@@ -76,14 +76,17 @@ impl Spec for CallSpec {
         Ok(Call {
             node: self.desc.node.build(device)?,
             tensors: self.desc.tensors.clone(),
+            sources: self.desc.node.meta().to_vec(),
         })
     }
 }
 
-/// A built [`CallSpec`]: the node, and the tensor of each of its slots.
+/// A built [`CallSpec`]: the node, the tensor of each of its slots, and
+/// where each field of the node's meta comes from.
 pub struct Call<'d, B: Backend + Topology> {
-    node: Node<'d, B>,
-    tensors: Vec<TensorId>,
+    pub(super) node: Node<'d, B>,
+    pub(super) tensors: Vec<TensorId>,
+    pub(super) sources: Vec<MetaSource>,
 }
 
 impl<'d, B: Backend + Topology> Call<'d, B> {
@@ -95,6 +98,11 @@ impl<'d, B: Backend + Topology> Call<'d, B> {
     /// The tensor of each slot, in slot order.
     pub fn tensors(&self) -> &[TensorId] {
         &self.tensors
+    }
+
+    /// Where each field of the node's meta comes from.
+    pub fn sources(&self) -> &[MetaSource] {
+        &self.sources
     }
 }
 

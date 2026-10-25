@@ -6,7 +6,7 @@ use crate::backend::shader::{
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::DeviceConfig;
 use crate::tools::plan::deferred::Resolvable;
-use crate::tools::plan::node::{Binding, MetaSource, NodeDesc};
+use crate::tools::plan::node::{MetaSource, NodeDesc};
 use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 fn copy(meta: &[u32], bindings: &mut [NativeBinding]) {
@@ -49,7 +49,6 @@ fn node(n: Resolvable<u32>) -> NodeSpec {
     NodeSpec::new(NodeDesc {
         shader: &COPY_LIKE,
         meta: vec![MetaSource::Uint(n)],
-        bindings: vec![Binding::new(1, tensor_id()), Binding::new(2, tensor_id())],
         workgroups: Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 }),
     })
     .unwrap()

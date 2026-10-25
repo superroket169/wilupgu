@@ -14,122 +14,88 @@ use crate::backend::{Backend, Capturable, Topology};
 use crate::safe::{
     Arg, ComputeDevice, MetaValue, Node, NodeSlot, Recording, Scope, Tensor, TensorSlot,
 };
-use crate::tools::plan::id::GlobalId;
-use crate::tools::plan::node::{MetaSource, NodeId};
+use crate::tools::plan::call::{Call, CallId};
+use crate::tools::plan::node::MetaSource;
 use crate::tools::plan::run::{role_kind, RunPlan};
 use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorId;
 
-/// A built [`RunPlan`]: its tensors and nodes on one device, and the order the
-/// nodes run in. Everything in it can be read; [`Runnable::edit`] changes it
-/// between runs, [`Runnable::bind`] runs it inside a scope.
+/// A built [`RunPlan`]: its tensors and calls on one device, and the order
+/// the calls run in. Everything in it can be read; [`Runnable::edit`] changes
+/// it between runs, [`Runnable::bind`] runs it inside a scope.
 pub struct Runnable<'d, B: Backend + Topology> {
     device: &'d ComputeDevice<B>,
-    tensors: Vec<Tensor<'d, B>>,
-    // The spec id of each tensor, in the same order.
-    tensor_ids: Vec<TensorId>,
-    nodes: Vec<Node<'d, B>>,
-    // The spec id of each node, in the same order.
-    node_ids: Vec<NodeId>,
-    // For each node, the index in `tensors` of each slot's tensor.
-    slots: Vec<Vec<usize>>,
-    // For each node, where each meta field comes from.
-    sources: Vec<Vec<MetaSource>>,
-    // The run order, as indexes in `nodes`.
-    order: Vec<usize>,
-}
-
-fn index_of<T>(ids: &[GlobalId<T>], id: GlobalId<T>, what: &str) -> Result<usize, String> {
-    ids.iter()
-        .position(|&i| i == id)
-        .ok_or_else(|| format!("this {what} isn't in the plan"))
+    tensors: HashMap<TensorId, Tensor<'d, B>>,
+    calls: HashMap<CallId, Call<'d, B>>,
+    // The calls' ids, in the order they run.
+    order: Vec<CallId>,
 }
 
 impl<'d, B: Backend + Topology> Runnable<'d, B> {
     // `RunPlan::build`, once the plan is ready.
     pub(super) fn build(plan: &RunPlan, device: &'d ComputeDevice<B>) -> Result<Self, String> {
-        let tensors = plan
-            .tensors()
-            .iter()
-            .map(|spec| spec.build(device))
-            .collect::<Result<_, _>>()?;
-        let tensor_ids: Vec<TensorId> = plan.tensors().iter().map(|t| t.id()).collect();
-        let nodes = plan
-            .nodes()
-            .iter()
-            .map(|spec| spec.build(device))
-            .collect::<Result<_, _>>()?;
-        let node_ids: Vec<NodeId> = plan.nodes().iter().map(|n| n.id()).collect();
-        let slots = plan
-            .nodes()
-            .iter()
-            .map(|spec| {
-                spec.bindings()
-                    .iter()
-                    .map(|b| index_of(&tensor_ids, b.tensor, "tensor"))
-                    .collect()
-            })
-            .collect::<Result<_, _>>()?;
-        let sources = plan.nodes().iter().map(|n| n.meta().to_vec()).collect();
-        let order = plan
-            .order()
-            .iter()
-            .map(|&id| index_of(&node_ids, id, "node"))
-            .collect::<Result<_, _>>()?;
         Ok(Self {
             device,
-            tensors,
-            tensor_ids,
-            nodes,
-            node_ids,
-            slots,
-            sources,
-            order,
+            tensors: plan
+                .tensors()
+                .iter()
+                .map(|spec| Ok((spec.id(), spec.build(device)?)))
+                .collect::<Result<_, String>>()?,
+            calls: plan
+                .calls()
+                .iter()
+                .map(|spec| Ok((spec.id(), spec.build(device)?)))
+                .collect::<Result<_, String>>()?,
+            order: plan.calls().iter().map(|c| c.id()).collect(),
         })
     }
 
     /// The tensor built from the spec with `id`.
     pub fn tensor(&self, id: TensorId) -> Result<&Tensor<'d, B>, String> {
-        Ok(&self.tensors[index_of(&self.tensor_ids, id, "tensor")?])
+        Ok(self
+            .tensors
+            .get(&id)
+            .ok_or("this tensor isn't in the plan")?)
     }
 
-    /// The node built from the spec with `id`: its shader, meta and
-    /// workgroups.
-    pub fn node(&self, id: NodeId) -> Result<&Node<'d, B>, String> {
-        Ok(&self.nodes[index_of(&self.node_ids, id, "node")?])
+    /// The call built from the spec with `id`: its node, tensors and meta
+    /// sources.
+    pub fn call(&self, id: CallId) -> Result<&Call<'d, B>, String> {
+        Ok(self.calls.get(&id).ok_or("this call isn't in the plan")?)
     }
 
-    /// The order the nodes run in.
-    pub fn order(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.order.iter().map(|&i| self.node_ids[i])
+    /// The calls' ids, in the order they run.
+    pub fn order(&self) -> &[CallId] {
+        &self.order
     }
 
-    /// Lends every tensor and node to `f` as `&mut`, through an [`Edit`], to
-    /// change them or put others in their place between runs. Fails if `f`
-    /// does, or if it left a slot with a tensor of another kind than the
-    /// slot's.
+    /// Lends every tensor and every call's node to `f` as `&mut`, through an
+    /// [`Edit`], to change them or put others in their place between runs.
+    /// Fails if `f` does, or if it left a call whose node's slots don't fit
+    /// its tensors in count or kind.
     pub fn edit<R>(
         &mut self,
         f: impl FnOnce(&mut Edit<'_, 'd, B>) -> Result<R, String>,
     ) -> Result<R, String> {
         let out = f(&mut Edit { runnable: self });
-        for (node, slots) in self.nodes.iter().zip(&self.slots) {
-            let shader = node.shader();
-            if shader.layout.len() != slots.len() {
+        for call in self.calls.values() {
+            let shader = call.node.shader();
+            if shader.layout.len() != call.tensors.len() {
                 return Err(format!(
-                    "edit: shader `{}` has {} slots, the plan binds {}",
+                    "edit: shader `{}` has {} slots, its call gives {} tensors",
                     shader.name,
                     shader.layout.len(),
-                    slots.len()
+                    call.tensors.len()
                 ));
             }
-            for (role, &t) in shader.layout.iter().zip(slots) {
-                if self.tensors[t].kind() != role_kind(role) {
+            for (role, &id) in shader.layout.iter().zip(&call.tensors) {
+                let tensor = self.tensor(id)?;
+                if tensor.kind() != role_kind(role) {
                     return Err(format!(
                         "edit: shader `{}` takes {:?} where its tensor is now {:?}",
                         shader.name,
                         role_kind(role),
-                        self.tensors[t].kind()
+                        tensor.kind()
                     ));
                 }
             }
@@ -144,33 +110,49 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
         &'scope mut self,
         s: &'scope Scope<'scope, 'env, 's, B>,
     ) -> Result<BoundRunnable<'scope, 'env, 's, B>, String> {
-        let metas = self.nodes.iter().map(|n| n.meta().to_vec()).collect();
-        let layouts = self.nodes.iter().map(|n| n.shader().layout).collect();
-
+        let tensors: HashMap<TensorId, TensorSlot<'scope>> = self
+            .tensors
+            .iter_mut()
+            .map(|(&id, tensor)| Ok((id, s.bind(tensor)?)))
+            .collect::<Result<_, String>>()?;
+        let mut calls = HashMap::with_capacity(self.calls.len());
+        let mut per_run = Vec::new();
+        for (&id, call) in self.calls.iter_mut() {
+            let Call {
+                node,
+                tensors: ids,
+                sources,
+            } = call;
+            let args = ids
+                .iter()
+                .zip(node.shader().layout)
+                .map(|(id, role)| {
+                    let slot = *tensors.get(id).ok_or("this tensor isn't in the plan")?;
+                    Ok(match role {
+                        BindingRole::Input(_) => Arg::Read(slot),
+                        _ => Arg::Write(slot),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let meta = node.meta().to_vec();
+            let slot = s.bind_node(node)?;
+            let sources: &'scope [MetaSource] = sources;
+            if sources.iter().any(MetaSource::is_per_run) {
+                per_run.push((slot, meta, sources));
+            }
+            calls.insert(id, (slot, args));
+        }
         Ok(BoundRunnable {
             scope: s,
-            tensors: self
-                .tensors
-                .iter_mut()
-                .map(|t| s.bind(t))
-                .collect::<Result<_, _>>()?,
-            nodes: self
-                .nodes
-                .iter_mut()
-                .map(|n| s.bind_node(n))
-                .collect::<Result<_, _>>()?,
-            metas,
-            layouts,
-            tensor_ids: &self.tensor_ids,
-            node_ids: &self.node_ids,
-            slots: &self.slots,
-            sources: &self.sources,
+            tensors,
+            calls,
+            per_run,
             order: &self.order,
         })
     }
 }
 
-/// What [`Runnable::edit`] lends: each tensor and node as `&mut`.
+/// What [`Runnable::edit`] lends: each tensor and each call's node as `&mut`.
 pub struct Edit<'a, 'd, B: Backend + Topology> {
     runnable: &'a mut Runnable<'d, B>,
 }
@@ -180,56 +162,62 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// must be of its kind; one of another device fails the next bind, one
     /// too short the next run.
     pub fn tensor(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
-        let i = index_of(&self.runnable.tensor_ids, id, "tensor")?;
-        Ok(&mut self.runnable.tensors[i])
+        Ok(self
+            .runnable
+            .tensors
+            .get_mut(&id)
+            .ok_or("this tensor isn't in the plan")?)
     }
 
-    /// The node built from the spec with `id`. A node put in its place must
-    /// take tensors of the same kinds. A run still puts its `Dynamic`s'
-    /// values in the per-run fields of its meta.
-    pub fn node(&mut self, id: NodeId) -> Result<&mut Node<'d, B>, String> {
-        let i = index_of(&self.runnable.node_ids, id, "node")?;
-        Ok(&mut self.runnable.nodes[i])
+    /// The node of the call built from the spec with `id`. A node put in its
+    /// place must take tensors of the same kinds. A run still puts its
+    /// `Dynamic`s' values in the per-run fields of its meta.
+    pub fn node(&mut self, id: CallId) -> Result<&mut Node<'d, B>, String> {
+        let call = self
+            .runnable
+            .calls
+            .get_mut(&id)
+            .ok_or("this call isn't in the plan")?;
+        Ok(&mut call.node)
     }
 }
 
 /// A [`Runnable`] bound into a scope by [`Runnable::bind`].
 pub struct BoundRunnable<'scope, 'env, 's, B: Backend + Topology> {
     scope: &'scope Scope<'scope, 'env, 's, B>,
-    tensors: Vec<TensorSlot<'scope>>,
-    nodes: Vec<NodeSlot<'scope>>,
-    // Each node's meta when bound. Only this handle changes it while the node
-    // is bound, and only its per-run fields, so the rest stays as here.
-    metas: Vec<Vec<MetaValue>>,
-    // Each node's shader layout, read when bound: a bound node can't change.
-    layouts: Vec<&'static [BindingRole]>,
-    tensor_ids: &'scope [TensorId],
-    node_ids: &'scope [NodeId],
-    slots: &'scope [Vec<usize>],
-    sources: &'scope [Vec<MetaSource>],
-    order: &'scope [usize],
+    tensors: HashMap<TensorId, TensorSlot<'scope>>,
+    // Each call's node and its args.
+    calls: HashMap<CallId, (NodeSlot<'scope>, Vec<Arg<'scope>>)>,
+    // The calls with a per-run meta field: the node, its meta when bound, and
+    // where each field comes from. Only this handle changes a bound node's
+    // meta, and only its per-run fields, so the rest stays as here.
+    per_run: Vec<(NodeSlot<'scope>, Vec<MetaValue>, &'scope [MetaSource])>,
+    order: &'scope [CallId],
 }
 
 impl<'scope, 'env, 's, B: Backend + Topology> BoundRunnable<'scope, 'env, 's, B> {
     /// The slot of the tensor built from the spec with `id`, for the scope's
     /// own `run`s, `upload`s and `download`s.
     pub fn tensor(&self, id: TensorId) -> Result<TensorSlot<'scope>, String> {
-        Ok(self.tensors[index_of(self.tensor_ids, id, "tensor")?])
+        Ok(*self
+            .tensors
+            .get(&id)
+            .ok_or("this tensor isn't in the plan")?)
     }
 
-    /// Queues one run: every node, in order. Doesn't wait for it.
+    /// Queues one run: every call, in order. Doesn't wait for it.
     ///
     /// First reads each [`Dynamic`](super::deferred::Dynamic) once, however
     /// many nodes use it, and sets the meta of the nodes that use one. Fails
     /// before anything is queued, reading none of them, if one wasn't set
-    /// since the last run. A node that fails its checks stops the run; the
-    /// nodes before it are queued.
+    /// since the last run. A call that fails its checks stops the run; the
+    /// calls before it are queued.
     pub fn run(&self) -> Result<(), String> {
         self.apply_dynamics()?;
-        self.run_order()
+        self.run_all()
     }
 
-    /// One run whose nodes `f` queues itself, in any order and any number of
+    /// One run whose calls `f` queues itself, in any order and any number of
     /// times, with the scope's own work between them. The `Dynamic`s are
     /// read once, before `f`, like [`BoundRunnable::run`].
     pub fn stream<R>(
@@ -240,40 +228,37 @@ impl<'scope, 'env, 's, B: Backend + Topology> BoundRunnable<'scope, 'env, 's, B>
         f(&Stream { bound: self })
     }
 
-    fn run_node(&self, i: usize) -> Result<(), String> {
-        let args: Vec<Arg> = self.slots[i]
-            .iter()
-            .zip(self.layouts[i])
-            .map(|(&t, role)| match role {
-                BindingRole::Input(_) => Arg::Read(self.tensors[t]),
-                _ => Arg::Write(self.tensors[t]),
-            })
-            .collect();
-        self.scope.run(self.nodes[i], &args)
+    fn run_call(&self, id: CallId) -> Result<(), String> {
+        let (node, args) = self.calls.get(&id).ok_or("this call isn't in the plan")?;
+        self.scope.run(*node, args)
     }
 
-    fn run_order(&self) -> Result<(), String> {
-        self.order.iter().try_for_each(|&i| self.run_node(i))
+    fn run_all(&self) -> Result<(), String> {
+        self.order.iter().try_for_each(|&id| self.run_call(id))
     }
 
     fn apply_dynamics(&self) -> Result<(), String> {
-        for (i, meta) in read_dynamics(self.sources, &self.metas)? {
-            self.scope.update_meta(self.nodes[i], &meta)?;
+        for (node, meta) in read_dynamics(&self.per_run)? {
+            self.scope.update_meta(node, &meta)?;
         }
         Ok(())
     }
 }
 
-// This run's meta for every node with a per-run field: `metas` (one per node)
+// This run's meta for each node with a per-run field: its meta when bound,
 // with the per-run fields replaced. Every `Dynamic` is checked first, so a
 // failure reads none of them.
-fn read_dynamics(
-    sources: &[Vec<MetaSource>],
-    metas: &[Vec<MetaValue>],
-) -> Result<Vec<(usize, Vec<MetaValue>)>, String> {
-    let per_run = || sources.iter().flatten().filter(|s| s.is_per_run());
+fn read_dynamics<'scope>(
+    per_run: &[(NodeSlot<'scope>, Vec<MetaValue>, &[MetaSource])],
+) -> Result<Vec<(NodeSlot<'scope>, Vec<MetaValue>)>, String> {
+    let dynamics = || {
+        per_run
+            .iter()
+            .flat_map(|(_, _, sources)| sources.iter())
+            .filter(|s| s.is_per_run())
+    };
     let mut values = HashMap::new();
-    for source in per_run() {
+    for source in dynamics() {
         let (key, value) = match source {
             MetaSource::UintPerRun(d) => (d.key(), MetaValue::Uint(d.peek_for_run()?)),
             MetaSource::FloatPerRun(d) => (d.key(), MetaValue::Float(d.peek_for_run()?)),
@@ -282,7 +267,7 @@ fn read_dynamics(
         values.insert(key, value);
     }
     let mut read = HashSet::new();
-    for source in per_run() {
+    for source in dynamics() {
         match source {
             MetaSource::UintPerRun(d) if read.insert(d.key()) => {
                 d.read_for_run()?;
@@ -293,13 +278,10 @@ fn read_dynamics(
             _ => {}
         }
     }
-    Ok(sources
+    Ok(per_run
         .iter()
-        .zip(metas)
-        .enumerate()
-        .filter(|(_, (s, _))| s.iter().any(MetaSource::is_per_run))
-        .map(|(i, (s, meta))| {
-            let meta = s
+        .map(|(node, meta, sources)| {
+            let meta = sources
                 .iter()
                 .zip(meta)
                 .map(|(source, now)| match source {
@@ -308,27 +290,26 @@ fn read_dynamics(
                     _ => *now,
                 })
                 .collect();
-            (i, meta)
+            (*node, meta)
         })
         .collect())
 }
 
-/// One run of a [`BoundRunnable`], queued node by node.
-// TODO: changing meta and workgroups between nodes, once its design is settled.
+/// One run of a [`BoundRunnable`], queued call by call.
+// TODO: changing meta and workgroups between calls, once its design is settled.
 pub struct Stream<'a, 'scope, 'env, 's, B: Backend + Topology> {
     bound: &'a BoundRunnable<'scope, 'env, 's, B>,
 }
 
 impl<B: Backend + Topology> Stream<'_, '_, '_, '_, B> {
-    /// Queues the node built from the spec with `id`.
-    pub fn run_node(&self, id: NodeId) -> Result<(), String> {
-        self.bound
-            .run_node(index_of(self.bound.node_ids, id, "node")?)
+    /// Queues the call built from the spec with `id`.
+    pub fn run_call(&self, id: CallId) -> Result<(), String> {
+        self.bound.run_call(id)
     }
 }
 
 impl<'d, B: Backend + Topology + Capturable> Runnable<'d, B> {
-    /// Records one run, every node in order, to replay it. Nothing runs
+    /// Records one run, every call in order, to replay it. Nothing runs
     /// while recording. On a fail, gives the runnable back with the error.
     // The runnable comes back by value on a fail; a capture is rare, so its size costs nothing.
     #[allow(clippy::result_large_err)]
@@ -336,7 +317,7 @@ impl<'d, B: Backend + Topology + Capturable> Runnable<'d, B> {
         let device = self.device;
         let recorded = device.scope(|s| {
             let bound = self.bind(s)?;
-            s.capture(|| bound.run_order())
+            s.capture(|| bound.run_all())
         });
         match recorded {
             Ok(recording) => Ok(CapturedRunnable {
@@ -362,26 +343,34 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
         self.runnable.tensor(id)
     }
 
-    /// [`Runnable::node`].
-    pub fn node(&self, id: NodeId) -> Result<&Node<'d, B>, String> {
-        self.runnable.node(id)
+    /// [`Runnable::call`].
+    pub fn call(&self, id: CallId) -> Result<&Call<'d, B>, String> {
+        self.runnable.call(id)
     }
 
     /// [`Runnable::order`].
-    pub fn order(&self) -> impl Iterator<Item = NodeId> + '_ {
+    pub fn order(&self) -> &[CallId] {
         self.runnable.order()
     }
 
     /// [`Tensor::upload`] on the tensor built from the spec with `id`.
     pub fn upload(&mut self, id: TensorId, data: &HostData) -> Result<(), String> {
-        let i = index_of(&self.runnable.tensor_ids, id, "tensor")?;
-        self.runnable.tensors[i].upload(data)
+        self.tensor_mut(id)?.upload(data)
     }
 
     /// [`Tensor::zero`] on the tensor built from the spec with `id`.
     pub fn zero(&mut self, id: TensorId) -> Result<(), String> {
-        let i = index_of(&self.runnable.tensor_ids, id, "tensor")?;
-        self.runnable.tensors[i].zero()
+        self.tensor_mut(id)?.zero()
+    }
+
+    // Private: a tensor put in another's place would move it from where it
+    // was recorded.
+    fn tensor_mut(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
+        Ok(self
+            .runnable
+            .tensors
+            .get_mut(&id)
+            .ok_or("this tensor isn't in the plan")?)
     }
 
     /// Drops the recording and gives back the [`Runnable`].

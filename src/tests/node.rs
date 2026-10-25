@@ -4,7 +4,6 @@ use crate::backend::shader::{BindingRole, MetaField, NativeBinding, NativeCode, 
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::{Arg, DeviceConfig};
 use crate::tools::plan::deferred::Relation;
-use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
     let [NativeBinding::Write(x)] = bindings else {
@@ -38,28 +37,6 @@ static SCALE_LIKE: Shader = Shader {
     },
 };
 
-static TWO_SLOTS: Shader = Shader {
-    name: "two_slots",
-    meta: &[],
-    layout: &[
-        BindingRole::Output(DataKind::F32),
-        BindingRole::Input(DataKind::F32),
-    ],
-    min_lens: |_, _, l| l.fill(0),
-    workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode::NONE,
-};
-
-fn tensor_id() -> TensorId {
-    TensorSpec::new(TensorDesc {
-        kind: DataKind::F32,
-        len: Resolvable::fixed(1),
-        init: TensorInit::Blank,
-    })
-    .unwrap()
-    .id()
-}
-
 fn one_wg() -> Resolvable<Workgroups> {
     Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 })
 }
@@ -68,7 +45,6 @@ fn scale_desc(n: Resolvable<u32>, factor: MetaSource) -> NodeDesc {
     NodeDesc {
         shader: &SCALE_LIKE,
         meta: vec![MetaSource::Uint(n), factor],
-        bindings: vec![Binding::new(1, tensor_id())],
         workgroups: one_wg(),
     }
 }
@@ -85,29 +61,6 @@ fn new_checks_the_meta_against_the_shader() {
 
     let per_run = scale_desc(n(), MetaSource::FloatPerRun(Dynamic::new()));
     assert!(NodeSpec::new(per_run).is_ok());
-}
-
-#[test]
-fn new_checks_every_slot_is_bound_once() {
-    let (a, b) = (tensor_id(), tensor_id());
-    let desc = |bindings| NodeDesc {
-        shader: &TWO_SLOTS,
-        meta: vec![],
-        bindings,
-        workgroups: one_wg(),
-    };
-    assert!(NodeSpec::new(desc(vec![Binding::new(1, a)])).is_err());
-    assert!(NodeSpec::new(desc(vec![Binding::new(1, a), Binding::new(1, b)])).is_err());
-    assert!(NodeSpec::new(desc(vec![Binding::new(0, a), Binding::new(1, b)])).is_err());
-    assert!(NodeSpec::new(desc(vec![
-        Binding::new(1, a),
-        Binding::new(2, b),
-        Binding::new(3, b)
-    ]))
-    .is_err());
-
-    let spec = NodeSpec::new(desc(vec![Binding::new(2, b), Binding::new(1, a)])).unwrap();
-    assert_eq!(spec.bindings(), &[Binding::new(1, a), Binding::new(2, b)]);
 }
 
 #[test]
