@@ -16,6 +16,12 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
    - A `RunPlan` owns all its tensors; runnables on one device that share
      tensors are one plan. Spread moves parts in and out of per-device
      runnables through `edit`, so the plan needs no outside tensors.
+   - `SpreadTensor`: `CombineOp` returns a `Vec` (all-reduce copies) but
+     `SpreadTensor::combine` keeps only the last one. `combine::sum` /
+     `sum_to_all` are missing.
+   - `ComputeMesh` is still a skeleton (`todo!()` bodies, no constructor);
+     `Placement` is unused outside tests. Several design parts don't exist
+     yet.
 3. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
 4. **Backend parity tool**: every shader on every backend against the CPU
    reference (strategy note 2), as a tool.
@@ -69,17 +75,10 @@ for that is still to write.
   prove "WGSL → naga → SPIR-V → vulkano, one dispatch" in a scratch crate.
 - **Rayon backend**: real parallel native shader code for many-core servers.
   `CpuBackend` stays single-threaded for deterministic tests.
-- **SpreadTensor review.** Known inconsistency: `CombineOp` returns a `Vec`
-  (all-reduce copies) but `SpreadTensor::combine` keeps only the last one.
-  `combine::sum` / `sum_to_all` are missing.
-- **ComputeMesh**: still a skeleton (`todo!()` bodies, no constructor);
-  `Placement` is unused outside tests. Several design parts don't exist yet.
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
   pipeline API has no such concept.
-- **Scope's name.** `device.scope(|s| ..)` follows `std::thread::scope`;
-  `device.submit(|s| ..)` says what it does (hands work to the device).
 - **Error enum** in place of `String` errors, for the safe layer and the
   tools.
 
