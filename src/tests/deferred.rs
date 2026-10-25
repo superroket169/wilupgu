@@ -155,3 +155,13 @@ fn dynamic_clones_share_one_cell() {
     handle.set(7u32);
     assert_eq!(step.read_for_run(), Ok(7));
 }
+
+#[test]
+fn dynamic_peek_leaves_the_value_for_the_run() {
+    let step = Dynamic::new();
+    assert!(step.peek_for_run().is_err());
+    step.set(3u32);
+    assert_eq!(step.peek_for_run(), Ok(3));
+    assert_eq!(step.read_for_run(), Ok(3));
+    assert!(step.peek_for_run().is_err());
+}

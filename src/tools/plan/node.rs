@@ -58,7 +58,7 @@ impl MetaSource {
     }
 
     // The value a node is built with; a per-run value is 0 until the run sets it.
-    fn build_value(&self) -> Result<MetaValue, String> {
+    pub(crate) fn build_value(&self) -> Result<MetaValue, String> {
         Ok(match self {
             MetaSource::Uint(r) => MetaValue::Uint(*r.value()?),
             MetaSource::Float(r) => MetaValue::Float(*r.value()?),

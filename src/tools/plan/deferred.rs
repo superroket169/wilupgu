@@ -190,24 +190,28 @@ impl<T: Copy> Dynamic<T> {
         cell.fresh = true;
     }
 
-    // TODO: used by the plan's run once run.rs is rewritten.
-    #[allow(dead_code)]
+    // Shared by clones, so a run reads each `Dynamic` once however many nodes use it.
     pub(crate) fn key(&self) -> usize {
         Arc::as_ptr(&self.cell) as *const () as usize
     }
 
-    // Called once per run per `Dynamic`, however many nodes use it.
-    // TODO: used by the plan's run once run.rs is rewritten.
-    #[allow(dead_code)]
-    pub(crate) fn read_for_run(&self) -> Result<T, String> {
-        let mut cell = self.cell.lock().unwrap();
+    // What the next `read_for_run` returns, without reading it: a run checks
+    // every `Dynamic` first, so a failed run reads none of them.
+    pub(crate) fn peek_for_run(&self) -> Result<T, String> {
+        let cell = self.cell.lock().unwrap();
         let value = cell
             .value
             .ok_or("a Dynamic was read before it was ever set")?;
         if !cell.fresh {
             return Err("a Dynamic was read again without a set since the last run".to_string());
         }
-        cell.fresh = false;
+        Ok(value)
+    }
+
+    // Called once per run per `Dynamic`, however many nodes use it.
+    pub(crate) fn read_for_run(&self) -> Result<T, String> {
+        let value = self.peek_for_run()?;
+        self.cell.lock().unwrap().fresh = false;
         Ok(value)
     }
 }
