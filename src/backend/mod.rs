@@ -167,7 +167,8 @@ pub trait Dispatch: Storage {
 
     /// Writes new words into a node's meta buffer. Called before a run, for
     /// nodes with per-run meta fields. It must be ordered before that run's
-    /// dispatches and must not change the meta buffer's address.
+    /// dispatches, runs queued before it must still see the old words, and
+    /// it must not change the meta buffer's address.
     fn update_meta(&self, node: &mut Self::Node, meta: &[u32]);
 
     /// Queues `node` to run with `bindings`. Doesn't wait for it to finish.

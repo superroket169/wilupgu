@@ -52,6 +52,14 @@ for that is still to write.
   dispatches are missing or late and the run dies with `Parent device is
   lost`. The only working workaround is a submit+wait per node. Upgrading
   wgpu didn't fix it; the native Vulkan backend below is the real fix.
+  `update_meta` must not reach runs queued before it: `queue.write_buffer`
+  lands before every command of the next submit, so two runs with an
+  `update_meta` between them in one submit would both see the new meta.
+  Write each update into its own region of a staging buffer and copy it
+  into the meta buffer with `copy_buffer_to_buffer` in the command stream,
+  so it is ordered with the dispatches; the meta buffer keeps its address
+  (which capture needs). Checked by
+  `scope_upload_and_update_meta_apply_to_the_next_run`.
 - **Native Vulkan backend** (vulkano). WGSL → `naga` → SPIR-V →
   `vulkano::ShaderModule`, with barriers derived from the nodes'
   `BindingRole`s (real RAW/WAW hazards) and recorded by hand. First step:
