@@ -74,6 +74,7 @@ pub trait DeviceInfo: Clone + std::fmt::Debug + Send + Sync + 'static {
 
 /// How a backend finds devices on this machine and opens them.
 pub trait Topology: Sized + Send + Sync + 'static {
+    /// What the backend knows about one of its devices before opening it.
     type Info: DeviceInfo;
 
     /// The backend's name, like `"cuda"`.
@@ -82,6 +83,7 @@ pub trait Topology: Sized + Send + Sync + 'static {
     /// Every device this backend can open on this machine.
     fn choosable_devices() -> Vec<Self::Info>;
 
+    /// Opens the device `info` describes. Fails if it can't be opened.
     fn attach(info: Self::Info) -> Result<Self, String>;
 
     /// The `DeviceInfo` this device was opened from.

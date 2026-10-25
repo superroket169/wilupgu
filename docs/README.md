@@ -1,13 +1,13 @@
 # wilupgu
 
 Backend-independent GPU compute for Rust, aimed at low-end hardware (iGPUs
-included). No autograd, no shape system: GPU memory, shaders and dispatches,
+included). No shape system: GPU memory, shaders and dispatches,
 on a backend contract built on Rust ownership.
 
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
 
-## Status (0.6.0)
+## Status (0.7.0)
 
 In this release:
 
@@ -30,6 +30,12 @@ In this release:
 - **The raw backend contract** (`wilupgu::backend`). A buffer has one owner;
   reading takes `&`, writing `&mut`. The few methods that can cause undefined
   behavior are `unsafe fn`, with their rules in `# Safety`.
+- **The plan tool** (`tool-plan` feature, `wilupgu::tools::plan`): tensors
+  and calls described before a device exists, with sizes and meta that can
+  be known later (`Resolvable`, `Relation`) or change between runs
+  (`Dynamic`). A `RunPlan` builds into a `Runnable`, bound into the caller's
+  scope once and run as often as needed; on a backend with capture it can
+  become a `CapturedRunnable`, which replays one recording.
 - **A CPU backend** (`cpu` feature): single-threaded, for tests and reference
   results, with capture and areas.
 - **17 builtin shaders** (`tool-builtins` feature, on by default), each with
@@ -39,8 +45,7 @@ In this release:
 
 Not in it yet:
 
-- the tools built on the safe layer: tensors, graphs, spreading work over
-  devices;
+- spreading work over devices;
 - GPU backends (wgpu, Vulkan, CUDA).
 
 Open work is in
@@ -71,6 +76,7 @@ Open work is in
 | Feature | Default | Adds |
 |---|---|---|
 | `tool-builtins` | yes | `wilupgu::tools::builtins`, the builtin shader table |
+| `tool-plan` | no | `wilupgu::tools::plan`, the plan tool |
 | `cpu` | no | `wilupgu::backends::CpuBackend` |
 | `wgpu` | no | only the WGSL standards test (parses WGSL with naga); no backend yet |
 
@@ -80,7 +86,7 @@ The builtin `add` (`x[i] += y[i]`) on the CPU backend.
 
 ```toml
 [dependencies]
-wilupgu = { version = "0.6", features = ["cpu"] }
+wilupgu = { version = "0.7", features = ["cpu"] }
 ```
 
 ```rust
@@ -115,6 +121,87 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 ```
+
+## The plan tool
+
+The same work described up front: `x *= factor`, then `y += x`, run twice
+with a factor set from the host each time. Needs the `tool-plan` feature.
+
+```rust
+use wilupgu::backend::dtype::{DataKind, DataType, F32};
+use wilupgu::backend::shader::Workgroups;
+use wilupgu::backend::Topology;
+use wilupgu::backends::CpuBackend;
+use wilupgu::safe::{ComputeDevice, DeviceConfig};
+use wilupgu::tools::builtins::{ADD, SCALE};
+use wilupgu::tools::plan::call::{CallDesc, CallSpec};
+use wilupgu::tools::plan::deferred::{Dynamic, Resolvable};
+use wilupgu::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
+use wilupgu::tools::plan::run::{PlanDesc, RunPlan};
+use wilupgu::tools::plan::spec::Spec;
+use wilupgu::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
+
+fn main() -> Result<(), String> {
+    let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
+    let dev = ComputeDevice::new(cpu, DeviceConfig::default());
+
+    // Described before anything exists on the device.
+    let n = 3;
+    let x = TensorSpec::new(TensorDesc {
+        kind: DataKind::F32,
+        len: Resolvable::fixed(n),
+        init: TensorInit::Upload(F32::wrap(vec![1.0, 2.0, 3.0])),
+    })?;
+    let y = TensorSpec::new(TensorDesc {
+        kind: DataKind::F32,
+        len: Resolvable::fixed(n),
+        init: TensorInit::Zero,
+    })?;
+    let (x_id, y_id) = (x.id(), y.id());
+
+    let factor = Dynamic::new(); // set from the host between runs
+    let wg = Resolvable::fixed(Workgroups::linear(1));
+    let len = || MetaSource::Uint(Resolvable::fixed(n as u32));
+    let scale = NodeSpec::new(NodeDesc {
+        shader: &SCALE,
+        meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
+        workgroups: wg.clone(),
+    })?;
+    let add = NodeSpec::new(NodeDesc {
+        shader: &ADD,
+        meta: vec![len()],
+        workgroups: wg,
+    })?;
+
+    // x *= factor, then y += x.
+    let plan = RunPlan::new(PlanDesc {
+        tensors: vec![x, y],
+        calls: vec![
+            CallSpec::new(CallDesc { node: scale, tensors: vec![x_id] })?,
+            CallSpec::new(CallDesc { node: add, tensors: vec![y_id, x_id] })?,
+        ],
+    })?;
+
+    let mut runnable = plan.build(&dev)?;
+    dev.scope(|s| {
+        let bound = runnable.bind(s)?; // bound once, run as often as needed
+        for f in [2.0, 3.0] {
+            factor.set(f);
+            bound.apply_dynamics()?;
+            bound.run()?;
+        }
+        Ok::<_, String>(())
+    })?;
+
+    assert_eq!(runnable.tensor(x_id)?.download_vec::<F32>()?, vec![6.0, 12.0, 18.0]);
+    assert_eq!(runnable.tensor(y_id)?.download_vec::<F32>()?, vec![8.0, 16.0, 24.0]);
+    Ok(())
+}
+```
+
+Between runs, `Runnable::edit` lends every tensor and node as `&mut`; inside
+a scope, `run_call` runs one call and `tensor` gives a tensor's slot for the
+scope's own work.
 
 ## Capture and areas
 

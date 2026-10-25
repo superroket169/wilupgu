@@ -35,6 +35,7 @@ pub struct Shader {
 /// The type of one meta field. Both are one 32-bit word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MetaType {
+    /// `u32`.
     Uint,
     /// `f32`, passed as its bits in a `u32` word.
     Float,
