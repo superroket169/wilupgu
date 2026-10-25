@@ -4,7 +4,7 @@
 //! - [`Resolvable`]: one value, fixed, given later by whoever holds its
 //!   [`Resolver`] (the user, SysTopology), or computed by a [`Relation`].
 //!   Reading it computes whatever it depends on, once.
-//! - [`Dynamic`]: a value set again before every run.
+//! - [`Dynamic`]: a value that changes between runs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -160,66 +160,38 @@ impl Relation {
     }
 }
 
-struct DynamicCell<T> {
-    value: Option<T>,
-    // Set by `set`, cleared by a run's read: a run may only read a value set since the last one.
-    fresh: bool,
-}
-
-/// A value set again before every run, like an optimizer's step count. Clones
+/// A value that changes between runs, like an optimizer's step count. Clones
 /// share it.
 pub struct Dynamic<T> {
-    cell: Arc<Mutex<DynamicCell<T>>>,
+    value: Arc<Mutex<Option<T>>>,
 }
 
 impl<T: Copy> Dynamic<T> {
     /// A value not set yet.
     pub fn new() -> Self {
         Self {
-            cell: Arc::new(Mutex::new(DynamicCell {
-                value: None,
-                fresh: false,
-            })),
+            value: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Sets the value for the next run; the last set before it wins.
+    /// Sets the value; whoever reads it next sees this one.
     pub fn set(&self, value: T) {
-        let mut cell = self.cell.lock().unwrap();
-        cell.value = Some(value);
-        cell.fresh = true;
+        *self.value.lock().unwrap() = Some(value);
     }
 
-    // Shared by clones, so a run reads each `Dynamic` once however many nodes use it.
-    pub(crate) fn key(&self) -> usize {
-        Arc::as_ptr(&self.cell) as *const () as usize
-    }
-
-    // What the next `read_for_run` returns, without reading it: a run checks
-    // every `Dynamic` first, so a failed run reads none of them.
-    pub(crate) fn peek_for_run(&self) -> Result<T, String> {
-        let cell = self.cell.lock().unwrap();
-        let value = cell
-            .value
-            .ok_or("a Dynamic was read before it was ever set")?;
-        if !cell.fresh {
-            return Err("a Dynamic was read again without a set since the last run".to_string());
-        }
-        Ok(value)
-    }
-
-    // Called once per run per `Dynamic`, however many nodes use it.
-    pub(crate) fn read_for_run(&self) -> Result<T, String> {
-        let value = self.peek_for_run()?;
-        self.cell.lock().unwrap().fresh = false;
-        Ok(value)
+    // The value now. Fails only if it was never set.
+    pub(crate) fn read(&self) -> Result<T, String> {
+        self.value
+            .lock()
+            .unwrap()
+            .ok_or_else(|| "a Dynamic was read before it was ever set".to_string())
     }
 }
 
 impl<T> Clone for Dynamic<T> {
     fn clone(&self) -> Self {
         Self {
-            cell: self.cell.clone(),
+            value: self.value.clone(),
         }
     }
 }
@@ -232,7 +204,7 @@ impl<T: Copy> Default for Dynamic<T> {
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Dynamic<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.cell.lock().unwrap().value {
+        match &*self.value.lock().unwrap() {
             Some(v) => f.debug_tuple("Dynamic").field(v).finish(),
             None => f.write_str("Dynamic(<unset>)"),
         }

@@ -6,7 +6,7 @@
 //! [`CapturedRunnable::bind`] bind everything into the caller's scope once,
 //! and the handle they return runs as many times as needed in it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::backend::dtype::HostData;
 use crate::backend::shader::BindingRole;
@@ -109,7 +109,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
     pub fn bind<'scope, 'env, 's>(
         &'scope mut self,
         s: &'scope Scope<'scope, 'env, 's, B>,
-    ) -> Result<BoundRunnable<'scope, 'env, 's, B>, String> {
+    ) -> Result<Bound<'scope, 'env, 's, B>, String> {
         let tensors: HashMap<TensorId, TensorSlot<'scope>> = self
             .tensors
             .iter_mut()
@@ -142,7 +142,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
             }
             calls.insert(id, (slot, args));
         }
-        Ok(BoundRunnable {
+        Ok(Bound {
             scope: s,
             tensors,
             calls,
@@ -183,7 +183,7 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
 }
 
 /// A [`Runnable`] bound into a scope by [`Runnable::bind`].
-pub struct BoundRunnable<'scope, 'env, 's, B: Backend + Topology> {
+pub struct Bound<'scope, 'env, 's, B: Backend + Topology> {
     scope: &'scope Scope<'scope, 'env, 's, B>,
     tensors: HashMap<TensorId, TensorSlot<'scope>>,
     // Each call's node and its args.
@@ -195,7 +195,7 @@ pub struct BoundRunnable<'scope, 'env, 's, B: Backend + Topology> {
     order: &'scope [CallId],
 }
 
-impl<'scope, 'env, 's, B: Backend + Topology> BoundRunnable<'scope, 'env, 's, B> {
+impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
     /// The slot of the tensor built from the spec with `id`, for the scope's
     /// own `run`s, `upload`s and `download`s.
     pub fn tensor(&self, id: TensorId) -> Result<TensorSlot<'scope>, String> {
@@ -205,107 +205,59 @@ impl<'scope, 'env, 's, B: Backend + Topology> BoundRunnable<'scope, 'env, 's, B>
             .ok_or("this tensor isn't in the plan")?)
     }
 
-    /// Queues one run: every call, in order. Doesn't wait for it.
-    ///
-    /// First reads each [`Dynamic`](super::deferred::Dynamic) once, however
-    /// many nodes use it, and sets the meta of the nodes that use one. Fails
-    /// before anything is queued, reading none of them, if one wasn't set
-    /// since the last run. A call that fails its checks stops the run; the
-    /// calls before it are queued.
+    /// Queues every call, in order. Doesn't wait for them. Each node runs
+    /// with its meta as it is: [`Bound::apply_dynamics`] is what changes it.
+    /// A call that fails its checks stops the run; the calls before it are
+    /// queued.
     pub fn run(&self) -> Result<(), String> {
-        self.apply_dynamics()?;
         self.run_all()
     }
 
-    /// One run whose calls `f` queues itself, in any order and any number of
-    /// times, with the scope's own work between them. The `Dynamic`s are
-    /// read once, before `f`, like [`BoundRunnable::run`].
-    pub fn stream<R>(
-        &self,
-        f: impl FnOnce(&Stream<'_, 'scope, 'env, 's, B>) -> Result<R, String>,
-    ) -> Result<R, String> {
-        self.apply_dynamics()?;
-        f(&Stream { bound: self })
-    }
-
-    fn run_call(&self, id: CallId) -> Result<(), String> {
+    /// Queues the call built from the spec with `id`, like one call of
+    /// [`Bound::run`].
+    pub fn run_call(&self, id: CallId) -> Result<(), String> {
         let (node, args) = self.calls.get(&id).ok_or("this call isn't in the plan")?;
         self.scope.run(*node, args)
     }
 
-    fn run_all(&self) -> Result<(), String> {
-        self.order.iter().try_for_each(|&id| self.run_call(id))
-    }
-
-    fn apply_dynamics(&self) -> Result<(), String> {
+    /// Sets the meta of the nodes that use a
+    /// [`Dynamic`](super::deferred::Dynamic) to its value now; the runs queued
+    /// after it use it. Fails, changing no meta, if one was never set.
+    pub fn apply_dynamics(&self) -> Result<(), String> {
         for (node, meta) in read_dynamics(&self.per_run)? {
             self.scope.update_meta(node, &meta)?;
         }
         Ok(())
     }
+
+    fn run_all(&self) -> Result<(), String> {
+        self.order.iter().try_for_each(|&id| self.run_call(id))
+    }
 }
 
-// This run's meta for each node with a per-run field: its meta when bound,
-// with the per-run fields replaced. Every `Dynamic` is checked first, so a
-// failure reads none of them.
+// The meta for each node with a per-run field: its meta when bound, with the
+// per-run fields set to their `Dynamic`'s value now. Every value is read
+// before any meta is set, so a failure sets none.
 fn read_dynamics<'scope>(
     per_run: &[(NodeSlot<'scope>, Vec<MetaValue>, &[MetaSource])],
 ) -> Result<Vec<(NodeSlot<'scope>, Vec<MetaValue>)>, String> {
-    let dynamics = || {
-        per_run
-            .iter()
-            .flat_map(|(_, _, sources)| sources.iter())
-            .filter(|s| s.is_per_run())
-    };
-    let mut values = HashMap::new();
-    for source in dynamics() {
-        let (key, value) = match source {
-            MetaSource::UintPerRun(d) => (d.key(), MetaValue::Uint(d.peek_for_run()?)),
-            MetaSource::FloatPerRun(d) => (d.key(), MetaValue::Float(d.peek_for_run()?)),
-            _ => unreachable!("filtered to per-run sources"),
-        };
-        values.insert(key, value);
-    }
-    let mut read = HashSet::new();
-    for source in dynamics() {
-        match source {
-            MetaSource::UintPerRun(d) if read.insert(d.key()) => {
-                d.read_for_run()?;
-            }
-            MetaSource::FloatPerRun(d) if read.insert(d.key()) => {
-                d.read_for_run()?;
-            }
-            _ => {}
-        }
-    }
-    Ok(per_run
+    per_run
         .iter()
         .map(|(node, meta, sources)| {
             let meta = sources
                 .iter()
                 .zip(meta)
-                .map(|(source, now)| match source {
-                    MetaSource::UintPerRun(d) => values[&d.key()],
-                    MetaSource::FloatPerRun(d) => values[&d.key()],
-                    _ => *now,
+                .map(|(source, now)| {
+                    Ok(match source {
+                        MetaSource::UintPerRun(d) => MetaValue::Uint(d.read()?),
+                        MetaSource::FloatPerRun(d) => MetaValue::Float(d.read()?),
+                        _ => *now,
+                    })
                 })
-                .collect();
-            (*node, meta)
+                .collect::<Result<_, String>>()?;
+            Ok((*node, meta))
         })
-        .collect())
-}
-
-/// One run of a [`BoundRunnable`], queued call by call.
-// TODO: changing meta and workgroups between calls, once its design is settled.
-pub struct Stream<'a, 'scope, 'env, 's, B: Backend + Topology> {
-    bound: &'a BoundRunnable<'scope, 'env, 's, B>,
-}
-
-impl<B: Backend + Topology> Stream<'_, '_, '_, '_, B> {
-    /// Queues the call built from the spec with `id`.
-    pub fn run_call(&self, id: CallId) -> Result<(), String> {
-        self.bound.run_call(id)
-    }
+        .collect()
 }
 
 impl<'d, B: Backend + Topology + Capturable> Runnable<'d, B> {
@@ -382,8 +334,8 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
     pub fn bind<'scope, 'env, 's>(
         &'scope mut self,
         s: &'scope Scope<'scope, 'env, 's, B>,
-    ) -> Result<BoundCaptured<'scope, 'env, 's, 'd, B>, String> {
-        Ok(BoundCaptured {
+    ) -> Result<CapturedBound<'scope, 'env, 's, 'd, B>, String> {
+        Ok(CapturedBound {
             bound: self.runnable.bind(s)?,
             recording: &self.recording,
         })
@@ -391,21 +343,25 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
 }
 
 /// A [`CapturedRunnable`] bound into a scope by [`CapturedRunnable::bind`].
-pub struct BoundCaptured<'scope, 'env, 's, 'd, B: Backend + Topology + Capturable> {
-    bound: BoundRunnable<'scope, 'env, 's, B>,
+pub struct CapturedBound<'scope, 'env, 's, 'd, B: Backend + Topology + Capturable> {
+    bound: Bound<'scope, 'env, 's, B>,
     recording: &'scope Recording<'d, B>,
 }
 
-impl<'scope, B: Backend + Topology + Capturable> BoundCaptured<'scope, '_, '_, '_, B> {
-    /// [`BoundRunnable::tensor`].
+impl<'scope, B: Backend + Topology + Capturable> CapturedBound<'scope, '_, '_, '_, B> {
+    /// [`Bound::tensor`].
     pub fn tensor(&self, id: TensorId) -> Result<TensorSlot<'scope>, String> {
         self.bound.tensor(id)
     }
 
-    /// Queues one replay of the recorded run. Reads the `Dynamic`s like
-    /// [`BoundRunnable::run`]; each node replays with its meta then.
+    /// [`Bound::apply_dynamics`].
+    pub fn apply_dynamics(&self) -> Result<(), String> {
+        self.bound.apply_dynamics()
+    }
+
+    /// Queues one replay of the recorded run. Each node replays with its
+    /// meta as it is: [`CapturedBound::apply_dynamics`] is what changes it.
     pub fn replay(&self) -> Result<(), String> {
-        self.bound.apply_dynamics()?;
         self.bound.scope.replay(self.recording)
     }
 }

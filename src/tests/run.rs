@@ -211,7 +211,7 @@ fn calls_of_one_shader_run_in_order() {
 }
 
 #[test]
-fn a_shared_dynamic_is_read_once_per_run() {
+fn apply_dynamics_sets_every_node_using_a_dynamic() {
     let (x, y) = (f32_tensor(vec![1.0]), f32_tensor(vec![2.0]));
     let (x_id, y_id) = (x.id(), y.id());
     let factor = Dynamic::new();
@@ -222,26 +222,29 @@ fn a_shared_dynamic_is_read_once_per_run() {
 
     dev.scope(|s| {
         let r = runnable.bind(s)?;
-        assert!(r.run().is_err(), "never set");
+        assert!(r.apply_dynamics().is_err(), "never set");
         factor.set(3.0);
+        r.apply_dynamics()?;
         r.run()?;
-        assert!(r.run().is_err(), "not set again since the last run");
+        r.run()?; // still 3: run doesn't read the Dynamic
+        r.apply_dynamics()?; // the same value again is fine
         factor.set(10.0);
+        r.apply_dynamics()?;
         r.run()
     })
     .unwrap();
-    assert_eq!(values(&runnable, x_id), vec![30.0]);
-    assert_eq!(values(&runnable, y_id), vec![60.0]);
+    assert_eq!(values(&runnable, x_id), vec![90.0]);
+    assert_eq!(values(&runnable, y_id), vec![180.0]);
     let sx = runnable.order()[0];
     assert_eq!(
         runnable.call(sx).unwrap().node().meta()[1],
         MetaValue::Float(10.0),
-        "a node's meta shows the last run's Dynamic"
+        "a node's meta shows the last applied Dynamic"
     );
 }
 
 #[test]
-fn a_failed_run_reads_no_dynamic() {
+fn a_failed_apply_changes_no_meta() {
     let x = f32_tensor(vec![1.0]);
     let x_id = x.id();
     let (a, b) = (Dynamic::new(), Dynamic::new());
@@ -253,8 +256,9 @@ fn a_failed_run_reads_no_dynamic() {
     a.set(2.0);
     dev.scope(|s| {
         let r = runnable.bind(s)?;
-        assert!(r.run().is_err(), "b was never set");
+        assert!(r.apply_dynamics().is_err(), "b was never set");
         b.set(5.0);
+        r.apply_dynamics()?;
         r.run()
     })
     .unwrap();
@@ -290,7 +294,7 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
 }
 
 #[test]
-fn stream_runs_calls_in_the_order_it_picks() {
+fn run_call_runs_calls_in_any_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
     let mut runnable = plan.build(&dev).unwrap();
@@ -299,13 +303,11 @@ fn stream_runs_calls_in_the_order_it_picks() {
     };
     dev.scope(|s| {
         let r = runnable.bind(s)?;
-        r.stream(|st| {
-            st.run_call(add)?; // y += x, before x doubles
-            st.run_call(double)?;
-            st.run_call(double)?;
-            assert!(st.run_call(stranger_call()).is_err());
-            Ok(())
-        })
+        r.run_call(add)?; // y += x, before x doubles
+        r.run_call(double)?;
+        r.run_call(double)?;
+        assert!(r.run_call(stranger_call()).is_err());
+        Ok::<_, String>(())
     })
     .unwrap();
     assert_eq!(values(&runnable, y), vec![11.0, 22.0]);
@@ -400,7 +402,7 @@ fn run_fails_on_a_tensor_shorter_than_a_call_needs() {
 }
 
 #[test]
-fn captured_replays_with_this_runs_dynamics() {
+fn captured_replays_with_the_applied_dynamics() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
     let factor = Dynamic::new();
@@ -417,10 +419,11 @@ fn captured_replays_with_this_runs_dynamics() {
     dev.scope(|s| {
         let r = captured.bind(s)?;
         factor.set(2.0);
+        r.apply_dynamics()?;
         r.replay()?;
         factor.set(3.0);
+        r.apply_dynamics()?;
         r.replay()?;
-        assert!(r.replay().is_err(), "not set again since the last replay");
         Ok::<_, String>(())
     })
     .unwrap();
@@ -431,7 +434,12 @@ fn captured_replays_with_this_runs_dynamics() {
 
     captured.upload(x_id, &F32::wrap(vec![1.0, 1.0])).unwrap();
     factor.set(4.0);
-    dev.scope(|s| captured.bind(s)?.replay()).unwrap();
+    dev.scope(|s| {
+        let r = captured.bind(s)?;
+        r.apply_dynamics()?;
+        r.replay()
+    })
+    .unwrap();
     assert_eq!(
         captured.tensor(x_id).unwrap().download_vec::<F32>(),
         Ok(vec![4.0, 4.0])

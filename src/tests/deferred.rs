@@ -115,53 +115,28 @@ fn relation_with_no_inputs_is_a_constant() {
 fn dynamic_reads_what_was_set() {
     let lr = Dynamic::new();
     lr.set(0.1f32);
-    assert_eq!(lr.read_for_run(), Ok(0.1));
+    assert_eq!(lr.read(), Ok(0.1));
 }
 
 #[test]
 fn dynamic_read_before_set_fails() {
-    assert!(Dynamic::<u32>::new().read_for_run().is_err());
+    assert!(Dynamic::<u32>::new().read().is_err());
 }
 
 #[test]
-fn dynamic_read_twice_without_set_fails() {
+fn dynamic_reads_the_same_value_until_set_again() {
     let step = Dynamic::new();
     step.set(1u32);
-    step.read_for_run().unwrap();
-    assert!(step.read_for_run().is_err());
-}
-
-#[test]
-fn dynamic_set_to_the_same_value_counts() {
-    let lr = Dynamic::new();
-    lr.set(0.1f32);
-    lr.read_for_run().unwrap();
-    lr.set(0.1);
-    assert_eq!(lr.read_for_run(), Ok(0.1));
-}
-
-#[test]
-fn dynamic_last_set_wins() {
-    let step = Dynamic::new();
-    step.set(1u32);
+    assert_eq!(step.read(), Ok(1));
+    assert_eq!(step.read(), Ok(1));
     step.set(2);
-    assert_eq!(step.read_for_run(), Ok(2));
+    assert_eq!(step.read(), Ok(2));
 }
 
 #[test]
-fn dynamic_clones_share_one_cell() {
+fn dynamic_clones_share_one_value() {
     let step = Dynamic::new();
     let handle = step.clone();
     handle.set(7u32);
-    assert_eq!(step.read_for_run(), Ok(7));
-}
-
-#[test]
-fn dynamic_peek_leaves_the_value_for_the_run() {
-    let step = Dynamic::new();
-    assert!(step.peek_for_run().is_err());
-    step.set(3u32);
-    assert_eq!(step.peek_for_run(), Ok(3));
-    assert_eq!(step.read_for_run(), Ok(3));
-    assert!(step.peek_for_run().is_err());
+    assert_eq!(step.read(), Ok(7));
 }
