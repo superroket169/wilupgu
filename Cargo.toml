@@ -1,6 +1,6 @@
 [package]
 name = "wilupgu"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Backend-independent GPU compute for Rust, built on an ownership-based backend contract. Aimed at low-end hardware; no shape system."
 license = "MIT OR Apache-2.0"
