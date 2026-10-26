@@ -77,7 +77,8 @@ Open work is in
 |---|---|---|
 | `tool-builtins` | yes | `wilupgu::tools::builtins`, the builtin shader table |
 | `tool-plan` | no | `wilupgu::tools::plan`, the plan tool |
-| `tool-compile` | no | `wilupgu::tools::compile`, the `ShaderCompiler` trait; no compiler yet |
+| `tool-compile` | no | `wilupgu::tools::compile`, the `ShaderCompiler` trait |
+| `compile-nvrtc` | no | `Nvrtc`: CUDA C++ into PTX or cubin; the CUDA version is picked with `CUDARC_CUDA_VERSION` or a cudarc `cuda-XXXXX` feature |
 | `cpu` | no | `wilupgu::backends::CpuBackend` |
 | `wgpu` | no | only the WGSL standards test (parses WGSL with naga); no backend yet |
 

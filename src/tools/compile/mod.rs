@@ -9,6 +9,12 @@
 
 use crate::error::Error;
 
+/// The compilers, each behind its own feature.
+pub mod compilers {
+    #[cfg(feature = "compile-nvrtc")]
+    pub mod nvrtc;
+}
+
 /// Turns code in the form `In` into the form `Out`.
 pub trait ShaderCompiler<In, Out> {
     /// Compiles `input`. Fails with the compiler's own report.
