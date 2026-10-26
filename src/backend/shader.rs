@@ -13,6 +13,17 @@ pub enum BindingRole {
     Accumulate(DataKind),
 }
 
+impl BindingRole {
+    /// The kind the slot holds.
+    pub fn kind(&self) -> DataKind {
+        let (BindingRole::Input(kind)
+        | BindingRole::Output(kind)
+        | BindingRole::InOut(kind)
+        | BindingRole::Accumulate(kind)) = self;
+        *kind
+    }
+}
+
 /// One shader: its name, meta, tensor layout, workgroup size and code in each format.
 pub struct Shader {
     /// The shader's name; builtins name their code files after it.

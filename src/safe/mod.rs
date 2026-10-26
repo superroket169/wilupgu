@@ -8,7 +8,7 @@
 use crate::backend::dtype::{DataKind, DataType, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
-use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
+use crate::backend::shader::{MetaType, Shader, Workgroups};
 use crate::backend::{
     Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology, COPY_ALIGN,
 };
@@ -109,11 +109,8 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         }
         B::Node::validate_workgroups(workgroups)?;
         for role in shader.layout {
-            let (BindingRole::Input(kind)
-            | BindingRole::Output(kind)
-            | BindingRole::InOut(kind)
-            | BindingRole::Accumulate(kind)) = role;
-            if !self.raw.info().supports_kind(*kind) {
+            let kind = role.kind();
+            if !self.raw.info().supports_kind(kind) {
                 return Err(format!(
                     "shader `{}`: device `{}` doesn't support {kind:?}",
                     shader.name,

@@ -88,8 +88,8 @@ impl Spec for TensorSpec {
     fn ready(&self) -> Result<(), String> {
         let len = *self.desc.len.value()?;
         if let TensorInit::Upload(data) = &self.desc.init {
-            let words = len.next_multiple_of(self.desc.kind.elems_per_host_word());
-            if data.len() != words {
+            let elems = len.next_multiple_of(self.desc.kind.elems_per_host_word());
+            if data.len() != elems {
                 return Err(format!(
                     "tensor spec of {len} elements with {} to upload",
                     data.len()

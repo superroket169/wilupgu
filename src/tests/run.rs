@@ -1,7 +1,7 @@
 use super::*;
 use crate::backend::dtype::{DataKind, DataType, F16, F32};
 use crate::backend::shader::{
-    MetaField, MetaType, NativeBinding, NativeCode, Shader, ShaderCode, Workgroups,
+    BindingRole, MetaField, MetaType, NativeBinding, NativeCode, Shader, ShaderCode, Workgroups,
 };
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::{Arg, DeviceConfig, MetaValue};

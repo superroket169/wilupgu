@@ -16,7 +16,7 @@ use crate::safe::{
 };
 use crate::tools::plan::call::{Call, CallId};
 use crate::tools::plan::node::MetaSource;
-use crate::tools::plan::run::{role_kind, RunPlan};
+use crate::tools::plan::run::RunPlan;
 use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorId;
 
@@ -50,12 +50,28 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
         })
     }
 
+    /// The device it was built on.
+    pub fn device(&self) -> &'d ComputeDevice<B> {
+        self.device
+    }
+
+    /// Every tensor, with the id of the spec it was built from, in no order.
+    pub fn tensors(&self) -> impl Iterator<Item = (TensorId, &Tensor<'d, B>)> {
+        self.tensors.iter().map(|(&id, tensor)| (id, tensor))
+    }
+
     /// The tensor built from the spec with `id`.
     pub fn tensor(&self, id: TensorId) -> Result<&Tensor<'d, B>, String> {
         Ok(self
             .tensors
             .get(&id)
             .ok_or("this tensor isn't in the plan")?)
+    }
+
+    /// Every call, with the id of the spec it was built from, in no order;
+    /// [`Runnable::order`] gives the order they run in.
+    pub fn calls(&self) -> impl Iterator<Item = (CallId, &Call<'d, B>)> {
+        self.calls.iter().map(|(&id, call)| (id, call))
     }
 
     /// The call built from the spec with `id`: its node, tensors and meta
@@ -103,11 +119,11 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
             }
             for (role, &id) in shader.layout.iter().zip(&call.tensors) {
                 let tensor = self.tensor(id)?;
-                if tensor.kind() != role_kind(role) {
+                if tensor.kind() != role.kind() {
                     return Err(format!(
                         "edit: shader `{}` takes {:?} where its tensor is now {:?}",
                         shader.name,
-                        role_kind(role),
+                        role.kind(),
                         tensor.kind()
                     ));
                 }
@@ -181,6 +197,7 @@ pub struct Edit<'a, 'd, B: Backend + Topology> {
 impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// The tensor built from the spec with `id`. A tensor put in its place
     /// must be of its kind and device; one too short fails the next run.
+    /// The kind is checked only for tensors a call names.
     pub fn tensor(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
         Ok(self
             .runnable
@@ -232,7 +249,7 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
     /// A call that fails its checks stops the run; the calls before it are
     /// queued.
     pub fn run(&self) -> Result<(), String> {
-        self.run_all()
+        self.order.iter().try_for_each(|&id| self.run_call(id))
     }
 
     /// Queues the call built from the spec with `id`, like one call of
@@ -250,10 +267,6 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
             self.scope.update_meta(node, &meta)?;
         }
         Ok(())
-    }
-
-    fn run_all(&self) -> Result<(), String> {
-        self.order.iter().try_for_each(|&id| self.run_call(id))
     }
 }
 
@@ -291,7 +304,7 @@ impl<'d, B: Backend + Topology + Capturable> Runnable<'d, B> {
         let device = self.device;
         let recorded = device.scope(|s| {
             let bound = self.bind(s)?;
-            s.capture(|| bound.run_all())
+            s.capture(|| bound.run())
         });
         match recorded {
             Ok(recording) => Ok(CapturedRunnable {
@@ -313,9 +326,24 @@ pub struct CapturedRunnable<'d, B: Backend + Topology + Capturable> {
 }
 
 impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
+    /// [`Runnable::device`].
+    pub fn device(&self) -> &'d ComputeDevice<B> {
+        self.runnable.device()
+    }
+
+    /// [`Runnable::tensors`].
+    pub fn tensors(&self) -> impl Iterator<Item = (TensorId, &Tensor<'d, B>)> {
+        self.runnable.tensors()
+    }
+
     /// [`Runnable::tensor`].
     pub fn tensor(&self, id: TensorId) -> Result<&Tensor<'d, B>, String> {
         self.runnable.tensor(id)
+    }
+
+    /// [`Runnable::calls`].
+    pub fn calls(&self) -> impl Iterator<Item = (CallId, &Call<'d, B>)> {
+        self.runnable.calls()
     }
 
     /// [`Runnable::call`].

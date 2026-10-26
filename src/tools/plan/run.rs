@@ -1,8 +1,6 @@
 //! [`RunPlan`]: tensors, and the calls that run on them, in order. Built, it
 //! is a [`Runnable`].
 
-use crate::backend::dtype::DataKind;
-use crate::backend::shader::BindingRole;
 use crate::backend::{Backend, Topology};
 use crate::safe::ComputeDevice;
 use crate::tools::plan::call::CallSpec;
@@ -54,12 +52,12 @@ impl Spec for RunPlan {
                         slot + 1
                     )
                 })?;
-                if tensor.kind() != role_kind(role) {
+                if tensor.kind() != role.kind() {
                     return Err(format!(
                         "shader `{}`: slot {} is {:?}, its tensor is {:?}",
                         shader.name,
                         slot + 1,
-                        role_kind(role),
+                        role.kind(),
                         tensor.kind()
                     ));
                 }
@@ -94,14 +92,6 @@ impl Spec for RunPlan {
         self.ready()?;
         Runnable::build(self, device)
     }
-}
-
-pub(crate) fn role_kind(role: &BindingRole) -> DataKind {
-    let (BindingRole::Input(kind)
-    | BindingRole::Output(kind)
-    | BindingRole::InOut(kind)
-    | BindingRole::Accumulate(kind)) = role;
-    *kind
 }
 
 #[cfg(test)]

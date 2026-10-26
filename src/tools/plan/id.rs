@@ -5,8 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Opaque identity, tagged with what it identifies at the type level only (`PhantomData`, zero bytes)
-/// A `NodeId` where a `TensorId` is expected doesn't compile.
+/// Opaque identity, tagged with what it identifies at the type level only
+/// (`PhantomData`, zero bytes). A `NodeId` where a `TensorId` is expected
+/// doesn't compile.
 /// One counter behind every tag, so ids are unique across all of them too.
 ///
 /// `fn() -> T` keeps the id `Send + Sync + Copy` no matter what `T` is; the

@@ -1,6 +1,6 @@
 use super::*;
 use crate::backend::dtype::{DataType, Int4, Int8, F32};
-use crate::backend::shader::{MetaField, NativeBinding, NativeCode, ShaderCode};
+use crate::backend::shader::{BindingRole, MetaField, NativeBinding, NativeCode, ShaderCode};
 use crate::backend::Buffer;
 use crate::backends::{CpuBackend, CpuInfo};
 

@@ -241,10 +241,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
             ));
         }
         for (i, (arg, role)) in args.iter().zip(shader.layout).enumerate() {
-            let (BindingRole::Input(kind)
-            | BindingRole::Output(kind)
-            | BindingRole::InOut(kind)
-            | BindingRole::Accumulate(kind)) = role;
+            let kind = role.kind();
             let wants_write = !matches!(role, BindingRole::Input(_));
             if matches!(arg, Arg::Write(_)) != wants_write {
                 return Err(format!(
@@ -256,7 +253,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
             }
             // SAFETY: see `bufs`.
             let buf = unsafe { &*bufs[arg.slot().index] };
-            if buf.kind != *kind {
+            if buf.kind != kind {
                 return Err(format!(
                     "shader `{}`: slot {} holds {kind:?}, the buffer holds {:?}",
                     shader.name,
