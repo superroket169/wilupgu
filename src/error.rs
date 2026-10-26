@@ -98,6 +98,8 @@ pub enum Error {
     /// A [`Dynamic`](crate::tools::plan::deferred::Dynamic) read before it
     /// was ever set.
     DynamicUnset,
+    /// A run's call at `index` in its order failed with `error`.
+    InCall { index: usize, error: Box<Error> },
     /// The backend's own error.
     Backend(String),
 }
@@ -190,6 +192,7 @@ impl fmt::Display for Error {
             Error::ResolverTaken => write!(f, "the resolver of this value was already taken"),
             Error::Computed => write!(f, "this value is computed by a Relation"),
             Error::DynamicUnset => write!(f, "a Dynamic was read before it was ever set"),
+            Error::InCall { index, error } => write!(f, "call {index}: {error}"),
             Error::Backend(e) => write!(f, "backend: {e}"),
         }
     }

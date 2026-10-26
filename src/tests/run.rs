@@ -596,3 +596,27 @@ fn build_rejects_a_tensor_shorter_than_its_slot_needs() {
         })
     );
 }
+
+#[test]
+fn a_failed_run_names_the_call() {
+    let (x, y) = (f32_tensor(vec![1.0, 2.0]), f32_tensor(vec![10.0, 20.0]));
+    let (x_id, y_id) = (x.id(), y.id());
+    let calls = vec![scale_call(x_id, 2, fixed(2.0)), add_call(y_id, x_id, 2)];
+    let dev = device();
+    let mut runnable = plan(vec![x, y], calls).build(&dev).unwrap();
+    shorten(&mut runnable, y_id);
+    let err = dev.scope(|s| runnable.bind(s)?.run()).err();
+    assert_eq!(
+        err,
+        Some(Error::InCall {
+            index: 1,
+            error: Box::new(Error::TooShort {
+                shader: "add_like",
+                slot: 0,
+                needs: 2,
+                holds: 1
+            })
+        })
+    );
+    assert_eq!(values(&runnable, x_id), vec![2.0, 4.0]);
+}

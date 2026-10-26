@@ -227,10 +227,17 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
 
     /// Queues every call, in order. Doesn't wait for them. Each node runs
     /// with its meta as it is: [`Bound::apply_dynamics`] is what changes it.
-    /// A call that fails its checks stops the run; the calls before it are
+    /// A call that fails its checks stops the run with [`Error::InCall`],
+    /// naming its place in [`Runnable::order`]; the calls before it are
     /// queued.
     pub fn run(&self) -> Result<(), Error> {
-        self.order.iter().try_for_each(|&id| self.run_call(id))
+        for (index, &id) in self.order.iter().enumerate() {
+            self.run_call(id).map_err(|error| Error::InCall {
+                index,
+                error: Box::new(error),
+            })?;
+        }
+        Ok(())
     }
 
     /// Queues the call built from the spec with `id`, like one call of
