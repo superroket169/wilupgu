@@ -6,10 +6,7 @@ use crate::safe::{ComputeDevice, Node};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::{MetaSource, NodeSpec};
 use crate::tools::plan::spec::Spec;
-use crate::tools::plan::tensor::TensorId;
-
-/// Names one call of a plan.
-pub type CallId = GlobalId<CallSpec>;
+use crate::tools::plan::tensor::TensorSpec;
 
 /// What a [`CallSpec`] is made from.
 pub struct CallDesc {
@@ -17,12 +14,12 @@ pub struct CallDesc {
     pub node: NodeSpec,
     /// One tensor per slot of the node's shader, in slot order. The tensors
     /// belong to the plan; a call only names them, so several can share one.
-    pub tensors: Vec<TensorId>,
+    pub tensors: Vec<GlobalId<TensorSpec>>,
 }
 
 /// One call of a node on its tensors.
 pub struct CallSpec {
-    id: CallId,
+    id: GlobalId<CallSpec>,
     desc: CallDesc,
 }
 
@@ -33,7 +30,7 @@ impl CallSpec {
     }
 
     /// The tensor of each slot, in slot order.
-    pub fn tensors(&self) -> &[TensorId] {
+    pub fn tensors(&self) -> &[GlobalId<TensorSpec>] {
         &self.desc.tensors
     }
 }
@@ -59,7 +56,7 @@ impl Spec for CallSpec {
         })
     }
 
-    fn id(&self) -> CallId {
+    fn id(&self) -> GlobalId<CallSpec> {
         self.id
     }
 
@@ -85,7 +82,7 @@ impl Spec for CallSpec {
 /// where each field of the node's meta comes from.
 pub struct Call<'d, B: Backend + Topology> {
     pub(super) node: Node<'d, B>,
-    pub(super) tensors: Vec<TensorId>,
+    pub(super) tensors: Vec<GlobalId<TensorSpec>>,
     pub(super) sources: Vec<MetaSource>,
 }
 
@@ -96,7 +93,7 @@ impl<'d, B: Backend + Topology> Call<'d, B> {
     }
 
     /// The tensor of each slot, in slot order.
-    pub fn tensors(&self) -> &[TensorId] {
+    pub fn tensors(&self) -> &[GlobalId<TensorSpec>] {
         &self.tensors
     }
 

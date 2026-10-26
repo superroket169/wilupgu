@@ -7,9 +7,6 @@ use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::spec::Spec;
 
-/// Names one tensor of a plan; calls name their tensors with it.
-pub type TensorId = GlobalId<TensorSpec>;
-
 /// What a tensor holds right after it's built.
 #[derive(Debug, Clone)]
 pub enum TensorInit {
@@ -37,7 +34,7 @@ pub struct TensorDesc {
 /// what it starts with.
 #[derive(Debug)]
 pub struct TensorSpec {
-    id: TensorId,
+    id: GlobalId<TensorSpec>,
     desc: TensorDesc,
 }
 
@@ -79,7 +76,7 @@ impl Spec for TensorSpec {
         })
     }
 
-    fn id(&self) -> TensorId {
+    fn id(&self) -> GlobalId<TensorSpec> {
         self.id
     }
 

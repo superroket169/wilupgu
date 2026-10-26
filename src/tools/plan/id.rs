@@ -6,7 +6,8 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque identity, tagged with what it identifies at the type level only
-/// (`PhantomData`, zero bytes). A `NodeId` where a `TensorId` is expected
+/// (`PhantomData`, zero bytes). A `GlobalId<NodeSpec>` where a `GlobalId<TensorSpec>`
+/// is expected
 /// doesn't compile.
 /// One counter behind every tag, so ids are unique across all of them too.
 ///

@@ -14,21 +14,22 @@ use crate::backend::{Backend, Capturable, Topology};
 use crate::safe::{
     Arg, ComputeDevice, MetaValue, Node, NodeSlot, Recording, Scope, Tensor, TensorSlot,
 };
-use crate::tools::plan::call::{Call, CallId};
+use crate::tools::plan::call::{Call, CallSpec};
+use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::MetaSource;
 use crate::tools::plan::run::RunPlan;
 use crate::tools::plan::spec::Spec;
-use crate::tools::plan::tensor::TensorId;
+use crate::tools::plan::tensor::TensorSpec;
 
 /// A built [`RunPlan`]: its tensors and calls on one device, and the order
 /// the calls run in. Everything in it can be read; [`Runnable::edit`] changes
 /// it between runs, [`Runnable::bind`] runs it inside a scope.
 pub struct Runnable<'d, B: Backend + Topology> {
     device: &'d ComputeDevice<B>,
-    tensors: HashMap<TensorId, Tensor<'d, B>>,
-    calls: HashMap<CallId, Call<'d, B>>,
+    tensors: HashMap<GlobalId<TensorSpec>, Tensor<'d, B>>,
+    calls: HashMap<GlobalId<CallSpec>, Call<'d, B>>,
     // The calls' ids, in the order they run.
-    order: Vec<CallId>,
+    order: Vec<GlobalId<CallSpec>>,
 }
 
 impl<'d, B: Backend + Topology> Runnable<'d, B> {
@@ -56,12 +57,12 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
     }
 
     /// Every tensor, with the id of the spec it was built from, in no order.
-    pub fn tensors(&self) -> impl Iterator<Item = (TensorId, &Tensor<'d, B>)> {
+    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &Tensor<'d, B>)> {
         self.tensors.iter().map(|(&id, tensor)| (id, tensor))
     }
 
     /// The tensor built from the spec with `id`.
-    pub fn tensor(&self, id: TensorId) -> Result<&Tensor<'d, B>, String> {
+    pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<&Tensor<'d, B>, String> {
         Ok(self
             .tensors
             .get(&id)
@@ -70,18 +71,18 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
 
     /// Every call, with the id of the spec it was built from, in no order;
     /// [`Runnable::order`] gives the order they run in.
-    pub fn calls(&self) -> impl Iterator<Item = (CallId, &Call<'d, B>)> {
+    pub fn calls(&self) -> impl Iterator<Item = (GlobalId<CallSpec>, &Call<'d, B>)> {
         self.calls.iter().map(|(&id, call)| (id, call))
     }
 
     /// The call built from the spec with `id`: its node, tensors and meta
     /// sources.
-    pub fn call(&self, id: CallId) -> Result<&Call<'d, B>, String> {
+    pub fn call(&self, id: GlobalId<CallSpec>) -> Result<&Call<'d, B>, String> {
         Ok(self.calls.get(&id).ok_or("this call isn't in the plan")?)
     }
 
     /// The calls' ids, in the order they run.
-    pub fn order(&self) -> &[CallId] {
+    pub fn order(&self) -> &[GlobalId<CallSpec>] {
         &self.order
     }
 
@@ -147,7 +148,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
         &'scope mut self,
         s: &'scope Scope<'scope, 'env, 's, B>,
     ) -> Result<Bound<'scope, 'env, 's, B>, String> {
-        let tensors: HashMap<TensorId, TensorSlot<'scope>> = self
+        let tensors: HashMap<GlobalId<TensorSpec>, TensorSlot<'scope>> = self
             .tensors
             .iter_mut()
             .map(|(&id, tensor)| Ok((id, s.bind(tensor)?)))
@@ -198,7 +199,7 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// The tensor built from the spec with `id`. A tensor put in its place
     /// must be of its kind and device; one too short fails the next run.
     /// The kind is checked only for tensors a call names.
-    pub fn tensor(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
+    pub fn tensor(&mut self, id: GlobalId<TensorSpec>) -> Result<&mut Tensor<'d, B>, String> {
         Ok(self
             .runnable
             .tensors
@@ -211,7 +212,7 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// fields of the same types. [`Bound::apply_dynamics`] still sets the
     /// per-run fields of its meta, by position: a field that means something
     /// else there gets the same `Dynamic`.
-    pub fn node(&mut self, id: CallId) -> Result<&mut Node<'d, B>, String> {
+    pub fn node(&mut self, id: GlobalId<CallSpec>) -> Result<&mut Node<'d, B>, String> {
         let call = self
             .runnable
             .calls
@@ -224,20 +225,20 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
 /// A [`Runnable`] bound into a scope by [`Runnable::bind`].
 pub struct Bound<'scope, 'env, 's, B: Backend + Topology> {
     scope: &'scope Scope<'scope, 'env, 's, B>,
-    tensors: HashMap<TensorId, TensorSlot<'scope>>,
+    tensors: HashMap<GlobalId<TensorSpec>, TensorSlot<'scope>>,
     // Each call's node and its args.
-    calls: HashMap<CallId, (NodeSlot<'scope>, Vec<Arg<'scope>>)>,
+    calls: HashMap<GlobalId<CallSpec>, (NodeSlot<'scope>, Vec<Arg<'scope>>)>,
     // The calls with a per-run meta field: the node, its meta when bound, and
     // where each field comes from. Only this handle changes a bound node's
     // meta, and only its per-run fields, so the rest stays as here.
     per_run: Vec<(NodeSlot<'scope>, Vec<MetaValue>, &'scope [MetaSource])>,
-    order: &'scope [CallId],
+    order: &'scope [GlobalId<CallSpec>],
 }
 
 impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
     /// The slot of the tensor built from the spec with `id`, for the scope's
     /// own `run`s, `upload`s and `download`s.
-    pub fn tensor(&self, id: TensorId) -> Result<TensorSlot<'scope>, String> {
+    pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<TensorSlot<'scope>, String> {
         Ok(*self
             .tensors
             .get(&id)
@@ -254,7 +255,7 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
 
     /// Queues the call built from the spec with `id`, like one call of
     /// [`Bound::run`].
-    pub fn run_call(&self, id: CallId) -> Result<(), String> {
+    pub fn run_call(&self, id: GlobalId<CallSpec>) -> Result<(), String> {
         let (node, args) = self.calls.get(&id).ok_or("this call isn't in the plan")?;
         self.scope.run(*node, args)
     }
@@ -332,43 +333,43 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRunnable<'d, B> {
     }
 
     /// [`Runnable::tensors`].
-    pub fn tensors(&self) -> impl Iterator<Item = (TensorId, &Tensor<'d, B>)> {
+    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &Tensor<'d, B>)> {
         self.runnable.tensors()
     }
 
     /// [`Runnable::tensor`].
-    pub fn tensor(&self, id: TensorId) -> Result<&Tensor<'d, B>, String> {
+    pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<&Tensor<'d, B>, String> {
         self.runnable.tensor(id)
     }
 
     /// [`Runnable::calls`].
-    pub fn calls(&self) -> impl Iterator<Item = (CallId, &Call<'d, B>)> {
+    pub fn calls(&self) -> impl Iterator<Item = (GlobalId<CallSpec>, &Call<'d, B>)> {
         self.runnable.calls()
     }
 
     /// [`Runnable::call`].
-    pub fn call(&self, id: CallId) -> Result<&Call<'d, B>, String> {
+    pub fn call(&self, id: GlobalId<CallSpec>) -> Result<&Call<'d, B>, String> {
         self.runnable.call(id)
     }
 
     /// [`Runnable::order`].
-    pub fn order(&self) -> &[CallId] {
+    pub fn order(&self) -> &[GlobalId<CallSpec>] {
         self.runnable.order()
     }
 
     /// [`Tensor::upload`] on the tensor built from the spec with `id`.
-    pub fn upload(&mut self, id: TensorId, data: &HostData) -> Result<(), String> {
+    pub fn upload(&mut self, id: GlobalId<TensorSpec>, data: &HostData) -> Result<(), String> {
         self.tensor_mut(id)?.upload(data)
     }
 
     /// [`Tensor::zero`] on the tensor built from the spec with `id`.
-    pub fn zero(&mut self, id: TensorId) -> Result<(), String> {
+    pub fn zero(&mut self, id: GlobalId<TensorSpec>) -> Result<(), String> {
         self.tensor_mut(id)?.zero()
     }
 
     // Private: a tensor put in another's place would move it from where it
     // was recorded.
-    fn tensor_mut(&mut self, id: TensorId) -> Result<&mut Tensor<'d, B>, String> {
+    fn tensor_mut(&mut self, id: GlobalId<TensorSpec>) -> Result<&mut Tensor<'d, B>, String> {
         Ok(self
             .runnable
             .tensors
@@ -401,7 +402,7 @@ pub struct CapturedBound<'scope, 'env, 's, 'd, B: Backend + Topology + Capturabl
 
 impl<'scope, B: Backend + Topology + Capturable> CapturedBound<'scope, '_, '_, '_, B> {
     /// [`Bound::tensor`].
-    pub fn tensor(&self, id: TensorId) -> Result<TensorSlot<'scope>, String> {
+    pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<TensorSlot<'scope>, String> {
         self.bound.tensor(id)
     }
 

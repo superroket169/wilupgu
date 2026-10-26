@@ -9,9 +9,6 @@ use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::spec::Spec;
 
-/// Names one node of a plan.
-pub type NodeId = GlobalId<NodeSpec>;
-
 /// Where one meta field's value comes from.
 #[derive(Debug, Clone)]
 pub enum MetaSource {
@@ -65,7 +62,7 @@ pub struct NodeDesc {
 
 /// A node to build: a [`NodeDesc`], checked against its shader.
 pub struct NodeSpec {
-    id: NodeId,
+    id: GlobalId<NodeSpec>,
     desc: NodeDesc,
 }
 
@@ -118,7 +115,7 @@ impl Spec for NodeSpec {
         })
     }
 
-    fn id(&self) -> NodeId {
+    fn id(&self) -> GlobalId<NodeSpec> {
         self.id
     }
 

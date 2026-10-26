@@ -5,11 +5,11 @@ use crate::backend::shader::{
 };
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::{Arg, DeviceConfig, MetaValue};
-use crate::tools::plan::call::{CallDesc, CallId, CallSpec};
+use crate::tools::plan::call::{CallDesc, CallSpec};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
 use crate::tools::plan::runnable::Runnable;
-use crate::tools::plan::tensor::{TensorDesc, TensorId, TensorInit, TensorSpec};
+use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
     let [NativeBinding::Write(x)] = bindings else {
@@ -92,7 +92,11 @@ fn one_wg() -> Resolvable<Workgroups> {
     Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 })
 }
 
-fn call(shader: &'static Shader, meta: Vec<MetaSource>, tensors: Vec<TensorId>) -> CallSpec {
+fn call(
+    shader: &'static Shader,
+    meta: Vec<MetaSource>,
+    tensors: Vec<GlobalId<TensorSpec>>,
+) -> CallSpec {
     let node = NodeSpec::new(NodeDesc {
         shader,
         meta,
@@ -102,7 +106,7 @@ fn call(shader: &'static Shader, meta: Vec<MetaSource>, tensors: Vec<TensorId>) 
     CallSpec::new(CallDesc { node, tensors }).unwrap()
 }
 
-fn scale_call(x: TensorId, n: u32, factor: MetaSource) -> CallSpec {
+fn scale_call(x: GlobalId<TensorSpec>, n: u32, factor: MetaSource) -> CallSpec {
     call(
         &SCALE_LIKE,
         vec![MetaSource::Uint(Resolvable::fixed(n)), factor],
@@ -110,7 +114,7 @@ fn scale_call(x: TensorId, n: u32, factor: MetaSource) -> CallSpec {
     )
 }
 
-fn add_call(acc: TensorId, x: TensorId, n: u32) -> CallSpec {
+fn add_call(acc: GlobalId<TensorSpec>, x: GlobalId<TensorSpec>, n: u32) -> CallSpec {
     call(
         &ADD_LIKE,
         vec![MetaSource::Uint(Resolvable::fixed(n))],
@@ -126,12 +130,12 @@ fn plan(tensors: Vec<TensorSpec>, calls: Vec<CallSpec>) -> RunPlan {
     RunPlan::new(PlanDesc { tensors, calls }).unwrap()
 }
 
-fn values(r: &Runnable<'_, CpuBackend>, id: TensorId) -> Vec<f32> {
+fn values(r: &Runnable<'_, CpuBackend>, id: GlobalId<TensorSpec>) -> Vec<f32> {
     r.tensor(id).unwrap().download_vec::<F32>().unwrap()
 }
 
 // x doubles, then y += x.
-fn double_then_add() -> (RunPlan, TensorId, TensorId) {
+fn double_then_add() -> (RunPlan, GlobalId<TensorSpec>, GlobalId<TensorSpec>) {
     let (x, y) = (f32_tensor(vec![1.0, 2.0]), f32_tensor(vec![10.0, 20.0]));
     let (x_id, y_id) = (x.id(), y.id());
     let double = scale_call(x_id, 2, fixed(2.0));
@@ -314,7 +318,7 @@ fn run_call_runs_calls_in_any_order() {
     assert_eq!(values(&runnable, x), vec![4.0, 8.0]);
 }
 
-fn stranger_call() -> CallId {
+fn stranger_call() -> GlobalId<CallSpec> {
     scale_call(f32_tensor(vec![0.0]).id(), 1, fixed(1.0)).id()
 }
 

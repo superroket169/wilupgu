@@ -35,7 +35,7 @@ static COPY_LIKE: Shader = Shader {
     },
 };
 
-fn tensor_id() -> TensorId {
+fn tensor_id() -> GlobalId<TensorSpec> {
     TensorSpec::new(TensorDesc {
         kind: DataKind::F32,
         len: Resolvable::fixed(1),
