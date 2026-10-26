@@ -17,6 +17,10 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     `MetaValue`.
   - `scope.rs`: `Scope`, slots, `Arg`, `run`, and capture/replay
     (`Recording`).
+  - `rules.rs`: every check made in more than one place, one function each,
+    returning the `Error` it finds; the tools use them too.
+- `src/error.rs`: `Error`, the one error enum of the safe layer and the
+  tools. Backend errors stay `String`, carried by `Error::Backend`.
 - `src/backends/` holds backend implementations, one file each. `cpu.rs` is
   behind the `cpu` feature and always built for tests; it implements
   `Capturable` and `Areable`.
@@ -33,6 +37,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
   it tests. There is only one tests directory.
+- `examples/`: runnable examples; the README points to them and holds no
+  code of its own.
 
 ## Builtin shaders
 

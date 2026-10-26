@@ -80,140 +80,24 @@ Open work is in
 | `cpu` | no | `wilupgu::backends::CpuBackend` |
 | `wgpu` | no | only the WGSL standards test (parses WGSL with naga); no backend yet |
 
-## Example
-
-The builtin `add` (`x[i] += y[i]`) on the CPU backend.
+## Examples
 
 ```toml
 [dependencies]
 wilupgu = { version = "0.7", features = ["cpu"] }
 ```
 
-```rust
-use wilupgu::backend::dtype::{DataKind, DataType, F32};
-use wilupgu::backend::shader::Workgroups;
-use wilupgu::backend::Topology;
-use wilupgu::backends::CpuBackend;
-use wilupgu::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
-use wilupgu::tools::builtins::ADD;
+In [`examples/`](https://github.com/superroket169/wilupgu/tree/main/examples):
 
-fn main() -> Result<(), String> {
-    let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
-    let dev = ComputeDevice::new(cpu, DeviceConfig::default());
+- `add.rs`: the builtin `add` (`x[i] += y[i]`) on the CPU backend.
+  `cargo run --example add --features cpu`
+- `plan.rs`: the same work described up front with the plan tool:
+  `x *= factor`, then `y += x`, run twice with a factor set from the host
+  each time. `cargo run --example plan --features cpu,tool-plan`
 
-    let mut x = dev.alloc(DataKind::F32, 3)?;
-    let mut y = dev.alloc(DataKind::F32, 3)?;
-    x.upload(&F32::wrap(vec![1.0, 2.0, 3.0]))?;
-    y.upload(&F32::wrap(vec![10.0, 20.0, 30.0]))?;
-
-    // ADD is `x[i] += y[i]` for i < n; its meta is n.
-    let mut add = dev.node(&ADD, &[MetaValue::Uint(3)], Workgroups::linear(1))?;
-
-    // Buffers and nodes are bound for the scope; it waits for the device
-    // before it returns.
-    dev.scope(|s| {
-        let (xs, ys) = (s.bind(&mut x)?, s.bind(&mut y)?);
-        let add = s.bind_node(&mut add)?;
-        s.run(add, &[Arg::Write(xs), Arg::Read(ys)])
-    })?;
-
-    assert_eq!(F32::unwrap(x.download()), Some(vec![11.0, 22.0, 33.0]));
-    Ok(())
-}
-```
-
-## The plan tool
-
-The same work described up front: `x *= factor`, then `y += x`, run twice
-with a factor set from the host each time. Needs the `tool-plan` feature.
-
-```rust
-use wilupgu::backend::dtype::{DataKind, DataType, F32};
-use wilupgu::backend::shader::Workgroups;
-use wilupgu::backend::Topology;
-use wilupgu::backends::CpuBackend;
-use wilupgu::safe::{ComputeDevice, DeviceConfig};
-use wilupgu::tools::builtins::{ADD, SCALE};
-use wilupgu::tools::plan::call::{CallDesc, CallSpec};
-use wilupgu::tools::plan::deferred::{Dynamic, Resolvable};
-use wilupgu::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
-use wilupgu::tools::plan::run::{PlanDesc, RunPlan};
-use wilupgu::tools::plan::spec::Spec;
-use wilupgu::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
-
-fn main() -> Result<(), String> {
-    let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
-    let dev = ComputeDevice::new(cpu, DeviceConfig::default());
-
-    // Described before anything exists on the device.
-    let n = 3;
-    let x = TensorSpec::new(TensorDesc {
-        kind: DataKind::F32,
-        len: Resolvable::fixed(n),
-        init: TensorInit::Upload(F32::wrap(vec![1.0, 2.0, 3.0])),
-    })?;
-    let y = TensorSpec::new(TensorDesc {
-        kind: DataKind::F32,
-        len: Resolvable::fixed(n),
-        init: TensorInit::Zero,
-    })?;
-    let (x_id, y_id) = (x.id(), y.id());
-
-    let factor = Dynamic::new(); // set from the host between runs
-    let wg = Resolvable::fixed(Workgroups::linear(1));
-    let len = || MetaSource::Uint(Resolvable::fixed(n as u32));
-    let scale = NodeSpec::new(NodeDesc {
-        shader: &SCALE,
-        meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
-        workgroups: wg.clone(),
-    })?;
-    let add = NodeSpec::new(NodeDesc {
-        shader: &ADD,
-        meta: vec![len()],
-        workgroups: wg,
-    })?;
-
-    // x *= factor, then y += x.
-    let plan = RunPlan::new(PlanDesc {
-        tensors: vec![x, y],
-        calls: vec![
-            CallSpec::new(CallDesc {
-                node: scale,
-                tensors: vec![x_id],
-            })?,
-            CallSpec::new(CallDesc {
-                node: add,
-                tensors: vec![y_id, x_id],
-            })?,
-        ],
-    })?;
-
-    let mut runnable = plan.build(&dev)?;
-    dev.scope(|s| {
-        let bound = runnable.bind(s)?; // bound once, run as often as needed
-        for f in [2.0, 3.0] {
-            factor.set(f);
-            bound.apply_dynamics()?;
-            bound.run()?;
-        }
-        Ok::<_, String>(())
-    })?;
-
-    assert_eq!(
-        runnable.tensor(x_id)?.download_vec::<F32>()?,
-        vec![6.0, 12.0, 18.0]
-    );
-    assert_eq!(
-        runnable.tensor(y_id)?.download_vec::<F32>()?,
-        vec![8.0, 16.0, 24.0]
-    );
-    Ok(())
-}
-```
-
-Between runs, `Runnable::edit` lends every tensor and node as `&mut`; inside
-a scope, `run_call` runs one call and `tensor` gives a tensor's slot for the
-scope's own work.
+In the plan tool, between runs, `Runnable::edit` lends every tensor and node
+as `&mut`; inside a scope, `run_call` runs one call and `tensor` gives a
+tensor's slot for the scope's own work.
 
 ## Capture and areas
 
