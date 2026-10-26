@@ -187,7 +187,7 @@ fn scope_chains_runs_on_the_same_buffers() {
         .unwrap();
 
     let inside = dev
-        .scope(|s| -> Result<HostData, String> {
+        .scope(|s| -> Result<HostData, Error> {
             let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
             let (add, double) = (s.bind_node(&mut add)?, s.bind_node(&mut double)?);
             s.run(add, &[Arg::Write(y), Arg::Read(x)])?;
@@ -212,7 +212,7 @@ fn scope_upload_and_update_meta_apply_to_the_next_run() {
         )
         .unwrap();
 
-    dev.scope(|s| -> Result<(), String> {
+    dev.scope(|s| -> Result<(), Error> {
         let x = s.bind(&mut x)?;
         let node = s.bind_node(&mut node)?;
         s.upload(x, &F32::wrap(vec![1.0, 2.0]))?;
@@ -312,7 +312,7 @@ fn area_bufs_work_like_alloced_ones() {
         .node(&ADD_LIKE, &[MetaValue::Uint(3)], Workgroups::linear(1))
         .unwrap();
 
-    dev.scope(|s| -> Result<(), String> {
+    dev.scope(|s| -> Result<(), Error> {
         let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
         let add = s.bind_node(&mut add)?;
         s.run(add, &[Arg::Write(y), Arg::Read(x)])
@@ -463,7 +463,7 @@ fn a_failed_or_panicking_capture_leaves_the_device_able_to_capture() {
         let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
         s.capture(|| {
             s.run(n, &[Arg::Write(x)])?;
-            Err("stop".to_string())
+            Err(Error::Backend("stop".to_string()))
         })
     });
     assert!(failed.is_err());
@@ -627,7 +627,7 @@ fn scope_copy_lands_between_runs() {
     let mut y = f32s(&dev, &[0.0, 0.0]);
     let mut double = scale_node(&dev, 2, 2.0);
 
-    dev.scope(|s| -> Result<(), String> {
+    dev.scope(|s| -> Result<(), Error> {
         let (xs, ys) = (s.bind(&mut x)?, s.bind(&mut y)?);
         let double = s.bind_node(&mut double)?;
         s.run(double, &[Arg::Write(xs)])?;

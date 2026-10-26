@@ -4,7 +4,8 @@
 
 use crate::backend::shader::{MetaType, Shader, Workgroups};
 use crate::backend::{Backend, Topology};
-use crate::safe::{ComputeDevice, MetaValue, Node};
+use crate::error::Error;
+use crate::safe::{rules, ComputeDevice, MetaValue, Node};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::spec::Spec;
@@ -39,7 +40,7 @@ impl MetaSource {
     }
 
     // The value a node is built with; a per-run value is 0 until `apply_dynamics` sets it.
-    pub(crate) fn build_value(&self) -> Result<MetaValue, String> {
+    pub(crate) fn build_value(&self) -> Result<MetaValue, Error> {
         Ok(match self {
             MetaSource::Uint(r) => MetaValue::Uint(*r.value()?),
             MetaSource::Float(r) => MetaValue::Float(*r.value()?),
@@ -88,27 +89,8 @@ impl Spec for NodeSpec {
     type Outcome<'d, B: Backend + Topology + 'd> = Node<'d, B>;
 
     /// Fails if the meta doesn't match the shader's fields in count and type.
-    fn new(desc: NodeDesc) -> Result<Self, String> {
-        let shader = desc.shader;
-        if desc.meta.len() != shader.meta.len() {
-            return Err(format!(
-                "shader `{}`: expected {} meta fields, got {}",
-                shader.name,
-                shader.meta.len(),
-                desc.meta.len()
-            ));
-        }
-        for (field, source) in shader.meta.iter().zip(&desc.meta) {
-            if field.ty != source.ty() {
-                return Err(format!(
-                    "shader `{}`: meta field `{}` is {:?}, got a {:?} source",
-                    shader.name,
-                    field.name,
-                    field.ty,
-                    source.ty()
-                ));
-            }
-        }
+    fn new(desc: NodeDesc) -> Result<Self, Error> {
+        rules::meta_types(desc.shader, desc.meta.iter().map(MetaSource::ty))?;
         Ok(Self {
             id: GlobalId::new(),
             desc,
@@ -120,7 +102,7 @@ impl Spec for NodeSpec {
     }
 
     /// Fails while the workgroup count or a value known once isn't known.
-    fn ready(&self) -> Result<(), String> {
+    fn ready(&self) -> Result<(), Error> {
         self.desc.workgroups.value()?;
         for source in &self.desc.meta {
             source.build_value()?;
@@ -133,7 +115,7 @@ impl Spec for NodeSpec {
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Node<'d, B>, String> {
+    ) -> Result<Node<'d, B>, Error> {
         let meta = self
             .desc
             .meta

@@ -3,6 +3,7 @@
 //! known.
 
 use crate::backend::{Backend, Topology};
+use crate::error::Error;
 use crate::safe::ComputeDevice;
 use crate::tools::plan::id::GlobalId;
 
@@ -17,7 +18,7 @@ pub trait Spec: Sized {
 
     /// Checks everything the description can tell on its own, before any
     /// device or later value exists.
-    fn new(description: Self::Description) -> Result<Self, String>;
+    fn new(description: Self::Description) -> Result<Self, Error>;
 
     /// This spec's id; nothing else carries it.
     // Only `TensorSpec` and `CallSpec` ids are looked up for now; `NodeSpec`
@@ -26,12 +27,12 @@ pub trait Spec: Sized {
 
     /// Fails, naming what is missing, while a value the build needs isn't
     /// known yet, or once known, doesn't fit the description.
-    fn ready(&self) -> Result<(), String>;
+    fn ready(&self) -> Result<(), Error>;
 
     /// Builds the spec on `device`. Fails where [`Spec::ready`] does, or
     /// where the device does.
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Self::Outcome<'d, B>, String>;
+    ) -> Result<Self::Outcome<'d, B>, Error>;
 }

@@ -9,10 +9,10 @@ use crate::backend::dtype::{DataKind, DataType, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
-use crate::backend::{
-    Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology, COPY_ALIGN,
-};
+use crate::backend::{Area as _, Areable, Backend, Carved, Node as _, Topology, COPY_ALIGN};
+use crate::error::Error;
 
+pub(crate) mod rules;
 mod scope;
 pub use scope::{Arg, NodeSlot, Recording, Scope, TensorSlot};
 
@@ -32,6 +32,16 @@ pub enum MetaValue {
     Uint(u32),
     /// For a [`MetaType::Float`] field.
     Float(f32),
+}
+
+impl MetaValue {
+    /// The type of field it fills.
+    pub fn ty(&self) -> MetaType {
+        match self {
+            MetaValue::Uint(_) => MetaType::Uint,
+            MetaValue::Float(_) => MetaType::Float,
+        }
+    }
 }
 
 /// An opened device: the raw backend and a pool of freed buffers. Buffers,
@@ -62,7 +72,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
     /// 8 for `Int4`). Its contents are unspecified.
     ///
     /// Fails if the device is out of memory, even after the pool is emptied.
-    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, String> {
+    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, Error> {
         let len = whole_words(kind, len);
         let raw = match self.pool.take(kind, len) {
             Some(buf) => buf,
@@ -70,7 +80,9 @@ impl<B: Backend + Topology> ComputeDevice<B> {
                 Ok(buf) => buf,
                 Err(_) => {
                     drop(self.pool.drain());
-                    self.raw.alloc_raw(buffer_bytes(kind, len))?
+                    self.raw
+                        .alloc_raw(buffer_bytes(kind, len))
+                        .map_err(Error::Backend)?
                 }
             },
         };
@@ -83,7 +95,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
     }
 
     /// A tensor holding `data`: [`ComputeDevice::alloc`] then [`Tensor::upload`].
-    pub fn tensor_from(&self, data: &HostData) -> Result<Tensor<'_, B>, String> {
+    pub fn tensor_from(&self, data: &HostData) -> Result<Tensor<'_, B>, Error> {
         let mut tensor = self.alloc(data.kind(), data.len())?;
         tensor.upload(data)?;
         Ok(tensor)
@@ -99,24 +111,11 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         shader: &'static Shader,
         meta: &[MetaValue],
         workgroups: Workgroups,
-    ) -> Result<Node<'_, B>, String> {
-        if !shader.shader_code.has(B::FORMAT) {
-            return Err(format!(
-                "shader `{}` has no {:?} code",
-                shader.name,
-                B::FORMAT
-            ));
-        }
-        B::Node::validate_workgroups(workgroups)?;
+    ) -> Result<Node<'_, B>, Error> {
+        rules::has_code(shader, B::FORMAT)?;
+        B::Node::validate_workgroups(workgroups).map_err(Error::Backend)?;
         for role in shader.layout {
-            let kind = role.kind();
-            if !self.raw.info().supports_kind(kind) {
-                return Err(format!(
-                    "shader `{}`: device `{}` doesn't support {kind:?}",
-                    shader.name,
-                    self.raw.info().label()
-                ));
-            }
+            rules::supported_kind(self, role.kind())?;
         }
         let words = meta_words(shader, meta)?;
         Ok(Node {
@@ -145,28 +144,15 @@ fn min_lens(shader: &Shader, words: &[u32], workgroups: Workgroups) -> Vec<usize
     lens
 }
 
-fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, String> {
-    if meta.len() != shader.meta.len() {
-        return Err(format!(
-            "shader `{}`: expected {} meta fields, got {}",
-            shader.name,
-            shader.meta.len(),
-            meta.len()
-        ));
-    }
-    shader
-        .meta
+fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, Error> {
+    rules::meta_types(shader, meta.iter().map(MetaValue::ty))?;
+    Ok(meta
         .iter()
-        .zip(meta)
-        .map(|(field, value)| match (field.ty, value) {
-            (MetaType::Uint, MetaValue::Uint(v)) => Ok(*v),
-            (MetaType::Float, MetaValue::Float(v)) => Ok(v.to_bits()),
-            _ => Err(format!(
-                "shader `{}`: meta field `{}` is {:?}, got {value:?}",
-                shader.name, field.name, field.ty
-            )),
+        .map(|value| match value {
+            MetaValue::Uint(v) => *v,
+            MetaValue::Float(v) => v.to_bits(),
         })
-        .collect()
+        .collect())
 }
 
 /// A tensor: a flat buffer, with no shape. It holds the raw buffer, the kind
@@ -216,14 +202,8 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     }
 
     /// Writes `data` to the whole tensor. Fails unless `data` has its kind and length.
-    pub fn upload(&mut self, data: &HostData) -> Result<(), String> {
-        if data.len() != self.len {
-            return Err(format!(
-                "upload of {} elements into a tensor of {}",
-                data.len(),
-                self.len
-            ));
-        }
+    pub fn upload(&mut self, data: &HostData) -> Result<(), Error> {
+        rules::same_len(self.len, data.len())?;
         self.upload_at(0, data)
     }
 
@@ -239,15 +219,13 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     /// device and kind. Its length may differ.
     // `new` comes back by value on a fail; replacing is rare, so its size costs nothing.
     #[allow(clippy::result_large_err)]
-    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, String)> {
-        if !std::ptr::eq(new.dev, self.dev) {
-            return Err((new, "replace: the tensor is of another device".to_string()));
+    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, Error)> {
+        let fits = rules::same_device(self.dev, new.dev, "tensor")
+            .and_then(|()| rules::same_kind(self.kind, new.kind));
+        match fits {
+            Ok(()) => Ok(std::mem::replace(self, new)),
+            Err(e) => Err((new, e)),
         }
-        if new.kind != self.kind {
-            let e = format!("replace: a tensor of {:?} with {:?}", self.kind, new.kind);
-            return Err((new, e));
-        }
-        Ok(std::mem::replace(self, new))
     }
 }
 
@@ -259,14 +237,8 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     /// Fails if `data` has another kind, the range doesn't fit, `offset`
     /// doesn't start at a multiple of [`COPY_ALIGN`] bytes, or the range ends
     /// neither at such a multiple nor at the tensor's end.
-    pub fn upload_at(&mut self, offset: usize, data: &HostData) -> Result<(), String> {
-        if data.kind() != self.kind {
-            return Err(format!(
-                "upload of {:?} elements into a tensor of {:?}",
-                data.kind(),
-                self.kind
-            ));
-        }
+    pub fn upload_at(&mut self, offset: usize, data: &HostData) -> Result<(), Error> {
+        rules::same_kind(self.kind, data.kind())?;
         let range = byte_range(self.kind, self.len, offset, data.len(), true)?;
         let bytes = data.as_bytes();
         io_log::log("htod", "-", bytes.len() as u64);
@@ -289,7 +261,7 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     ///
     /// Fails if the range doesn't fit, or `offset` doesn't start at a multiple
     /// of [`COPY_ALIGN`] bytes.
-    pub fn download_range(&self, offset: usize, len: usize) -> Result<HostData, String> {
+    pub fn download_range(&self, offset: usize, len: usize) -> Result<HostData, Error> {
         let range = byte_range(self.kind, self.len, offset, len, false)?;
         io_log::log("dtoh", "-", range.exact);
 
@@ -306,16 +278,14 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
 
     /// [`Tensor::upload`] from host words of `D`. Fails unless `D` is the
     /// tensor's kind and `data` its length.
-    pub fn upload_slice<D: DataType>(&mut self, data: &[D::HostRepr]) -> Result<(), String> {
+    pub fn upload_slice<D: DataType>(&mut self, data: &[D::HostRepr]) -> Result<(), Error> {
         self.upload(&D::wrap(data.to_vec()))
     }
 
     /// [`Tensor::download`] as host words of `D`. Fails unless `D` is the
     /// tensor's kind.
-    pub fn download_vec<D: DataType>(&self) -> Result<Vec<D::HostRepr>, String> {
-        if D::KIND != self.kind {
-            return Err(format!("a tensor of {:?} read as {:?}", self.kind, D::KIND));
-        }
+    pub fn download_vec<D: DataType>(&self) -> Result<Vec<D::HostRepr>, Error> {
+        rules::same_kind(self.kind, D::KIND)?;
         Ok(D::unwrap(self.download()).expect("the download has the tensor's kind"))
     }
 
@@ -324,7 +294,7 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     pub fn copy_to<'e, B2: Backend + Topology>(
         &self,
         dev: &'e ComputeDevice<B2>,
-    ) -> Result<Tensor<'e, B2>, String> {
+    ) -> Result<Tensor<'e, B2>, Error> {
         dev.tensor_from(&self.download())
     }
 
@@ -339,10 +309,8 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
         dst: &mut Tensor<'_, B>,
         dst_offset: usize,
         len: usize,
-    ) -> Result<(), String> {
-        if !std::ptr::eq(self.dev, dst.dev) {
-            return Err("copy_into: dst is on another device; use copy_to".to_string());
-        }
+    ) -> Result<(), Error> {
+        rules::same_device(self.dev, dst.dev, "tensor")?;
         let (from, to) = copy_ranges(self, src_offset, dst, dst_offset, len)?;
 
         // SAFETY: `copy_ranges` checked both ranges against `byte_range`'s
@@ -351,16 +319,17 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
             self.dev
                 .raw
                 .copy_raw(self.raw(), from.start, dst.raw_mut(), to.start, to.bytes)
-        }?;
+        }
+        .map_err(Error::Backend)?;
         self.dev.raw.synchronize();
         Ok(())
     }
 
     /// Fills the tensor with zero bytes, on the device. Blocks until done.
-    pub fn zero(&mut self) -> Result<(), String> {
+    pub fn zero(&mut self) -> Result<(), Error> {
         let dev = self.dev;
         // SAFETY: the tensor is borrowed until `synchronize` returns.
-        unsafe { dev.raw.clear_raw(self.raw_mut()) }?;
+        unsafe { dev.raw.clear_raw(self.raw_mut()) }.map_err(Error::Backend)?;
         dev.raw.synchronize();
         Ok(())
     }
@@ -385,25 +354,25 @@ fn byte_range(
     offset: usize,
     len: usize,
     write: bool,
-) -> Result<ByteRange, String> {
+) -> Result<ByteRange, Error> {
     let end = offset
         .checked_add(len)
         .filter(|&end| end <= tensor_len)
-        .ok_or_else(|| {
-            format!("elements {offset}..{offset} + {len} don't fit a tensor of {tensor_len}")
+        .ok_or(Error::OutOfRange {
+            offset,
+            len,
+            tensor_len,
         })?;
     let bits = kind.bits_per_elem() as u64;
     let align_bits = COPY_ALIGN * 8;
     if !(offset as u64 * bits).is_multiple_of(align_bits) {
-        return Err(format!(
-            "element {offset} of {kind:?} doesn't start at a multiple of {COPY_ALIGN} bytes"
-        ));
+        return Err(Error::Misaligned {
+            kind,
+            element: offset,
+        });
     }
     if write && end != tensor_len && !(end as u64 * bits).is_multiple_of(align_bits) {
-        return Err(format!(
-            "a write ending at element {end} of {kind:?} ends neither at a multiple of \
-             {COPY_ALIGN} bytes nor at the tensor's end"
-        ));
+        return Err(Error::Misaligned { kind, element: end });
     }
     let exact = kind.bytes_for(len);
     Ok(ByteRange {
@@ -421,13 +390,8 @@ fn copy_ranges<B: Backend + Topology>(
     dst: &Tensor<'_, B>,
     dst_offset: usize,
     len: usize,
-) -> Result<(ByteRange, ByteRange), String> {
-    if src.kind != dst.kind {
-        return Err(format!(
-            "copy of {:?} elements into a tensor of {:?}",
-            src.kind, dst.kind
-        ));
-    }
+) -> Result<(ByteRange, ByteRange), Error> {
+    rules::same_kind(dst.kind, src.kind)?;
     Ok((
         byte_range(src.kind, src.len, src_offset, len, false)?,
         byte_range(dst.kind, dst.len, dst_offset, len, true)?,
@@ -490,9 +454,13 @@ impl<B: Backend + Topology + Areable> DeviceArea<'_, B> {
     /// A buffer of `len` elements of `kind`, cut out of the area, with
     /// [`ComputeDevice::alloc`]'s length rule. Its memory goes back with the
     /// area, not to the pool. Fails if the area has no room left.
-    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, String> {
+    pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, Error> {
         let len = whole_words(kind, len);
-        let carved = self.dev.raw.carve(self.raw(), buffer_bytes(kind, len))?;
+        let carved = self
+            .dev
+            .raw
+            .carve(self.raw(), buffer_bytes(kind, len))
+            .map_err(Error::Backend)?;
         Ok(Tensor {
             mem: TensorMem::Carved(carved),
             kind,
@@ -548,7 +516,7 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
 
     /// Sets new meta values, checked like [`ComputeDevice::node`]'s. The next
     /// run uses them, and so does the next replay of a recording it is in.
-    pub fn update_meta(&mut self, meta: &[MetaValue]) -> Result<(), String> {
+    pub fn update_meta(&mut self, meta: &[MetaValue]) -> Result<(), Error> {
         let shader = self.raw.shader();
         let words = meta_words(shader, meta)?;
         self.lens = min_lens(shader, &words, self.raw.workgroups());
@@ -563,34 +531,15 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
     /// same types. Its shader may differ.
     // `new` comes back by value on a fail; replacing is rare, so its size costs nothing.
     #[allow(clippy::result_large_err)]
-    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, String)> {
-        if !std::ptr::eq(new.dev, self.dev) {
-            return Err((new, "replace: the node is of another device".to_string()));
-        }
+    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, Error)> {
         let (old, other) = (self.shader(), new.shader());
-        let kinds = |s: &Shader| s.layout.iter().map(BindingRole::kind).collect::<Vec<_>>();
-        if kinds(old) != kinds(other) {
-            let e = format!(
-                "replace: shader `{}` takes {:?}, shader `{}` takes {:?}",
-                old.name,
-                kinds(old),
-                other.name,
-                kinds(other)
-            );
-            return Err((new, e));
+        let fits = rules::same_device(self.dev, new.dev, "node")
+            .and_then(|()| rules::slot_kinds(other, old.layout.iter().map(BindingRole::kind)))
+            .and_then(|()| rules::meta_types(other, old.meta.iter().map(|f| f.ty)));
+        match fits {
+            Ok(()) => Ok(std::mem::replace(self, new)),
+            Err(e) => Err((new, e)),
         }
-        let types = |s: &Shader| s.meta.iter().map(|f| f.ty).collect::<Vec<_>>();
-        if types(old) != types(other) {
-            let e = format!(
-                "replace: shader `{}` takes meta {:?}, shader `{}` takes {:?}",
-                old.name,
-                types(old),
-                other.name,
-                types(other)
-            );
-            return Err((new, e));
-        }
-        Ok(std::mem::replace(self, new))
     }
 }
 

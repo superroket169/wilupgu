@@ -10,8 +10,9 @@ use wilupgu::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
 use wilupgu::tools::plan::run::{PlanDesc, RunPlan};
 use wilupgu::tools::plan::spec::Spec;
 use wilupgu::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
+use wilupgu::Error;
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
     let dev = ComputeDevice::new(cpu, DeviceConfig::default());
 
@@ -66,7 +67,7 @@ fn main() -> Result<(), String> {
             bound.apply_dynamics()?;
             bound.run()?;
         }
-        Ok::<_, String>(())
+        Ok::<_, Error>(())
     })?;
 
     assert_eq!(

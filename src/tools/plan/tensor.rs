@@ -2,7 +2,8 @@
 
 use crate::backend::dtype::{DataKind, HostData};
 use crate::backend::{Backend, Topology};
-use crate::safe::{ComputeDevice, Tensor};
+use crate::error::Error;
+use crate::safe::{rules, ComputeDevice, Tensor};
 use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::spec::Spec;
@@ -60,15 +61,9 @@ impl Spec for TensorSpec {
     type Outcome<'d, B: Backend + Topology + 'd> = Tensor<'d, B>;
 
     /// Fails if the data to upload is of another kind.
-    fn new(desc: TensorDesc) -> Result<Self, String> {
+    fn new(desc: TensorDesc) -> Result<Self, Error> {
         if let TensorInit::Upload(data) = &desc.init {
-            if data.kind() != desc.kind {
-                return Err(format!(
-                    "tensor spec of {:?} with {:?} data to upload",
-                    desc.kind,
-                    data.kind()
-                ));
-            }
+            rules::same_kind(desc.kind, data.kind())?;
         }
         Ok(Self {
             id: GlobalId::new(),
@@ -82,16 +77,11 @@ impl Spec for TensorSpec {
 
     /// Fails while the length isn't known, or if the data to upload isn't
     /// of that length, rounded up to whole host words for a packed kind.
-    fn ready(&self) -> Result<(), String> {
+    fn ready(&self) -> Result<(), Error> {
         let len = *self.desc.len.value()?;
         if let TensorInit::Upload(data) = &self.desc.init {
             let elems = len.next_multiple_of(self.desc.kind.elems_per_host_word());
-            if data.len() != elems {
-                return Err(format!(
-                    "tensor spec of {len} elements with {} to upload",
-                    data.len()
-                ));
-            }
+            rules::same_len(elems, data.len())?;
         }
         Ok(())
     }
@@ -99,7 +89,7 @@ impl Spec for TensorSpec {
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Tensor<'d, B>, String> {
+    ) -> Result<Tensor<'d, B>, Error> {
         self.ready()?;
         let mut tensor = device.alloc(self.desc.kind, *self.desc.len.value()?)?;
         match &self.desc.init {

@@ -10,7 +10,7 @@ fn device() -> ComputeDevice<CpuBackend> {
     )
 }
 
-fn spec(kind: DataKind, len: Resolvable<usize>, init: TensorInit) -> Result<TensorSpec, String> {
+fn spec(kind: DataKind, len: Resolvable<usize>, init: TensorInit) -> Result<TensorSpec, Error> {
     TensorSpec::new(TensorDesc { kind, len, init })
 }
 

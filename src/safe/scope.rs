@@ -2,10 +2,10 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 
 use crate::backend::dtype::HostData;
-use crate::backend::shader::BindingRole;
 use crate::backend::{Access, Backend, Buffer as _, Capturable, Topology};
+use crate::error::Error;
 
-use super::{copy_ranges, ComputeDevice, MetaValue, Node, Tensor};
+use super::{copy_ranges, rules, ComputeDevice, MetaValue, Node, Tensor};
 
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
@@ -88,10 +88,8 @@ impl<B: Backend + Topology> ComputeDevice<B> {
 
 impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     /// Binds `buf` until the scope ends. Fails if it belongs to another device.
-    pub fn bind<'b>(&self, buf: &'scope mut Tensor<'b, B>) -> Result<TensorSlot<'scope>, String> {
-        if !std::ptr::eq(buf.dev, self.dev) {
-            return Err("bind: the buffer belongs to another device".to_string());
-        }
+    pub fn bind<'b>(&self, buf: &'scope mut Tensor<'b, B>) -> Result<TensorSlot<'scope>, Error> {
+        rules::same_device(self.dev, buf.dev, "tensor")?;
         let mut bufs = self.bufs.borrow_mut();
         bufs.push((buf as *mut Tensor<'b, B>).cast());
 
@@ -102,10 +100,8 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     }
 
     /// Binds `node` until the scope ends. Fails if it belongs to another device.
-    pub fn bind_node<'b>(&self, node: &'scope mut Node<'b, B>) -> Result<NodeSlot<'scope>, String> {
-        if !std::ptr::eq(node.dev, self.dev) {
-            return Err("bind_node: the node belongs to another device".to_string());
-        }
+    pub fn bind_node<'b>(&self, node: &'scope mut Node<'b, B>) -> Result<NodeSlot<'scope>, Error> {
+        rules::same_device(self.dev, node.dev, "node")?;
         let mut nodes = self.nodes.borrow_mut();
         nodes.push((node as *mut Node<'b, B>).cast());
 
@@ -116,7 +112,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     }
 
     /// [`Tensor::upload`] on a bound buffer. It lands before the runs queued after it.
-    pub fn upload(&self, slot: TensorSlot<'scope>, data: &HostData) -> Result<(), String> {
+    pub fn upload(&self, slot: TensorSlot<'scope>, data: &HostData) -> Result<(), Error> {
         let buf = self.bufs.borrow()[slot.index];
         // SAFETY: see `bufs`; no other reference to this buffer lives during the call.
         unsafe { &mut *buf }.upload(data)
@@ -139,9 +135,9 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         dst: TensorSlot<'scope>,
         dst_offset: usize,
         len: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), Error> {
         if src.index == dst.index {
-            return Err("copy: src and dst are the same tensor".to_string());
+            return Err(Error::SameTensor);
         }
         let bufs = self.bufs.borrow();
         // SAFETY: see `bufs`; the two slots are different tensors, so the `&`
@@ -161,10 +157,11 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
                 to.bytes,
             )
         }
+        .map_err(Error::Backend)
     }
 
     /// [`Node::update_meta`] on a bound node; the runs queued after it use it.
-    pub fn update_meta(&self, slot: NodeSlot<'scope>, meta: &[MetaValue]) -> Result<(), String> {
+    pub fn update_meta(&self, slot: NodeSlot<'scope>, meta: &[MetaValue]) -> Result<(), Error> {
         let node = self.nodes.borrow()[slot.index];
         // SAFETY: see `nodes`; no other reference to this node lives during the call.
         unsafe { &mut *node }.update_meta(meta)
@@ -178,7 +175,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     /// [`Arg::Write`], a buffer's kind isn't its slot's, a buffer is shorter
     /// than the shader's `min_lens` for the node's meta, or a written buffer is
     /// in another slot too.
-    pub fn run(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), String> {
+    pub fn run(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), Error> {
         // SAFETY: see `nodes`.
         let node = unsafe { &*self.nodes.borrow()[node.index] };
         self.check(node, args)?;
@@ -219,7 +216,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         //   (`check`); the shader's code stays within them (docs/SHADERS.md).
         // - buffers and node are borrowed until the scope ends, and `SyncOnDrop`
         //   synchronizes before that, so they live and the host can't touch them.
-        unsafe { self.dev.raw.execute_raw(&node.raw, &mut access) }?;
+        unsafe { self.dev.raw.execute_raw(&node.raw, &mut access) }.map_err(Error::Backend)?;
 
         if let (Some(calls), Some(call)) = (self.recording.borrow_mut().as_mut(), recorded) {
             calls.push(call);
@@ -228,64 +225,22 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     }
 
     // `run`'s checks, made again for every call a replay runs.
-    fn check(&self, node: &Node<'d, B>, args: &[Arg<'scope>]) -> Result<(), String> {
+    fn check(&self, node: &Node<'d, B>, args: &[Arg<'scope>]) -> Result<(), Error> {
         let bufs = self.bufs.borrow();
         let shader = node.shader();
+        // SAFETY: see `bufs`.
+        let tensors: Vec<&Tensor<'d, B>> = args
+            .iter()
+            .map(|arg| unsafe { &*bufs[arg.slot().index] })
+            .collect();
 
-        if args.len() != shader.layout.len() {
-            return Err(format!(
-                "shader `{}`: expected {} buffers, got {}",
-                shader.name,
-                shader.layout.len(),
-                args.len()
-            ));
+        rules::slot_kinds(shader, tensors.iter().map(|t| t.kind))?;
+        for (slot, (arg, role)) in args.iter().zip(shader.layout).enumerate() {
+            rules::slot_access(shader, slot, role, matches!(arg, Arg::Write(_)))?;
+            rules::long_enough(shader, slot, node.lens[slot], tensors[slot].len)?;
         }
-        for (i, (arg, role)) in args.iter().zip(shader.layout).enumerate() {
-            let kind = role.kind();
-            let wants_write = !matches!(role, BindingRole::Input(_));
-            if matches!(arg, Arg::Write(_)) != wants_write {
-                return Err(format!(
-                    "shader `{}`: slot {} is {role:?}, it needs Arg::{}",
-                    shader.name,
-                    i + 1,
-                    if wants_write { "Write" } else { "Read" }
-                ));
-            }
-            // SAFETY: see `bufs`.
-            let buf = unsafe { &*bufs[arg.slot().index] };
-            if buf.kind != kind {
-                return Err(format!(
-                    "shader `{}`: slot {} holds {kind:?}, the buffer holds {:?}",
-                    shader.name,
-                    i + 1,
-                    buf.kind
-                ));
-            }
-            if buf.len < node.lens[i] {
-                return Err(format!(
-                    "shader `{}`: slot {} needs {} elements for this meta, the buffer holds {}",
-                    shader.name,
-                    i + 1,
-                    node.lens[i],
-                    buf.len
-                ));
-            }
-        }
-        for (i, arg) in args.iter().enumerate() {
-            let Arg::Write(written) = arg else { continue };
-            let aliased = args
-                .iter()
-                .enumerate()
-                .any(|(j, other)| j != i && other.slot().index == written.index);
-            if aliased {
-                return Err(format!(
-                    "shader `{}`: slot {} is written, its buffer can't be in another slot",
-                    shader.name,
-                    i + 1
-                ));
-            }
-        }
-        Ok(())
+        let indices: Vec<usize> = args.iter().map(|arg| arg.slot().index).collect();
+        rules::not_aliased(shader, &indices)
     }
 }
 
@@ -355,10 +310,10 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
     /// is kept, also when `f` panics.
     pub fn capture(
         &self,
-        f: impl FnOnce() -> Result<(), String>,
-    ) -> Result<Recording<'d, B>, String> {
+        f: impl FnOnce() -> Result<(), Error>,
+    ) -> Result<Recording<'d, B>, Error> {
         if self.recording.borrow().is_some() {
-            return Err("capture: this scope is already capturing".to_string());
+            return Err(Error::AlreadyCapturing);
         }
         *self.recording.borrow_mut() = Some(Vec::new());
         self.dev.raw.begin_capture();
@@ -376,7 +331,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
             .take()
             .expect("set above, only taken here or on panic");
 
-        let raw = self.dev.raw.end_capture()?;
+        let raw = self.dev.raw.end_capture().map_err(Error::Backend)?;
         let recording = Recording {
             raw: Some(raw),
             calls,
@@ -394,12 +349,10 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
     /// Every run's checks are made again first, so a fail leaves the buffers
     /// untouched. Also fails for another device's recording, or inside
     /// [`Scope::capture`].
-    pub fn replay(&self, recording: &Recording<'_, B>) -> Result<(), String> {
-        if !std::ptr::eq(recording.dev, self.dev) {
-            return Err("replay: the recording belongs to another device".to_string());
-        }
+    pub fn replay(&self, recording: &Recording<'_, B>) -> Result<(), Error> {
+        rules::same_device(self.dev, recording.dev, "recording")?;
         if self.recording.borrow().is_some() {
-            return Err("replay: this scope is capturing".to_string());
+            return Err(Error::ReplayWhileCapturing);
         }
 
         for call in &recording.calls {
@@ -408,7 +361,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                 .borrow()
                 .iter()
                 .position(|&node| node as usize == call.node)
-                .ok_or("replay: a recorded node isn't bound in this scope, or has moved")?;
+                .ok_or(Error::NotBound { what: "node" })?;
 
             // SAFETY: see `nodes`.
             let node = unsafe { &*self.nodes.borrow()[index] };
@@ -428,10 +381,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                         .iter()
                         // SAFETY: see `bufs`.
                         .position(|&buf| unsafe { &*buf }.raw().address() == address)
-                        .ok_or(format!(
-                            "replay: shader `{}`: a recorded buffer isn't bound in this scope",
-                            node.shader().name
-                        ))?;
+                        .ok_or(Error::NotBound { what: "tensor" })?;
                     let slot = TensorSlot {
                         index,
                         _brand: PhantomData,
@@ -443,7 +393,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                         Arg::Read(slot)
                     })
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, Error>>()?;
             self.check(node, &args)?;
         }
 
@@ -455,5 +405,6 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                 .raw
                 .replay(recording.raw.as_ref().expect("only taken in drop"))
         }
+        .map_err(Error::Backend)
     }
 }

@@ -2,7 +2,8 @@
 //! Built, it is a [`Call`]: the node, and the ids of the tensors it runs on.
 
 use crate::backend::{Backend, Topology};
-use crate::safe::{ComputeDevice, Node};
+use crate::error::Error;
+use crate::safe::{rules, ComputeDevice, Node};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::{MetaSource, NodeSpec};
 use crate::tools::plan::spec::Spec;
@@ -40,16 +41,8 @@ impl Spec for CallSpec {
     type Outcome<'d, B: Backend + Topology + 'd> = Call<'d, B>;
 
     /// Fails if there isn't one tensor per slot of the node's shader.
-    fn new(desc: CallDesc) -> Result<Self, String> {
-        let shader = desc.node.shader();
-        if desc.tensors.len() != shader.layout.len() {
-            return Err(format!(
-                "shader `{}` has {} slots, the call gives {} tensors",
-                shader.name,
-                shader.layout.len(),
-                desc.tensors.len()
-            ));
-        }
+    fn new(desc: CallDesc) -> Result<Self, Error> {
+        rules::slot_count(desc.node.shader(), desc.tensors.len())?;
         Ok(Self {
             id: GlobalId::new(),
             desc,
@@ -61,7 +54,7 @@ impl Spec for CallSpec {
     }
 
     /// [`NodeSpec`]'s [`Spec::ready`].
-    fn ready(&self) -> Result<(), String> {
+    fn ready(&self) -> Result<(), Error> {
         self.desc.node.ready()
     }
 
@@ -69,7 +62,7 @@ impl Spec for CallSpec {
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Call<'d, B>, String> {
+    ) -> Result<Call<'d, B>, Error> {
         Ok(Call {
             node: self.desc.node.build(device)?,
             tensors: self.desc.tensors.clone(),

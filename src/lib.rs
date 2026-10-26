@@ -11,5 +11,8 @@
 
 pub mod backend;
 pub mod backends;
+mod error;
 pub mod safe;
 pub mod tools;
+
+pub use error::Error;

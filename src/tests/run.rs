@@ -290,7 +290,7 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
             r.run()?;
             // the scope's own node reads the runnable's output
             s.run(add_z, &[Arg::Write(z), Arg::Read(r.tensor(y)?)])?;
-            Ok::<_, String>(s.download(r.tensor(x)?))
+            Ok::<_, Error>(s.download(r.tensor(x)?))
         })
         .unwrap();
     assert_eq!(F32::unwrap(seen), Some(vec![6.0, 8.0]));
@@ -311,7 +311,7 @@ fn run_call_runs_calls_in_any_order() {
         r.run_call(double)?;
         r.run_call(double)?;
         assert!(r.run_call(stranger_call()).is_err());
-        Ok::<_, String>(())
+        Ok::<_, Error>(())
     })
     .unwrap();
     assert_eq!(values(&runnable, y), vec![11.0, 22.0]);
@@ -494,7 +494,7 @@ fn captured_replays_with_the_applied_dynamics() {
         factor.set(3.0);
         r.apply_dynamics()?;
         r.replay()?;
-        Ok::<_, String>(())
+        Ok::<_, Error>(())
     })
     .unwrap();
     assert_eq!(

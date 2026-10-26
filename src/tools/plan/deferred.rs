@@ -9,9 +9,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::error::Error;
+
 // The computation is `dyn`: it only runs while a plan is built, never on the
 // hot path, and it can capture its inputs of any type and count.
-type Compute<T> = Box<dyn Fn() -> Result<T, String> + Send + Sync>;
+type Compute<T> = Box<dyn Fn() -> Result<T, Error> + Send + Sync>;
 
 enum Source<T> {
     // Filled once by the one `Resolver`; `fixed` takes the resolver itself.
@@ -58,14 +60,12 @@ impl<T> Resolvable<T> {
 
     /// The one way to give this value. Fails if it was already taken, by
     /// this handle or a clone, or if the value is computed by a [`Relation`].
-    pub fn resolver(&self) -> Result<Resolver<T>, String> {
+    pub fn resolver(&self) -> Result<Resolver<T>, Error> {
         match &self.slot.source {
-            Source::Computed(_) => {
-                Err("resolver: this value is computed by a Relation".to_string())
-            }
+            Source::Computed(_) => Err(Error::Computed),
             Source::Given { resolver_taken } => {
                 if resolver_taken.swap(true, Ordering::AcqRel) {
-                    return Err("resolver: already taken for this value".to_string());
+                    return Err(Error::ResolverTaken);
                 }
                 Ok(Resolver {
                     slot: self.slot.clone(),
@@ -79,12 +79,12 @@ impl<T> Resolvable<T> {
     ///
     /// Fails if this value, or one it is computed from, wasn't given yet.
     /// A later read can still succeed once it is.
-    pub fn value(&self) -> Result<&T, String> {
+    pub fn value(&self) -> Result<&T, Error> {
         if let Some(value) = self.slot.value.get() {
             return Ok(value);
         }
         match &self.slot.source {
-            Source::Given { .. } => Err("a value was read before it was given".to_string()),
+            Source::Given { .. } => Err(Error::NotGivenYet),
             Source::Computed(compute) => {
                 let value = compute()?;
                 // A racing read may have kept its own result; both are equal.
@@ -180,11 +180,8 @@ impl<T: Copy> Dynamic<T> {
     }
 
     // The value now. Fails only if it was never set.
-    pub(crate) fn read(&self) -> Result<T, String> {
-        self.value
-            .lock()
-            .unwrap()
-            .ok_or_else(|| "a Dynamic was read before it was ever set".to_string())
+    pub(crate) fn read(&self) -> Result<T, Error> {
+        self.value.lock().unwrap().ok_or(Error::DynamicUnset)
     }
 }
 

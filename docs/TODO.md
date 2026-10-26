@@ -78,8 +78,18 @@ for that is still to write.
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
   pipeline API has no such concept.
-- **Error enum** in place of `String` errors, for the safe layer and the
-  tools.
+- **Backend errors.** The contract's methods return `String`, which the
+  error enum carries as one variant. Turn it into an enum once more than
+  one backend exists. If backends' errors turn out very different, each
+  backend could name its own error type in the contract instead; that is
+  not expected to be needed.
+- **Backend and shader checks**, to look at when a GPU backend is written:
+  - an empty tensor asks `alloc_raw` for 0 bytes, which CUDA may refuse;
+    and empty buffers share an address, so `replay` can't tell them apart;
+  - `Areable::reserve` returns no `Result`, so a backend out of memory can
+    only panic;
+  - a shader's `min_lens`, and `workgroups × workgroup_size`, can overflow,
+    unchecked.
 
 ## Checks
 

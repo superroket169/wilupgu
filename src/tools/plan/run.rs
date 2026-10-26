@@ -2,7 +2,8 @@
 //! is a [`Runnable`].
 
 use crate::backend::{Backend, Topology};
-use crate::safe::ComputeDevice;
+use crate::error::Error;
+use crate::safe::{rules, ComputeDevice};
 use crate::tools::plan::call::CallSpec;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::runnable::Runnable;
@@ -41,27 +42,17 @@ impl Spec for RunPlan {
 
     /// Fails if a call names a tensor that isn't in the plan, or one of
     /// another kind than its slot's.
-    fn new(desc: PlanDesc) -> Result<Self, String> {
+    fn new(desc: PlanDesc) -> Result<Self, Error> {
         for call in &desc.calls {
-            let shader = call.node().shader();
-            for (slot, (id, role)) in call.tensors().iter().zip(shader.layout).enumerate() {
-                let tensor = desc.tensors.iter().find(|t| t.id() == *id).ok_or_else(|| {
-                    format!(
-                        "shader `{}`: slot {} names a tensor that isn't in the plan",
-                        shader.name,
-                        slot + 1
-                    )
-                })?;
-                if tensor.kind() != role.kind() {
-                    return Err(format!(
-                        "shader `{}`: slot {} is {:?}, its tensor is {:?}",
-                        shader.name,
-                        slot + 1,
-                        role.kind(),
-                        tensor.kind()
-                    ));
-                }
-            }
+            let kinds = call
+                .tensors()
+                .iter()
+                .map(|id| {
+                    let tensor = desc.tensors.iter().find(|t| t.id() == *id);
+                    Ok(tensor.ok_or(Error::NotInPlan { what: "tensor" })?.kind())
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            rules::slot_kinds(call.node().shader(), kinds.into_iter())?;
         }
         Ok(Self {
             id: GlobalId::new(),
@@ -74,7 +65,7 @@ impl Spec for RunPlan {
     }
 
     /// Fails where a tensor's or call's [`Spec::ready`] does.
-    fn ready(&self) -> Result<(), String> {
+    fn ready(&self) -> Result<(), Error> {
         for tensor in &self.desc.tensors {
             tensor.ready()?;
         }
@@ -88,7 +79,7 @@ impl Spec for RunPlan {
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Runnable<'d, B>, String> {
+    ) -> Result<Runnable<'d, B>, Error> {
         self.ready()?;
         Runnable::build(self, device)
     }

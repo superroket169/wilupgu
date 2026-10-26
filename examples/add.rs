@@ -5,7 +5,7 @@ use wilupgu::backends::CpuBackend;
 use wilupgu::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
 use wilupgu::tools::builtins::ADD;
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
     let dev = ComputeDevice::new(cpu, DeviceConfig::default());
 
