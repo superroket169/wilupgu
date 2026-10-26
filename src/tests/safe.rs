@@ -680,3 +680,71 @@ fn tensors_and_nodes_know_their_device() {
     assert!(std::ptr::eq(tensor.device(), &a));
     assert!(std::ptr::eq(node.device(), &b));
 }
+
+#[test]
+fn tensor_replace_checks_device_and_kind() {
+    let (a, b) = (device(0), device(0));
+    let mut tensor = f32s(&a, &[1.0]);
+    let old = tensor
+        .replace(f32s(&a, &[2.0, 3.0]))
+        .map_err(|(_, e)| e)
+        .unwrap();
+    assert_eq!(old.download_vec::<F32>().unwrap(), vec![1.0]);
+    assert_eq!(tensor.download_vec::<F32>().unwrap(), vec![2.0, 3.0]);
+
+    let (back, _) = tensor
+        .replace(f32s(&b, &[4.0]))
+        .err()
+        .expect("replace fails");
+    assert!(std::ptr::eq(back.device(), &b));
+    let (back, _) = tensor
+        .replace(a.alloc(DataKind::Int8, 1).unwrap())
+        .err()
+        .expect("replace fails");
+    assert_eq!(back.kind(), DataKind::Int8);
+    assert_eq!(tensor.download_vec::<F32>().unwrap(), vec![2.0, 3.0]);
+}
+
+static SCALE_UINT: Shader = Shader {
+    name: "scale_uint",
+    meta: &[
+        MetaField {
+            name: "n",
+            ty: MetaType::Uint,
+        },
+        MetaField {
+            name: "factor",
+            ty: MetaType::Uint,
+        },
+    ],
+    layout: &[BindingRole::InOut(DataKind::F32)],
+    min_lens: |m, _, l| l.fill(m[0] as usize),
+    workgroup_size: [256, 1, 1],
+    shader_code: ShaderCode {
+        native: Some(NativeCode::new(scale)),
+        ..ShaderCode::NONE
+    },
+};
+
+#[test]
+fn node_replace_checks_device_slots_and_meta_types() {
+    let (a, b) = (device(0), device(0));
+    let wg = Workgroups { x: 1, y: 1, z: 1 };
+    let mut node = scale_node(&a, 1, 2.0);
+    let old = node
+        .replace(scale_node(&a, 2, 3.0))
+        .map_err(|(_, e)| e)
+        .unwrap();
+    assert_eq!(old.meta(), &[MetaValue::Uint(1), MetaValue::Float(2.0)]);
+    assert_eq!(node.meta(), &[MetaValue::Uint(2), MetaValue::Float(3.0)]);
+
+    assert!(node.replace(scale_node(&b, 1, 2.0)).is_err());
+    let add = a.node(&ADD_LIKE, &[MetaValue::Uint(1)], wg).unwrap();
+    assert!(node.replace(add).is_err());
+    let uint = a
+        .node(&SCALE_UINT, &[MetaValue::Uint(1), MetaValue::Uint(2)], wg)
+        .unwrap();
+    let (back, _) = node.replace(uint).err().expect("replace fails");
+    assert_eq!(back.shader().name, "scale_uint");
+    assert_eq!(node.meta(), &[MetaValue::Uint(2), MetaValue::Float(3.0)]);
+}

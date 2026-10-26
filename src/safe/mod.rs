@@ -8,7 +8,7 @@
 use crate::backend::dtype::{DataKind, DataType, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
-use crate::backend::shader::{MetaType, Shader, Workgroups};
+use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
 use crate::backend::{
     Area as _, Areable, Backend, Carved, DeviceInfo, Node as _, Topology, COPY_ALIGN,
 };
@@ -232,6 +232,22 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     pub fn download(&self) -> HostData {
         self.download_range(0, self.len)
             .expect("the whole tensor is always a valid range")
+    }
+
+    /// Puts `new` in this tensor's place and gives the old one back. Fails,
+    /// changing nothing and giving `new` back, unless `new` is of the same
+    /// device and kind. Its length may differ.
+    // `new` comes back by value on a fail; replacing is rare, so its size costs nothing.
+    #[allow(clippy::result_large_err)]
+    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, String)> {
+        if !std::ptr::eq(new.dev, self.dev) {
+            return Err((new, "replace: the tensor is of another device".to_string()));
+        }
+        if new.kind != self.kind {
+            let e = format!("replace: a tensor of {:?} with {:?}", self.kind, new.kind);
+            return Err((new, e));
+        }
+        Ok(std::mem::replace(self, new))
     }
 }
 
@@ -539,6 +555,42 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
         self.dev.raw.update_meta(&mut self.raw, &words);
         self.meta = meta.to_vec();
         Ok(())
+    }
+
+    /// Puts `new` in this node's place and gives the old one back. Fails,
+    /// changing nothing and giving `new` back, unless `new` is of the same
+    /// device, its slots hold the same kinds and its meta fields have the
+    /// same types. Its shader may differ.
+    // `new` comes back by value on a fail; replacing is rare, so its size costs nothing.
+    #[allow(clippy::result_large_err)]
+    pub fn replace(&mut self, new: Self) -> Result<Self, (Self, String)> {
+        if !std::ptr::eq(new.dev, self.dev) {
+            return Err((new, "replace: the node is of another device".to_string()));
+        }
+        let (old, other) = (self.shader(), new.shader());
+        let kinds = |s: &Shader| s.layout.iter().map(BindingRole::kind).collect::<Vec<_>>();
+        if kinds(old) != kinds(other) {
+            let e = format!(
+                "replace: shader `{}` takes {:?}, shader `{}` takes {:?}",
+                old.name,
+                kinds(old),
+                other.name,
+                kinds(other)
+            );
+            return Err((new, e));
+        }
+        let types = |s: &Shader| s.meta.iter().map(|f| f.ty).collect::<Vec<_>>();
+        if types(old) != types(other) {
+            let e = format!(
+                "replace: shader `{}` takes meta {:?}, shader `{}` takes {:?}",
+                old.name,
+                types(old),
+                other.name,
+                types(other)
+            );
+            return Err((new, e));
+        }
+        Ok(std::mem::replace(self, new))
     }
 }
 

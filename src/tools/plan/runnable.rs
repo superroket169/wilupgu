@@ -88,9 +88,12 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
 
     /// Lends every tensor and every call's node to `f` as `&mut`, through an
     /// [`Edit`], to change them or put others in their place between runs.
-    /// Fails if `f` does, if it left a tensor or node of another device, or a
-    /// call whose node doesn't fit it: slots against its tensors in count or
-    /// kind, meta fields against its meta sources in count or type.
+    /// [`Tensor::replace`] and [`Node::replace`] check what they put in place
+    /// before anything changes. Anything put in place another way is checked
+    /// only when `f` returns, and stays even if it fails: `edit` fails if `f`
+    /// does, if it left a tensor or node of another device, or a call whose
+    /// node doesn't fit it: slots against its tensors in count or kind, meta
+    /// fields against its meta sources in count or type.
     pub fn edit<R>(
         &mut self,
         f: impl FnOnce(&mut Edit<'_, 'd, B>) -> Result<R, String>,
@@ -198,7 +201,6 @@ pub struct Edit<'a, 'd, B: Backend + Topology> {
 impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
     /// The tensor built from the spec with `id`. A tensor put in its place
     /// must be of its kind and device; one too short fails the next run.
-    /// The kind is checked only for tensors a call names.
     pub fn tensor(&mut self, id: GlobalId<TensorSpec>) -> Result<&mut Tensor<'d, B>, String> {
         Ok(self
             .runnable
