@@ -33,6 +33,9 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
     (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
     (`RunPlan`) and `runnable` (`Runnable`, `CapturedRunnable`).
+  - `compile/` (`tool-compile`, always built for tests): the
+    `ShaderCompiler` trait; each compiler goes in `compile/compilers/`, one
+    file each, behind its own feature.
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module

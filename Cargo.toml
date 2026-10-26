@@ -23,11 +23,12 @@ half = { version = "2", features = ["bytemuck"] }
 default = ["tool-builtins"]
 tool-builtins = []
 tool-plan = []
+tool-compile = []
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:naga"]
 cpu = []
 
 [package.metadata.docs.rs]
-features = ["cpu", "tool-plan"]
+features = ["cpu", "tool-plan", "tool-compile"]
 
 [[example]]
 name = "add"

@@ -77,6 +77,7 @@ Open work is in
 |---|---|---|
 | `tool-builtins` | yes | `wilupgu::tools::builtins`, the builtin shader table |
 | `tool-plan` | no | `wilupgu::tools::plan`, the plan tool |
+| `tool-compile` | no | `wilupgu::tools::compile`, the `ShaderCompiler` trait; no compiler yet |
 | `cpu` | no | `wilupgu::backends::CpuBackend` |
 | `wgpu` | no | only the WGSL standards test (parses WGSL with naga); no backend yet |
 

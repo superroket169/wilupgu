@@ -5,6 +5,9 @@
 #[cfg(feature = "tool-builtins")]
 pub mod builtins;
 // Always built for tests, like the CPU backend.
+#[cfg(any(feature = "tool-compile", test))]
+pub mod compile;
+// Always built for tests, like the CPU backend.
 #[cfg(any(feature = "tool-plan", test))]
 pub mod plan;
 // TODO: spread is out of the build until it's rewritten on the safe layer.
