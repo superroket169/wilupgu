@@ -1,5 +1,5 @@
 use wilupgu::backend::dtype::{DataKind, DataType, F32};
-use wilupgu::backend::shader::Workgroups;
+use wilupgu::backend::shader::{Shader, ShaderBinary, Workgroups};
 use wilupgu::backend::Topology;
 use wilupgu::backends::CpuBackend;
 use wilupgu::safe::{ComputeDevice, DeviceConfig};
@@ -34,12 +34,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wg = Resolvable::fixed(Workgroups::linear(1));
     let len = || MetaSource::Uint(Resolvable::fixed(n as u32));
     let scale = NodeSpec::new(NodeDesc {
-        shader: &SCALE,
+        shader: Shader::new(&SCALE.signature, ShaderBinary::Native(SCALE.native)),
         meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
         workgroups: wg.clone(),
     })?;
     let add = NodeSpec::new(NodeDesc {
-        shader: &ADD,
+        shader: Shader::new(&ADD.signature, ShaderBinary::Native(ADD.native)),
         meta: vec![len()],
         workgroups: wg,
     })?;

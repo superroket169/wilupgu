@@ -1,6 +1,6 @@
 use super::*;
 use crate::backend::shader::{
-    BindingRole, MetaField, MetaType, NativeBinding, NativeCode, ShaderCode,
+    BindingRole, MetaField, MetaType, Native, NativeBinding, Shader, ShaderBinary, Signature,
 };
 use crate::backends::{CpuBackend, CpuBuffer};
 
@@ -33,7 +33,7 @@ fn copy(_meta: &[u32], bindings: &mut [NativeBinding]) {
     }
 }
 
-static COPY_SHADER: Shader = Shader {
+static COPY_SHADER: Signature = Signature {
     name: "Copy",
     meta: &[],
     layout: &[
@@ -43,11 +43,11 @@ static COPY_SHADER: Shader = Shader {
     // takes its length from the buffers, so it asks nothing of them
     min_lens: |_, _, l| l.fill(0),
     workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(copy)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn copy_shader() -> Shader {
+    Shader::new(&COPY_SHADER, ShaderBinary::Native(Native(copy)))
+}
 
 // x[0] = n as f32
 fn meta_echo(meta: &[u32], bindings: &mut [NativeBinding]) {
@@ -56,7 +56,7 @@ fn meta_echo(meta: &[u32], bindings: &mut [NativeBinding]) {
     }
 }
 
-static META_SHADER: Shader = Shader {
+static META_SHADER: Signature = Signature {
     name: "MetaEcho",
     meta: &[MetaField {
         name: "n",
@@ -65,11 +65,11 @@ static META_SHADER: Shader = Shader {
     layout: &[BindingRole::Output(DataKind::F32)],
     min_lens: |_, _, l| l.fill(1),
     workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(meta_echo)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn meta_shader() -> Shader {
+    Shader::new(&META_SHADER, ShaderBinary::Native(Native(meta_echo)))
+}
 
 #[test]
 fn topology_enumerate_then_attach() {
@@ -113,7 +113,9 @@ fn execute_runs_the_node_on_its_bindings() {
     let ctx = cpu();
     let src = buffer_with(&ctx, &[1.0, 2.0, 3.0]);
     let mut dst = buffer_with(&ctx, &[0.0; 3]);
-    let node = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    let node = ctx
+        .build_node(&copy_shader(), &[], Workgroups::linear(1))
+        .unwrap();
     // SAFETY: slot order and roles follow COPY_SHADER's layout, both buffers
     // hold 3 F32s, and nothing touches them before `synchronize`.
     unsafe {
@@ -129,7 +131,9 @@ fn execute_rejects_another_devices_buffer() {
     let (ours, theirs) = (cpu(), cpu());
     let src = buffer_with(&theirs, &[1.0]);
     let mut dst = buffer_with(&ours, &[0.0]);
-    let node = ours.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    let node = ours
+        .build_node(&copy_shader(), &[], Workgroups::linear(1))
+        .unwrap();
     // SAFETY: as above; the call must fail before running anything.
     let err =
         unsafe { ours.execute_raw(&node, &mut [Access::Read(&src), Access::Write(&mut dst)]) }
@@ -141,7 +145,9 @@ fn execute_rejects_another_devices_buffer() {
 fn update_meta_reaches_the_next_run() {
     let ctx = cpu();
     let mut x = buffer_with(&ctx, &[0.0]);
-    let mut node = ctx.build_node(&META_SHADER, &[1], Workgroups::linear(1));
+    let mut node = ctx
+        .build_node(&meta_shader(), &[1], Workgroups::linear(1))
+        .unwrap();
     ctx.update_meta(&mut node, &[7]);
     // SAFETY: one Output slot, one F32, untouched until `synchronize`.
     unsafe {
@@ -165,8 +171,12 @@ fn capture_records_instead_of_running_and_replay_runs_in_order() {
     let ctx = cpu();
     let mut x = buffer_with(&ctx, &[0.0]);
     let mut y = buffer_with(&ctx, &[0.0]);
-    let echo = ctx.build_node(&META_SHADER, &[5], Workgroups::linear(1));
-    let copy = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    let echo = ctx
+        .build_node(&meta_shader(), &[5], Workgroups::linear(1))
+        .unwrap();
+    let copy = ctx
+        .build_node(&copy_shader(), &[], Workgroups::linear(1))
+        .unwrap();
 
     ctx.begin_capture();
     // SAFETY: slots follow each layout, every buffer holds one F32, and
@@ -195,7 +205,9 @@ fn capture_records_instead_of_running_and_replay_runs_in_order() {
 fn replay_sees_update_meta() {
     let ctx = cpu();
     let mut x = buffer_with(&ctx, &[0.0]);
-    let mut node = ctx.build_node(&META_SHADER, &[1], Workgroups::linear(1));
+    let mut node = ctx
+        .build_node(&meta_shader(), &[1], Workgroups::linear(1))
+        .unwrap();
 
     ctx.begin_capture();
     // SAFETY: one Output slot, one F32; node and buffer stay put.
@@ -232,7 +244,9 @@ fn capture_rejects_another_devices_buffer() {
     let (ours, theirs) = (cpu(), cpu());
     let src = buffer_with(&theirs, &[1.0]);
     let mut dst = buffer_with(&ours, &[0.0]);
-    let node = ours.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    let node = ours
+        .build_node(&copy_shader(), &[], Workgroups::linear(1))
+        .unwrap();
     ours.begin_capture();
     // SAFETY: the call must fail before recording anything.
     let result =
@@ -275,7 +289,9 @@ fn carved_buffers_sit_side_by_side_and_work_like_any_buffer() {
             bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]),
         )
     };
-    let node = ctx.build_node(&COPY_SHADER, &[], Workgroups::linear(1));
+    let node = ctx
+        .build_node(&copy_shader(), &[], Workgroups::linear(1))
+        .unwrap();
     // SAFETY: COPY_SHADER's layout, both hold 3 F32s, untouched until `synchronize`.
     unsafe {
         ctx.execute_raw(

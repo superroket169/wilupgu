@@ -42,7 +42,7 @@ impl Spec for CallSpec {
 
     /// Fails if there isn't one tensor per slot of the node's shader.
     fn new(desc: CallDesc) -> Result<Self, Error> {
-        rules::slot_count(desc.node.shader(), desc.tensors.len())?;
+        rules::slot_count(desc.node.shader().signature(), desc.tensors.len())?;
         Ok(Self {
             id: GlobalId::new(),
             desc,

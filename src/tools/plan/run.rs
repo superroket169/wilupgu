@@ -52,8 +52,8 @@ impl Spec for RunPlan {
                     Ok(tensor.ok_or(Error::NotInPlan { what: "tensor" })?.kind())
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
-            rules::slot_kinds(call.node().shader(), kinds.into_iter())?;
-            rules::not_aliased(call.node().shader(), call.tensors())?;
+            rules::slot_kinds(call.node().shader().signature(), kinds.into_iter())?;
+            rules::not_aliased(call.node().shader().signature(), call.tensors())?;
         }
         Ok(Self {
             id: GlobalId::new(),

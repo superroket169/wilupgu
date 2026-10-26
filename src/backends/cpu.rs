@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::backend::dtype::DataKind;
-use crate::backend::shader::{NativeBinding, NativeCode, Shader, ShaderFormat, Workgroups};
+use crate::backend::shader::{Native, NativeBinding, Shader, ShaderBinary, Signature, Workgroups};
 use crate::backend::{
     Access, Area, Areable, Buffer, Capturable, Carved, DeviceInfo, Dispatch, Node, Storage,
     Topology,
@@ -67,15 +67,15 @@ impl Buffer for CpuBuffer {
 
 /// A [`CpuBackend`] node: the shader's native code and its meta.
 pub struct CpuNode {
-    shader: &'static Shader,
-    code: NativeCode,
+    signature: &'static Signature,
+    code: Native,
     meta: Vec<u32>,
     workgroups: Workgroups,
 }
 
 impl Node for CpuNode {
-    fn shader(&self) -> &'static Shader {
-        self.shader
+    fn signature(&self) -> &'static Signature {
+        self.signature
     }
 
     fn workgroups(&self) -> Workgroups {
@@ -102,7 +102,7 @@ impl DeviceInfo for CpuInfo {
     }
 }
 
-/// Runs [`NativeCode`] on the host, single-threaded. `execute_raw` finishes
+/// Runs [`Native`] code on the host, single-threaded. `execute_raw` finishes
 /// the work before it returns, so `synchronize` has nothing to wait for.
 pub struct CpuBackend {
     info: CpuInfo,
@@ -183,19 +183,28 @@ impl Storage for CpuBackend {
 impl Dispatch for CpuBackend {
     type Node = CpuNode;
 
-    const FORMAT: ShaderFormat = ShaderFormat::Native;
+    fn accepts(binary: &ShaderBinary) -> bool {
+        matches!(binary, ShaderBinary::Native(_))
+    }
 
-    fn build_node(&self, shader: &'static Shader, meta: &[u32], workgroups: Workgroups) -> CpuNode {
-        let code = shader
-            .shader_code
-            .native
-            .unwrap_or_else(|| panic!("shader `{}` has no native code", shader.name));
-        CpuNode {
-            shader,
+    fn build_node(
+        &self,
+        shader: &Shader,
+        meta: &[u32],
+        workgroups: Workgroups,
+    ) -> Result<CpuNode, String> {
+        let ShaderBinary::Native(code) = *shader.binary() else {
+            return Err(format!(
+                "shader `{}`: not native code",
+                shader.signature().name
+            ));
+        };
+        Ok(CpuNode {
+            signature: shader.signature(),
             code,
             meta: meta.to_vec(),
             workgroups,
-        }
+        })
     }
 
     fn update_meta(&self, node: &mut CpuNode, meta: &[u32]) {
@@ -214,7 +223,7 @@ impl Dispatch for CpuBackend {
         if foreign {
             return Err(format!(
                 "shader `{}`: a bound buffer belongs to another device",
-                node.shader.name
+                node.signature.name
             ));
         }
         if let Some(calls) = self.recording.lock().unwrap().as_mut() {
@@ -243,7 +252,7 @@ impl Dispatch for CpuBackend {
                 Access::Write(b) => NativeBinding::Write(b.bytes_mut()),
             })
             .collect();
-        node.code.run(&node.meta, &mut native);
+        (node.code.0)(&node.meta, &mut native);
         Ok(())
     }
 
@@ -320,7 +329,7 @@ impl Capturable for CpuBackend {
                     }
                 })
                 .collect();
-            node.code.run(&node.meta, &mut native);
+            (node.code.0)(&node.meta, &mut native);
         }
         Ok(())
     }

@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::backend::dtype::DataKind;
-use crate::backend::shader::{BindingRole, MetaType, ShaderFormat};
+use crate::backend::shader::{BindingRole, MetaType};
 
 /// Why a call failed. Most variants are a broken rule, found before
 /// anything reaches the device; [`Error::Backend`] is the backend's own.
@@ -58,11 +58,8 @@ pub enum Error {
         expected: MetaType,
         got: MetaType,
     },
-    /// The shader has no code in the backend's format.
-    NoCode {
-        shader: &'static str,
-        format: ShaderFormat,
-    },
+    /// The shader's binary is of a form the backend doesn't take.
+    UnsupportedBinary { shader: &'static str },
     /// A workgroup count of 0 in some dimension.
     NoWorkgroups { shader: &'static str },
     /// The device doesn't support this kind.
@@ -160,7 +157,9 @@ impl fmt::Display for Error {
                 f,
                 "shader `{shader}`: meta field `{field}` is {expected:?}, got {got:?}"
             ),
-            Error::NoCode { shader, format } => write!(f, "shader `{shader}` has no {format:?} code"),
+            Error::UnsupportedBinary { shader } => {
+                write!(f, "shader `{shader}`: the backend doesn't take this binary")
+            }
             Error::NoWorkgroups { shader } => {
                 write!(f, "shader `{shader}`: a workgroup count of 0")
             }

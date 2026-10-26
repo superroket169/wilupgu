@@ -28,7 +28,7 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   can pick a backend and use none of them.
   - `builtins/` (`tool-builtins`, default): the builtin shader table;
     `codes/{wgsl,native,cuda}/` has one file per shader per format.
-    Directory names mirror `ShaderCode` fields.
+    Directory names mirror `Builtin` fields.
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
     (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`

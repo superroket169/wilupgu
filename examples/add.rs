@@ -1,5 +1,5 @@
 use wilupgu::backend::dtype::{DataKind, DataType, F32};
-use wilupgu::backend::shader::Workgroups;
+use wilupgu::backend::shader::{Shader, ShaderBinary, Workgroups};
 use wilupgu::backend::Topology;
 use wilupgu::backends::CpuBackend;
 use wilupgu::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
@@ -14,8 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     x.upload(&F32::wrap(vec![1.0, 2.0, 3.0]))?;
     y.upload(&F32::wrap(vec![10.0, 20.0, 30.0]))?;
 
-    // ADD is `x[i] += y[i]` for i < n; its meta is n.
-    let mut add = dev.node(&ADD, &[MetaValue::Uint(3)], Workgroups::linear(1))?;
+    // ADD is `x[i] += y[i]` for i < n; its meta is n. The CPU backend runs
+    // its native code.
+    let add = Shader::new(&ADD.signature, ShaderBinary::Native(ADD.native));
+    let mut add = dev.node(&add, &[MetaValue::Uint(3)], Workgroups::linear(1))?;
 
     // Buffers and nodes are bound for the scope; it waits for the device
     // before it returns.

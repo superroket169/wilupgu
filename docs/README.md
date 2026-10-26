@@ -115,10 +115,12 @@ On a backend that has them (the CPU backend does):
 
 ## Writing a shader
 
-A shader is a `Shader` value: its meta fields, tensor layout, `min_lens`,
-workgroup size and code in each format it has. `min_lens` tells, from the
-meta and the workgroup count, how many elements each slot needs; the safe
-layer rejects a shorter buffer, so the code must never go past it. The
+A shader is a `Signature`, how it is called (its meta fields, tensor
+layout, `min_lens` and workgroup size), and its code. A node is built from a
+`Shader`: a signature and one `ShaderBinary`, code in a form the backend
+takes (native code for the CPU backend). `min_lens` tells, from the meta and
+the workgroup count, how many elements each slot needs; the safe layer
+rejects a shorter buffer, so the code must never go past it. The
 builtins follow the standards in
 [SHADERS.md](https://github.com/superroket169/wilupgu/blob/main/docs/SHADERS.md);
 a shader of your own should too.
@@ -131,7 +133,7 @@ In your own crate, on your own type, implement:
   `info`), with a `DeviceInfo` for each device;
 - `Storage`: buffers (`alloc_raw`, `upload_raw`, `download_raw`, `copy_raw`,
   `clear_raw`); offsets and lengths are bytes, multiples of `COPY_ALIGN` (4);
-- `Dispatch`: the shader code format it runs (`FORMAT`), and nodes and runs
+- `Dispatch`: the binaries it takes (`accepts`), and nodes and runs
   (`build_node`, `update_meta`, `execute_raw`, `synchronize`).
 
 Optional: `Areable` (buffers cut out of one reserved area) and `Capturable`

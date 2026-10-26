@@ -8,7 +8,7 @@
 use crate::backend::dtype::{DataKind, DataType, HostData};
 use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
-use crate::backend::shader::{BindingRole, MetaType, Shader, Workgroups};
+use crate::backend::shader::{BindingRole, MetaType, Shader, Signature, Workgroups};
 use crate::backend::{Area as _, Areable, Backend, Carved, Node as _, Topology, COPY_ALIGN};
 use crate::error::Error;
 
@@ -105,25 +105,33 @@ impl<B: Backend + Topology> ComputeDevice<B> {
 
     /// Builds a node that runs `shader` with `meta`, `workgroups` at a time.
     ///
-    /// Fails if the shader has no code in the backend's format, `workgroups`
-    /// is 0 in some dimension or over the backend's limit, the device doesn't support a kind in the
-    /// layout, or `meta` doesn't match the shader's fields in count and type.
+    /// Fails if the backend doesn't take the shader's binary or can't load
+    /// it, `workgroups` is 0 in some dimension or over the backend's limit,
+    /// the device doesn't support a kind in the layout, or `meta` doesn't
+    /// match the shader's fields in count and type.
     pub fn node(
         &self,
-        shader: &'static Shader,
+        shader: &Shader,
         meta: &[MetaValue],
         workgroups: Workgroups,
     ) -> Result<Node<'_, B>, Error> {
-        rules::has_code(shader, B::FORMAT)?;
-        rules::has_workgroups(shader, workgroups)?;
+        rules::accepted::<B>(shader)?;
+        let signature = shader.signature();
+        rules::has_workgroups(signature, workgroups)?;
+
         B::Node::validate_workgroups(workgroups).map_err(Error::Backend)?;
-        for role in shader.layout {
+
+        for role in signature.layout {
             rules::supported_kind(self, role.kind())?;
         }
-        let words = meta_words(shader, meta)?;
+
+        let words = meta_words(signature, meta)?;
         Ok(Node {
-            raw: self.raw.build_node(shader, &words, workgroups),
-            lens: min_lens(shader, &words, workgroups),
+            raw: self
+                .raw
+                .build_node(shader, &words, workgroups)
+                .map_err(Error::Backend)?,
+            lens: min_lens(signature, &words, workgroups),
             meta: meta.to_vec(),
             dev: self,
         })
@@ -141,13 +149,13 @@ fn buffer_bytes(kind: DataKind, len: usize) -> u64 {
     kind.bytes_for(len).next_multiple_of(COPY_ALIGN)
 }
 
-fn min_lens(shader: &Shader, words: &[u32], workgroups: Workgroups) -> Vec<usize> {
+fn min_lens(shader: &Signature, words: &[u32], workgroups: Workgroups) -> Vec<usize> {
     let mut lens = vec![0; shader.layout.len()];
     (shader.min_lens)(words, workgroups, &mut lens);
     lens
 }
 
-fn meta_words(shader: &Shader, meta: &[MetaValue]) -> Result<Vec<u32>, Error> {
+fn meta_words(shader: &Signature, meta: &[MetaValue]) -> Result<Vec<u32>, Error> {
     rules::meta_types(shader, meta.iter().map(MetaValue::ty))?;
     Ok(meta
         .iter()
@@ -499,9 +507,9 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
         self.dev
     }
 
-    /// The shader it runs.
-    pub fn shader(&self) -> &'static Shader {
-        self.raw.shader()
+    /// How its shader is called.
+    pub fn signature(&self) -> &'static Signature {
+        self.raw.signature()
     }
 
     /// Its meta values, as built or last updated.
@@ -528,7 +536,7 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
     /// Sets new meta values, checked like [`ComputeDevice::node`]'s. The next
     /// run uses them, and so does the next replay of a recording it is in.
     pub fn update_meta(&mut self, meta: &[MetaValue]) -> Result<(), Error> {
-        let shader = self.raw.shader();
+        let shader = self.raw.signature();
         let words = meta_words(shader, meta)?;
         self.lens = min_lens(shader, &words, self.raw.workgroups());
         self.dev.raw.update_meta(&mut self.raw, &words);
@@ -543,7 +551,7 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
     // `new` comes back by value on a fail; replacing is rare, so its size costs nothing.
     #[allow(clippy::result_large_err)]
     pub fn replace(&mut self, new: Self) -> Result<Self, (Self, Error)> {
-        let (old, other) = (self.shader(), new.shader());
+        let (old, other) = (self.signature(), new.signature());
         let fits = rules::same_device(self.dev, new.dev, "node")
             .and_then(|()| rules::slot_kinds(other, old.layout.iter().map(BindingRole::kind)))
             .and_then(|()| rules::meta_types(other, old.meta.iter().map(|f| f.ty)));

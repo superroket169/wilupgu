@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::dtype::{DataKind, DataType, F16, F32};
 use crate::backend::shader::{
-    BindingRole, MetaField, MetaType, NativeBinding, NativeCode, Shader, ShaderCode, Workgroups,
+    BindingRole, MetaField, MetaType, Native, NativeBinding, Shader, ShaderBinary, Signature,
+    Workgroups,
 };
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::{Arg, DeviceConfig, MetaValue};
@@ -33,7 +34,7 @@ fn add(meta: &[u32], bindings: &mut [NativeBinding]) {
     }
 }
 
-static SCALE_LIKE: Shader = Shader {
+static SCALE_LIKE: Signature = Signature {
     name: "scale_like",
     meta: &[
         MetaField {
@@ -48,13 +49,13 @@ static SCALE_LIKE: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(scale)),
-        ..ShaderCode::NONE
-    },
 };
 
-static ADD_LIKE: Shader = Shader {
+fn scale_like() -> Shader {
+    Shader::new(&SCALE_LIKE, ShaderBinary::Native(Native(scale)))
+}
+
+static ADD_LIKE: Signature = Signature {
     name: "add_like",
     meta: &[MetaField {
         name: "n",
@@ -66,11 +67,11 @@ static ADD_LIKE: Shader = Shader {
     ],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(add)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn add_like() -> Shader {
+    Shader::new(&ADD_LIKE, ShaderBinary::Native(Native(add)))
+}
 
 fn device() -> ComputeDevice<CpuBackend> {
     ComputeDevice::new(
@@ -92,11 +93,7 @@ fn one_wg() -> Resolvable<Workgroups> {
     Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 })
 }
 
-fn call(
-    shader: &'static Shader,
-    meta: Vec<MetaSource>,
-    tensors: Vec<GlobalId<TensorSpec>>,
-) -> CallSpec {
+fn call(shader: Shader, meta: Vec<MetaSource>, tensors: Vec<GlobalId<TensorSpec>>) -> CallSpec {
     let node = NodeSpec::new(NodeDesc {
         shader,
         meta,
@@ -108,7 +105,7 @@ fn call(
 
 fn scale_call(x: GlobalId<TensorSpec>, n: u32, factor: MetaSource) -> CallSpec {
     call(
-        &SCALE_LIKE,
+        scale_like(),
         vec![MetaSource::Uint(Resolvable::fixed(n)), factor],
         vec![x],
     )
@@ -116,7 +113,7 @@ fn scale_call(x: GlobalId<TensorSpec>, n: u32, factor: MetaSource) -> CallSpec {
 
 fn add_call(acc: GlobalId<TensorSpec>, x: GlobalId<TensorSpec>, n: u32) -> CallSpec {
     call(
-        &ADD_LIKE,
+        add_like(),
         vec![MetaSource::Uint(Resolvable::fixed(n))],
         vec![acc, x],
     )
@@ -277,7 +274,7 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
     let mut z = dev.tensor_from(&F32::wrap(vec![0.0, 0.0])).unwrap();
     let mut add_z = dev
         .node(
-            &ADD_LIKE,
+            &add_like(),
             &[MetaValue::Uint(2)],
             Workgroups { x: 1, y: 1, z: 1 },
         )
@@ -357,7 +354,7 @@ fn edit_fails_if_a_node_of_another_shader_is_left() {
     let double = runnable.order()[0];
     let result = runnable.edit(|e| {
         *e.node(double)? = dev.node(
-            &ADD_LIKE,
+            &add_like(),
             &[MetaValue::Uint(2)],
             Workgroups { x: 1, y: 1, z: 1 },
         )?;
@@ -381,7 +378,7 @@ fn edit_fails_if_a_tensor_or_node_of_another_device_is_left() {
     let double = runnable.order()[0];
     let result = runnable.edit(|e| {
         *e.node(double)? = other.node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(2), MetaValue::Float(2.0)],
             Workgroups { x: 1, y: 1, z: 1 },
         )?;
@@ -402,7 +399,7 @@ fn edit_fails_if_a_node_with_other_meta_is_left() {
     // the same slots, but meta [Uint, Uint] where the call's sources are [Uint, Float]
     let result = runnable.edit(|e| {
         *e.node(scale)? = dev.node(
-            &SCALE_UINT,
+            &scale_uint(),
             &[MetaValue::Uint(1), MetaValue::Uint(2)],
             Workgroups { x: 1, y: 1, z: 1 },
         )?;
@@ -411,7 +408,7 @@ fn edit_fails_if_a_node_with_other_meta_is_left() {
     assert!(result.is_err());
 }
 
-static SCALE_UINT: Shader = Shader {
+static SCALE_UINT: Signature = Signature {
     name: "scale_uint",
     meta: &[
         MetaField {
@@ -426,11 +423,11 @@ static SCALE_UINT: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(scale)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn scale_uint() -> Shader {
+    Shader::new(&SCALE_UINT, ShaderBinary::Native(Native(scale)))
+}
 
 #[test]
 fn edit_fails_if_a_tensor_of_another_kind_is_left() {
@@ -451,7 +448,7 @@ fn reads_reach_everything_in_a_runnable() {
     let runnable = plan.build(&dev).unwrap();
     let double = runnable.order()[0];
     assert_eq!(
-        runnable.call(double).unwrap().node().shader().name,
+        runnable.call(double).unwrap().node().signature().name,
         "scale_like"
     );
     assert_eq!(

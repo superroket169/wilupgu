@@ -1,42 +1,23 @@
 use super::*;
-use crate::backend::shader::{BindingRole, ShaderFormat};
+use crate::backend::shader::{BindingRole, Shader, ShaderBinary};
 
 #[test]
 fn all_lists_every_builtin_once() {
     assert_eq!(ALL.len(), 17);
     for (i, s) in ALL.iter().enumerate() {
         assert!(
-            ALL[..i].iter().all(|o| o.name != s.name),
+            ALL[..i]
+                .iter()
+                .all(|o| o.signature.name != s.signature.name),
             "`{}` is listed twice",
-            s.name
+            s.signature.name
         );
     }
-}
-
-#[test]
-fn every_builtin_has_some_code() {
-    let formats = [ShaderFormat::Wgsl, ShaderFormat::Native, ShaderFormat::Cuda];
-    for s in ALL {
-        assert!(
-            formats.iter().any(|&f| s.shader_code.has(f)),
-            "`{}` has no code in any format",
-            s.name
-        );
-    }
-}
-
-#[test]
-fn code_paths_follow_the_shader_name() {
-    let wgsl = ADD.shader_code.wgsl.unwrap();
-    assert_eq!(wgsl.path(), "src/tools/builtins/codes/wgsl/add.wgsl");
-    assert!(wgsl.source().contains("@compute"));
-    let cuda = ADD.shader_code.cuda.unwrap();
-    assert_eq!(cuda.path(), "src/tools/builtins/codes/cuda/add.cu");
 }
 
 // --- shader standards (docs/SHADERS.md) ---
 
-fn native_source(s: &Shader) -> String {
+fn native_source(s: &Signature) -> String {
     let path = format!(
         "{}/src/tools/builtins/codes/native/{}.rs",
         env!("CARGO_MANIFEST_DIR"),
@@ -46,24 +27,19 @@ fn native_source(s: &Shader) -> String {
 }
 
 // Every source this shader has, with the format's name.
-fn sources(s: &Shader) -> Vec<(&'static str, String)> {
-    let mut out = Vec::new();
-    if let Some(c) = s.shader_code.wgsl {
-        out.push(("wgsl", c.source().to_string()));
-    }
-    if s.shader_code.native.is_some() {
-        out.push(("native", native_source(s)));
-    }
-    if let Some(c) = s.shader_code.cuda {
-        out.push(("cuda", c.source().to_string()));
-    }
-    out
+fn sources(b: &Builtin) -> Vec<(&'static str, String)> {
+    vec![
+        ("wgsl", b.wgsl.0.to_string()),
+        ("native", native_source(&b.signature)),
+        ("cuda", b.cuda.0.to_string()),
+    ]
 }
 
 // standard 2: exactly one meta, at slot 0
 #[test]
 fn every_builtin_has_meta() {
-    for s in ALL {
+    for b in ALL {
+        let s = &b.signature;
         assert!(!s.meta.is_empty(), "`{}` has no meta", s.name);
     }
 }
@@ -71,8 +47,9 @@ fn every_builtin_has_meta() {
 // standard 9
 #[test]
 fn every_format_starts_with_the_same_formula() {
-    for s in ALL {
-        let srcs = sources(s);
+    for b in ALL {
+        let s = &b.signature;
+        let srcs = sources(b);
         let (first_format, first) = &srcs[0];
         let formula = first.lines().next().unwrap_or("");
         assert!(
@@ -94,8 +71,9 @@ fn every_format_starts_with_the_same_formula() {
 // standard 8, as far as a test can tell: no Turkish (or any non-ASCII) text
 #[test]
 fn sources_are_ascii() {
-    for s in ALL {
-        for (format, src) in sources(s) {
+    for b in ALL {
+        let s = &b.signature;
+        for (format, src) in sources(b) {
             assert!(src.is_ascii(), "`{}` ({format}) has non-ASCII text", s.name);
         }
     }
@@ -104,14 +82,13 @@ fn sources_are_ascii() {
 // standard 4
 #[test]
 fn wgsl_never_uses_array_length() {
-    for s in ALL {
-        if let Some(c) = s.shader_code.wgsl {
-            assert!(
-                !c.source().contains("arrayLength"),
-                "`{}` uses arrayLength",
-                s.name
-            );
-        }
+    for b in ALL {
+        let s = &b.signature;
+        assert!(
+            !b.wgsl.0.contains("arrayLength"),
+            "`{}` uses arrayLength",
+            s.name
+        );
     }
 }
 
@@ -121,11 +98,9 @@ fn wgsl_never_uses_array_length() {
 // standards 1 and 6
 #[test]
 fn cuda_signature_follows_the_layout() {
-    for s in ALL {
-        let Some(c) = s.shader_code.cuda else {
-            continue;
-        };
-        let src = c.source();
+    for b in ALL {
+        let s = &b.signature;
+        let src = &b.cuda.0;
         let head = "extern \"C\" __global__ void entry(";
         let start = src
             .find(head)
@@ -160,12 +135,10 @@ fn cuda_signature_follows_the_layout() {
 fn wgsl_follows_the_standards() {
     use naga::{AddressSpace, Scalar, StorageAccess, TypeInner};
 
-    for s in ALL {
-        let Some(code) = s.shader_code.wgsl else {
-            continue;
-        };
+    for b in ALL {
+        let s = &b.signature;
         let name = s.name;
-        let module = naga::front::wgsl::parse_str(code.source())
+        let module = naga::front::wgsl::parse_str(&b.wgsl.0)
             .unwrap_or_else(|e| panic!("`{name}` doesn't parse: {e}"));
 
         assert_eq!(module.entry_points.len(), 1, "`{name}` entry points");
@@ -250,7 +223,8 @@ fn add_runs_on_the_cpu_backend() {
         ctx.upload_raw(&mut x, 0, bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]));
         ctx.upload_raw(&mut y, 0, bytemuck::cast_slice(&[10.0f32, 20.0, 30.0]));
     }
-    let node = ctx.build_node(&ADD, &[3], Workgroups::linear(1));
+    let add = Shader::new(&ADD.signature, ShaderBinary::Native(ADD.native));
+    let node = ctx.build_node(&add, &[3], Workgroups::linear(1)).unwrap();
     // SAFETY: ADD's layout is (x accumulate, y in), both hold 3 F32s, n = 3,
     // and nothing touches them before `synchronize`.
     unsafe {
@@ -281,7 +255,8 @@ fn min_lens_cover_what_native_code_touches() {
         DeviceConfig::default(),
     );
     let wg = Workgroups::linear(2);
-    for s in ALL {
+    for b in ALL {
+        let s = &b.signature;
         // A different value per field, so a mixed-up M/N/K shows.
         let meta: Vec<MetaValue> = (2..)
             .zip(s.meta)
@@ -321,7 +296,8 @@ fn min_lens_cover_what_native_code_touches() {
                     buf
                 })
                 .collect();
-            let mut node = dev.node(s, &meta, wg).unwrap();
+            let shader = Shader::new(s, ShaderBinary::Native(b.native));
+            let mut node = dev.node(&shader, &meta, wg).unwrap();
             dev.scope(|sc| {
                 let node = sc.bind_node(&mut node).unwrap();
                 let args: Vec<Arg> = bufs

@@ -51,7 +51,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
             order: plan.calls().iter().map(|c| c.id()).collect(),
         };
         for call in runnable.calls.values() {
-            let shader = call.node.shader();
+            let shader = call.node.signature();
             for (slot, (&id, &needs)) in call.tensors.iter().zip(call.node.min_lens()).enumerate() {
                 rules::long_enough(shader, slot, needs, runnable.tensor(id)?.len())?;
             }
@@ -111,7 +111,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
         }
         for call in self.calls.values() {
             rules::same_device(self.device, call.node.device(), "node")?;
-            let shader = call.node.shader();
+            let shader = call.node.signature();
             let kinds = call
                 .tensors
                 .iter()
@@ -145,7 +145,7 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
             } = call;
             let args = ids
                 .iter()
-                .zip(node.shader().layout)
+                .zip(node.signature().layout)
                 .map(|(id, role)| {
                     let slot = *tensors.get(id).ok_or(Error::NotInPlan { what: "tensor" })?;
                     Ok(match role {

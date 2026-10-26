@@ -113,8 +113,8 @@ for that is still to write.
   as shaders whose code calls the vendor's BLAS (cuBLAS on CUDA, rocBLAS or
   hipBLAS on ROCm, maybe MPS on Metal), so the same shaders run on each of
   those backends. It runs on most backends, not all; elsewhere a node fails
-  with `NoCode`. Needs a shader code form that is a library call, not
-  kernel source.
+  with `UnsupportedBinary`. Needs a `ShaderBinary` form that is a library
+  call, not kernel code.
 - **WASM/WebGPU browser demo**, a natural by-product of the wgpu backend.
 - **Quantization (int8/int4 inference)**: decode is bandwidth-bound, so
   this is a general iGPU lever.

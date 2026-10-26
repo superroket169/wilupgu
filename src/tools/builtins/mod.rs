@@ -5,9 +5,9 @@
 
 use crate::backend::dtype::DataKind::F32;
 use crate::backend::shader::BindingRole::{Accumulate, InOut, Input, Output};
-use crate::backend::shader::{
-    CudaCode, MetaField, MetaType, NativeCode, Shader, ShaderCode, WgslCode, Workgroups,
-};
+use std::borrow::Cow;
+
+use crate::backend::shader::{Cuda, MetaField, MetaType, Native, Signature, Wgsl, Workgroups};
 
 #[path = "codes/native"]
 mod native {
@@ -32,49 +32,41 @@ mod native {
     pub(super) mod zero_tensor;
 }
 
-// One format's code for the shader `$name`. File path, file name and native fn
-// name all come from `$name`, so they can't drift apart.
-macro_rules! code {
-    (wgsl, $name:ident) => {
-        Some(WgslCode::new(
-            concat!("src/tools/builtins/codes/wgsl/", stringify!($name), ".wgsl"),
-            include_str!(concat!("codes/wgsl/", stringify!($name), ".wgsl")),
-        ))
-    };
-    (cuda, $name:ident) => {
-        Some(CudaCode::new(
-            concat!("src/tools/builtins/codes/cuda/", stringify!($name), ".cu"),
-            include_str!(concat!("codes/cuda/", stringify!($name), ".cu")),
-        ))
-    };
-    (native, $name:ident) => {
-        Some(NativeCode::new(native::$name::entry))
-    };
+/// One builtin: how it is called, and its code in each format. WGSL and
+/// CUDA are sources; native code runs on the CPU backend as it is.
+pub struct Builtin {
+    /// How it is called.
+    pub signature: Signature,
+    /// WGSL source.
+    pub wgsl: Wgsl,
+    /// CUDA C++ source.
+    pub cuda: Cuda,
+    /// Native code.
+    pub native: Native,
 }
 
-// A format listed twice is a "field specified more than once" compile error.
+// File names and the native fn name all come from `$name`, so they can't
+// drift apart.
 macro_rules! builtins {
-    ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt $min_lens:ident { $($format:ident)* } )*) => {
+    ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt $min_lens:ident )*) => {
         $(
             #[doc = concat!("The `", stringify!($name), "` builtin; see the catalog in the module docs.")]
-            // `..ShaderCode::NONE` fills the formats a shader doesn't list; it is a no-op
-            // only while every builtin has all of them.
-            #[allow(clippy::needless_update)]
-            pub static $static: Shader = Shader {
-                name: stringify!($name),
-                meta: &[$($field),*],
-                layout: &[$($role),*],
-                min_lens: $min_lens,
-                workgroup_size: $workgroup_size,
-                shader_code: ShaderCode {
-                    $( $format: code!($format, $name), )*
-                    ..ShaderCode::NONE
+            pub static $static: Builtin = Builtin {
+                signature: Signature {
+                    name: stringify!($name),
+                    meta: &[$($field),*],
+                    layout: &[$($role),*],
+                    min_lens: $min_lens,
+                    workgroup_size: $workgroup_size,
                 },
+                wgsl: Wgsl(Cow::Borrowed(include_str!(concat!("codes/wgsl/", stringify!($name), ".wgsl")))),
+                cuda: Cuda(Cow::Borrowed(include_str!(concat!("codes/cuda/", stringify!($name), ".cu")))),
+                native: Native(native::$name::entry),
             };
         )*
 
         /// Every builtin, in catalog order.
-        pub static ALL: &[&Shader] = &[$(&$static),*];
+        pub static ALL: &[&Builtin] = &[$(&$static),*];
     };
 }
 
@@ -124,32 +116,32 @@ fn reduce_lens(m: &[u32], wg: Workgroups, l: &mut [usize]) {
 }
 
 builtins! {
-    // STATIC / name             [meta]                                    [tensors]                                   workgroup     min_lens       { formats }
+    // STATIC / name             [meta]                                    [tensors]                                   workgroup     min_lens
 
     // linear algebra
-    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   matmul_lens    { wgsl native cuda }
-    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [16, 16, 1]   matmul_lens    { wgsl native cuda }
-    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   matmul_lens    { wgsl native cuda }
-    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   gemv_lens      { wgsl native cuda }
-    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [256, 1, 1]   gemv_lens      { wgsl native cuda }
-    TRANSPOSE / transpose         [uint("rows"), uint("cols")]              [Input(F32), Output(F32)]                   [16, 16, 1]   transpose_lens { wgsl native cuda }
-    DOT / dot                     [uint("n")]                               [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   reduce_lens    { wgsl native cuda }
+    MATMUL / matmul               [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   matmul_lens
+    MATMUL_ADD / matmul_add       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [16, 16, 1]   matmul_lens
+    MATMUL_TRP / matmul_trp       [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [16, 16, 1]   matmul_lens
+    GEMV / gemv                   [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   gemv_lens
+    GEMV_ADD / gemv_add           [uint("M"), uint("N"), uint("K")]         [Input(F32), Input(F32), Accumulate(F32)]   [256, 1, 1]   gemv_lens
+    TRANSPOSE / transpose         [uint("rows"), uint("cols")]              [Input(F32), Output(F32)]                   [16, 16, 1]   transpose_lens
+    DOT / dot                     [uint("n")]                               [Input(F32), Input(F32), Output(F32)]       [256, 1, 1]   reduce_lens
 
     // elementwise
-    ADD / add                     [uint("n")]                               [Accumulate(F32), Input(F32)]               [256, 1, 1]   each_n         { wgsl native cuda }
-    MUL / mul                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n         { wgsl native cuda }
-    SCALE / scale                 [uint("n"), float("factor")]              [InOut(F32)]                                [256, 1, 1]   each_n         { wgsl native cuda }
-    MAX / max                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n         { wgsl native cuda }
-    MIN / min                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n         { wgsl native cuda }
-    CLAMP / clamp                 [uint("n"), float("lo"), float("hi")]     [InOut(F32)]                                [256, 1, 1]   each_n         { wgsl native cuda }
+    ADD / add                     [uint("n")]                               [Accumulate(F32), Input(F32)]               [256, 1, 1]   each_n
+    MUL / mul                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n
+    SCALE / scale                 [uint("n"), float("factor")]              [InOut(F32)]                                [256, 1, 1]   each_n
+    MAX / max                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n
+    MIN / min                     [uint("n")]                               [InOut(F32), Input(F32)]                    [256, 1, 1]   each_n
+    CLAMP / clamp                 [uint("n"), float("lo"), float("hi")]     [InOut(F32)]                                [256, 1, 1]   each_n
 
     // reduction
-    SUM / sum                     [uint("n")]                               [Input(F32), Output(F32)]                   [256, 1, 1]   reduce_lens    { wgsl native cuda }
+    SUM / sum                     [uint("n")]                               [Input(F32), Output(F32)]                   [256, 1, 1]   reduce_lens
 
     // buffer init
-    ZERO_TENSOR / zero_tensor     [uint("n")]                               [Output(F32)]                               [256, 1, 1]   each_n         { wgsl native cuda }
-    FILL_CONSTANT / fill_constant [uint("n"), float("value")]               [Output(F32)]                               [256, 1, 1]   each_n         { wgsl native cuda }
-    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]                 [Output(F32)]                               [256, 1, 1]   each_n         { wgsl native cuda }
+    ZERO_TENSOR / zero_tensor     [uint("n")]                               [Output(F32)]                               [256, 1, 1]   each_n
+    FILL_CONSTANT / fill_constant [uint("n"), float("value")]               [Output(F32)]                               [256, 1, 1]   each_n
+    FILL_RANDOM / fill_random     [uint("n"), uint("seed")]                 [Output(F32)]                               [256, 1, 1]   each_n
 }
 
 #[cfg(test)]

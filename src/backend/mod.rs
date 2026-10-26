@@ -13,7 +13,7 @@ pub mod shader;
 use std::marker::PhantomData;
 
 use crate::backend::dtype::DataKind;
-use crate::backend::shader::{Shader, ShaderFormat, Workgroups};
+use crate::backend::shader::{Shader, ShaderBinary, Signature, Workgroups};
 
 /// A backend's handle to one block of device memory.
 ///
@@ -39,14 +39,15 @@ pub enum Access<'a, Buf> {
 }
 
 /// One built dispatch, ready to run: a shader, its meta and its workgroup
-/// count, in the backend's own form.
+/// count, in the backend's own form. It keeps the shader's signature; its
+/// binary is the backend's to load and keep as it needs.
 ///
 /// Made by `Dispatch::build_node`.
 pub trait Node: Send + Sync + 'static {
     /// The largest workgroup count this backend accepts in one dimension.
     const MAX_WORKGROUPS_PER_DIM: u32 = u32::MAX;
 
-    fn shader(&self) -> &'static Shader;
+    fn signature(&self) -> &'static Signature;
     fn workgroups(&self) -> Workgroups;
 
     /// Fails if any dimension of `wg` is over `MAX_WORKGROUPS_PER_DIM`.
@@ -154,18 +155,19 @@ pub trait Storage: Send + Sync + 'static {
 pub trait Dispatch: Storage {
     type Node: Node;
 
-    /// The shader code format this backend runs. Only shaders with code in
-    /// this format run on it.
-    const FORMAT: ShaderFormat;
+    /// True if this backend runs `binary`'s form. Only shaders with such a
+    /// binary run on it.
+    fn accepts(binary: &ShaderBinary) -> bool;
 
-    /// Builds one node. `meta` is the words for slot 0; the backend makes the
-    /// meta buffer and owns it.
+    /// Builds one node from `shader`, whose binary this backend accepts.
+    /// `meta` is the words for slot 0; the backend makes the meta buffer and
+    /// owns it. Fails if the device can't load the binary.
     fn build_node(
         &self,
-        shader: &'static Shader,
+        shader: &Shader,
         meta: &[u32],
         workgroups: Workgroups,
-    ) -> Self::Node;
+    ) -> Result<Self::Node, String>;
 
     /// Writes new words into a node's meta buffer. Called before a run, for
     /// nodes with per-run meta fields. It must be ordered before that run's

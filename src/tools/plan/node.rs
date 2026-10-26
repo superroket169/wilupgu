@@ -54,7 +54,7 @@ impl MetaSource {
 #[derive(Clone)]
 pub struct NodeDesc {
     /// The shader the node runs.
-    pub shader: &'static Shader,
+    pub shader: Shader,
     /// One per field of the shader's meta, in order.
     pub meta: Vec<MetaSource>,
     /// How many workgroups one dispatch runs.
@@ -69,8 +69,8 @@ pub struct NodeSpec {
 
 impl NodeSpec {
     /// The shader the node runs.
-    pub fn shader(&self) -> &'static Shader {
-        self.desc.shader
+    pub fn shader(&self) -> &Shader {
+        &self.desc.shader
     }
 
     /// Where each meta field comes from, in the shader's order.
@@ -90,7 +90,10 @@ impl Spec for NodeSpec {
 
     /// Fails if the meta doesn't match the shader's fields in count and type.
     fn new(desc: NodeDesc) -> Result<Self, Error> {
-        rules::meta_types(desc.shader, desc.meta.iter().map(MetaSource::ty))?;
+        rules::meta_types(
+            desc.shader.signature(),
+            desc.meta.iter().map(MetaSource::ty),
+        )?;
         Ok(Self {
             id: GlobalId::new(),
             desc,
@@ -122,7 +125,7 @@ impl Spec for NodeSpec {
             .iter()
             .map(MetaSource::build_value)
             .collect::<Result<Vec<_>, _>>()?;
-        device.node(self.desc.shader, &meta, *self.desc.workgroups.value()?)
+        device.node(&self.desc.shader, &meta, *self.desc.workgroups.value()?)
     }
 }
 

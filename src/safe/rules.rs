@@ -3,7 +3,7 @@
 //! tools share them.
 
 use crate::backend::dtype::DataKind;
-use crate::backend::shader::{BindingRole, MetaType, Shader, ShaderFormat, Workgroups};
+use crate::backend::shader::{BindingRole, MetaType, Shader, Signature, Workgroups};
 use crate::backend::{Backend, DeviceInfo as _, Topology};
 use crate::error::Error;
 
@@ -37,7 +37,7 @@ pub(crate) fn same_len(expected: usize, got: usize) -> Result<(), Error> {
     }
 }
 
-pub(crate) fn slot_count(shader: &Shader, got: usize) -> Result<(), Error> {
+pub(crate) fn slot_count(shader: &Signature, got: usize) -> Result<(), Error> {
     if shader.layout.len() == got {
         Ok(())
     } else {
@@ -51,7 +51,7 @@ pub(crate) fn slot_count(shader: &Shader, got: usize) -> Result<(), Error> {
 
 // One tensor per slot, each of its slot's kind.
 pub(crate) fn slot_kinds(
-    shader: &Shader,
+    shader: &Signature,
     kinds: impl ExactSizeIterator<Item = DataKind>,
 ) -> Result<(), Error> {
     slot_count(shader, kinds.len())?;
@@ -70,7 +70,7 @@ pub(crate) fn slot_kinds(
 
 // One value per meta field, each of its field's type.
 pub(crate) fn meta_types(
-    shader: &Shader,
+    shader: &Signature,
     types: impl ExactSizeIterator<Item = MetaType>,
 ) -> Result<(), Error> {
     if shader.meta.len() != types.len() {
@@ -93,18 +93,17 @@ pub(crate) fn meta_types(
     Ok(())
 }
 
-pub(crate) fn has_code(shader: &Shader, format: ShaderFormat) -> Result<(), Error> {
-    if shader.shader_code.has(format) {
+pub(crate) fn accepted<B: Backend>(shader: &Shader) -> Result<(), Error> {
+    if B::accepts(shader.binary()) {
         Ok(())
     } else {
-        Err(Error::NoCode {
-            shader: shader.name,
-            format,
+        Err(Error::UnsupportedBinary {
+            shader: shader.signature().name,
         })
     }
 }
 
-pub(crate) fn has_workgroups(shader: &Shader, workgroups: Workgroups) -> Result<(), Error> {
+pub(crate) fn has_workgroups(shader: &Signature, workgroups: Workgroups) -> Result<(), Error> {
     if workgroups.dims().contains(&0) {
         Err(Error::NoWorkgroups {
             shader: shader.name,
@@ -131,7 +130,7 @@ pub(crate) fn supported_kind<B: Backend + Topology>(
 
 // `Arg::Read` for an `Input` slot, `Arg::Write` for the others.
 pub(crate) fn slot_access(
-    shader: &Shader,
+    shader: &Signature,
     slot: usize,
     role: &BindingRole,
     write: bool,
@@ -147,7 +146,7 @@ pub(crate) fn slot_access(
 }
 
 pub(crate) fn long_enough(
-    shader: &Shader,
+    shader: &Signature,
     slot: usize,
     needs: usize,
     holds: usize,
@@ -165,7 +164,7 @@ pub(crate) fn long_enough(
 }
 
 // A written slot's tensor, named by `tensors` in slot order, is in no other slot.
-pub(crate) fn not_aliased<T: PartialEq>(shader: &Shader, tensors: &[T]) -> Result<(), Error> {
+pub(crate) fn not_aliased<T: PartialEq>(shader: &Signature, tensors: &[T]) -> Result<(), Error> {
     for (slot, (role, written)) in shader.layout.iter().zip(tensors).enumerate() {
         if matches!(role, BindingRole::Input(_)) {
             continue;

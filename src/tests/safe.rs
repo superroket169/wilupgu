@@ -1,6 +1,10 @@
 use super::*;
 use crate::backend::dtype::{DataType, Int4, Int8, F32};
-use crate::backend::shader::{BindingRole, MetaField, NativeBinding, NativeCode, ShaderCode};
+use std::borrow::Cow;
+
+use crate::backend::shader::{
+    BindingRole, MetaField, Native, NativeBinding, ShaderBinary, Signature, Wgsl,
+};
 use crate::backend::Buffer;
 use crate::backends::{CpuBackend, CpuInfo};
 
@@ -26,7 +30,7 @@ fn add(meta: &[u32], bindings: &mut [NativeBinding]) {
     }
 }
 
-static ADD_LIKE: Shader = Shader {
+static ADD_LIKE: Signature = Signature {
     name: "add_like",
     meta: &[MetaField {
         name: "n",
@@ -38,13 +42,13 @@ static ADD_LIKE: Shader = Shader {
     ],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(add)),
-        ..ShaderCode::NONE
-    },
 };
 
-static SCALE_LIKE: Shader = Shader {
+fn add_like() -> Shader {
+    Shader::new(&ADD_LIKE, ShaderBinary::Native(Native(add)))
+}
+
+static SCALE_LIKE: Signature = Signature {
     name: "scale_like",
     meta: &[
         MetaField {
@@ -59,20 +63,24 @@ static SCALE_LIKE: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(scale)),
-        ..ShaderCode::NONE
-    },
 };
 
-static NO_CODE: Shader = Shader {
+fn scale_like() -> Shader {
+    Shader::new(&SCALE_LIKE, ShaderBinary::Native(Native(scale)))
+}
+
+static NO_CODE: Signature = Signature {
     name: "no_code",
     meta: &[],
     layout: &[],
     min_lens: |_, _, _| {},
     workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode::NONE,
 };
+
+// A binary the CPU backend doesn't take.
+fn no_code() -> Shader {
+    Shader::new(&NO_CODE, ShaderBinary::Wgsl(Wgsl(Cow::Borrowed(""))))
+}
 
 fn device(pool_bytes: u64) -> ComputeDevice<CpuBackend> {
     ComputeDevice::new(
@@ -139,24 +147,26 @@ fn node_checks_meta_count_and_types() {
     let dev = device(0);
     let wg = Workgroups::linear(1);
     let good = [MetaValue::Uint(4), MetaValue::Float(2.0)];
-    assert!(dev.node(&SCALE_LIKE, &good, wg).is_ok());
-    assert!(dev.node(&SCALE_LIKE, &good[..1], wg).is_err());
+    assert!(dev.node(&scale_like(), &good, wg).is_ok());
+    assert!(dev.node(&scale_like(), &good[..1], wg).is_err());
     assert!(dev
-        .node(&SCALE_LIKE, &[MetaValue::Uint(4), MetaValue::Uint(2)], wg)
+        .node(&scale_like(), &[MetaValue::Uint(4), MetaValue::Uint(2)], wg)
         .is_err());
 }
 
 #[test]
 fn node_needs_code_in_the_backends_format() {
     let dev = device(0);
-    assert!(dev.node(&NO_CODE, &[], Workgroups::linear(1)).is_err());
+    assert!(dev.node(&no_code(), &[], Workgroups::linear(1)).is_err());
 }
 
 #[test]
 fn update_meta_checks_like_node() {
     let dev = device(0);
     let good = [MetaValue::Uint(4), MetaValue::Float(2.0)];
-    let mut node = dev.node(&SCALE_LIKE, &good, Workgroups::linear(1)).unwrap();
+    let mut node = dev
+        .node(&scale_like(), &good, Workgroups::linear(1))
+        .unwrap();
     assert!(node
         .update_meta(&[MetaValue::Uint(8), MetaValue::Float(0.5)])
         .is_ok());
@@ -177,10 +187,10 @@ fn scope_chains_runs_on_the_same_buffers() {
     let mut x = f32s(&dev, &[1.0, 2.0, 3.0]);
     let mut y = f32s(&dev, &[10.0, 20.0, 30.0]);
     let wg = Workgroups::linear(1);
-    let mut add = dev.node(&ADD_LIKE, &[MetaValue::Uint(3)], wg).unwrap();
+    let mut add = dev.node(&add_like(), &[MetaValue::Uint(3)], wg).unwrap();
     let mut double = dev
         .node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(3), MetaValue::Float(2.0)],
             wg,
         )
@@ -206,7 +216,7 @@ fn scope_upload_and_update_meta_apply_to_the_next_run() {
     let mut x = f32s(&dev, &[0.0, 0.0]);
     let mut node = dev
         .node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(2), MetaValue::Float(2.0)],
             Workgroups::linear(1),
         )
@@ -232,7 +242,7 @@ fn run_rejects_wrong_args() {
     let mut y = f32s(&dev, &[1.0]);
     let mut bytes = dev.alloc(DataKind::Int8, 4).unwrap();
     let mut add = dev
-        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .node(&add_like(), &[MetaValue::Uint(1)], Workgroups::linear(1))
         .unwrap();
 
     dev.scope(|s| {
@@ -262,7 +272,7 @@ fn bind_rejects_another_devices_buffer_and_node() {
     let other = device(0);
     let mut buf = f32s(&other, &[1.0]);
     let mut node = other
-        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .node(&add_like(), &[MetaValue::Uint(1)], Workgroups::linear(1))
         .unwrap();
 
     dev.scope(|s| {
@@ -277,7 +287,7 @@ fn run_rejects_a_buffer_shorter_than_min_lens() {
     let mut x = f32s(&dev, &[1.0, 2.0, 3.0]);
     let mut node = dev
         .node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(3), MetaValue::Float(2.0)],
             Workgroups::linear(1),
         )
@@ -309,7 +319,7 @@ fn area_bufs_work_like_alloced_ones() {
     x.upload(&F32::wrap(vec![1.0, 2.0, 3.0])).unwrap();
     y.upload(&F32::wrap(vec![10.0, 20.0, 30.0])).unwrap();
     let mut add = dev
-        .node(&ADD_LIKE, &[MetaValue::Uint(3)], Workgroups::linear(1))
+        .node(&add_like(), &[MetaValue::Uint(3)], Workgroups::linear(1))
         .unwrap();
 
     dev.scope(|s| -> Result<(), Error> {
@@ -344,7 +354,7 @@ fn dropped_area_buf_stays_out_of_the_pool() {
 
 fn scale_node(dev: &ComputeDevice<CpuBackend>, n: u32, factor: f32) -> Node<'_, CpuBackend> {
     dev.node(
-        &SCALE_LIKE,
+        &scale_like(),
         &[MetaValue::Uint(n), MetaValue::Float(factor)],
         Workgroups::linear(1),
     )
@@ -357,7 +367,7 @@ fn capture_records_and_replay_runs_with_the_current_meta() {
     let mut x = f32s(&dev, &[1.0, 2.0]);
     let mut y = f32s(&dev, &[3.0]);
     let mut add = dev
-        .node(&ADD_LIKE, &[MetaValue::Uint(1)], Workgroups::linear(1))
+        .node(&add_like(), &[MetaValue::Uint(1)], Workgroups::linear(1))
         .unwrap();
     let mut double = scale_node(&dev, 2, 2.0);
 
@@ -649,7 +659,7 @@ fn node_meta_reads_back_as_built_and_updated() {
     let wg = Workgroups { x: 1, y: 1, z: 1 };
     let mut node = dev
         .node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(4), MetaValue::Float(2.0)],
             wg,
         )
@@ -672,7 +682,7 @@ fn tensors_and_nodes_know_their_device() {
     let tensor = a.alloc(DataKind::F32, 1).unwrap();
     let node = b
         .node(
-            &SCALE_LIKE,
+            &scale_like(),
             &[MetaValue::Uint(1), MetaValue::Float(1.0)],
             Workgroups { x: 1, y: 1, z: 1 },
         )
@@ -705,7 +715,7 @@ fn tensor_replace_checks_device_and_kind() {
     assert_eq!(tensor.download_vec::<F32>().unwrap(), vec![2.0, 3.0]);
 }
 
-static SCALE_UINT: Shader = Shader {
+static SCALE_UINT: Signature = Signature {
     name: "scale_uint",
     meta: &[
         MetaField {
@@ -720,11 +730,11 @@ static SCALE_UINT: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(scale)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn scale_uint() -> Shader {
+    Shader::new(&SCALE_UINT, ShaderBinary::Native(Native(scale)))
+}
 
 #[test]
 fn node_replace_checks_device_slots_and_meta_types() {
@@ -739,13 +749,13 @@ fn node_replace_checks_device_slots_and_meta_types() {
     assert_eq!(node.meta(), &[MetaValue::Uint(2), MetaValue::Float(3.0)]);
 
     assert!(node.replace(scale_node(&b, 1, 2.0)).is_err());
-    let add = a.node(&ADD_LIKE, &[MetaValue::Uint(1)], wg).unwrap();
+    let add = a.node(&add_like(), &[MetaValue::Uint(1)], wg).unwrap();
     assert!(node.replace(add).is_err());
     let uint = a
-        .node(&SCALE_UINT, &[MetaValue::Uint(1), MetaValue::Uint(2)], wg)
+        .node(&scale_uint(), &[MetaValue::Uint(1), MetaValue::Uint(2)], wg)
         .unwrap();
     let (back, _) = node.replace(uint).err().expect("replace fails");
-    assert_eq!(back.shader().name, "scale_uint");
+    assert_eq!(back.signature().name, "scale_uint");
     assert_eq!(node.meta(), &[MetaValue::Uint(2), MetaValue::Float(3.0)]);
 }
 
@@ -758,7 +768,7 @@ fn node_rejects_zero_workgroups() {
         Workgroups { x: 1, y: 0, z: 1 },
         Workgroups { x: 1, y: 1, z: 0 },
     ] {
-        let err = dev.node(&SCALE_LIKE, &meta, wg).err();
+        let err = dev.node(&scale_like(), &meta, wg).err();
         assert_eq!(
             err,
             Some(Error::NoWorkgroups {

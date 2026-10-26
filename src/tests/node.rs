@@ -1,6 +1,8 @@
 use super::*;
 use crate::backend::dtype::{DataKind, DataType, F32};
-use crate::backend::shader::{BindingRole, MetaField, NativeBinding, NativeCode, ShaderCode};
+use crate::backend::shader::{
+    BindingRole, MetaField, Native, NativeBinding, Shader, ShaderBinary, Signature,
+};
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::{Arg, DeviceConfig};
 use crate::tools::plan::deferred::Relation;
@@ -16,7 +18,7 @@ fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
     }
 }
 
-static SCALE_LIKE: Shader = Shader {
+static SCALE_LIKE: Signature = Signature {
     name: "scale_like",
     meta: &[
         MetaField {
@@ -31,11 +33,11 @@ static SCALE_LIKE: Shader = Shader {
     layout: &[BindingRole::InOut(DataKind::F32)],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [256, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(scale)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn scale_like() -> Shader {
+    Shader::new(&SCALE_LIKE, ShaderBinary::Native(Native(scale)))
+}
 
 fn one_wg() -> Resolvable<Workgroups> {
     Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 })
@@ -43,7 +45,7 @@ fn one_wg() -> Resolvable<Workgroups> {
 
 fn scale_desc(n: Resolvable<u32>, factor: MetaSource) -> NodeDesc {
     NodeDesc {
-        shader: &SCALE_LIKE,
+        shader: scale_like(),
         meta: vec![MetaSource::Uint(n), factor],
         workgroups: one_wg(),
     }

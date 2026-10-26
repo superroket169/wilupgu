@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::dtype::DataKind;
 use crate::backend::shader::{
-    BindingRole, MetaField, MetaType, NativeBinding, NativeCode, Shader, ShaderCode, Workgroups,
+    BindingRole, MetaField, MetaType, Native, NativeBinding, Shader, ShaderBinary, Signature,
+    Workgroups,
 };
 use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::DeviceConfig;
@@ -17,7 +18,7 @@ fn copy(meta: &[u32], bindings: &mut [NativeBinding]) {
     dst[..n].copy_from_slice(&src[..n]);
 }
 
-static COPY_LIKE: Shader = Shader {
+static COPY_LIKE: Signature = Signature {
     name: "copy_like",
     meta: &[MetaField {
         name: "n",
@@ -29,11 +30,11 @@ static COPY_LIKE: Shader = Shader {
     ],
     min_lens: |m, _, l| l.fill(m[0] as usize),
     workgroup_size: [1, 1, 1],
-    shader_code: ShaderCode {
-        native: Some(NativeCode::new(copy)),
-        ..ShaderCode::NONE
-    },
 };
+
+fn copy_like() -> Shader {
+    Shader::new(&COPY_LIKE, ShaderBinary::Native(Native(copy)))
+}
 
 fn tensor_id() -> GlobalId<TensorSpec> {
     TensorSpec::new(TensorDesc {
@@ -47,7 +48,7 @@ fn tensor_id() -> GlobalId<TensorSpec> {
 
 fn node(n: Resolvable<u32>) -> NodeSpec {
     NodeSpec::new(NodeDesc {
-        shader: &COPY_LIKE,
+        shader: copy_like(),
         meta: vec![MetaSource::Uint(n)],
         workgroups: Resolvable::fixed(Workgroups { x: 1, y: 1, z: 1 }),
     })
@@ -96,7 +97,7 @@ fn build_gives_the_node_and_names_the_tensors() {
         DeviceConfig::default(),
     );
     let call = spec.build(&dev).unwrap();
-    assert_eq!(call.node().shader().name, "copy_like");
+    assert_eq!(call.node().signature().name, "copy_like");
     assert_eq!(call.tensors(), &[a, b]);
     assert_ne!(
         spec.id(),

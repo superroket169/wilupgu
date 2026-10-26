@@ -227,7 +227,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     // `run`'s checks, made again for every call a replay runs.
     fn check(&self, node: &Node<'d, B>, args: &[Arg<'scope>]) -> Result<(), Error> {
         let bufs = self.bufs.borrow();
-        let shader = node.shader();
+        let shader = node.signature();
         // SAFETY: see `bufs`.
         let tensors: Vec<&Tensor<'d, B>> = args
             .iter()
