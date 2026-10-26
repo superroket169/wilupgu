@@ -71,8 +71,10 @@ impl<B: Backend + Topology> ComputeDevice<B> {
     /// A packed kind's length is rounded up to whole host words (a multiple of
     /// 8 for `Int4`). Its contents are unspecified.
     ///
-    /// Fails if the device is out of memory, even after the pool is emptied.
+    /// Fails if the device doesn't support `kind`, or is out of memory, even
+    /// after the pool is emptied.
     pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, Error> {
+        rules::supported_kind(self, kind)?;
         let len = whole_words(kind, len);
         let raw = match self.pool.take(kind, len) {
             Some(buf) => buf,
@@ -104,7 +106,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
     /// Builds a node that runs `shader` with `meta`, `workgroups` at a time.
     ///
     /// Fails if the shader has no code in the backend's format, `workgroups`
-    /// is over the backend's limit, the device doesn't support a kind in the
+    /// is 0 in some dimension or over the backend's limit, the device doesn't support a kind in the
     /// layout, or `meta` doesn't match the shader's fields in count and type.
     pub fn node(
         &self,
@@ -113,6 +115,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         workgroups: Workgroups,
     ) -> Result<Node<'_, B>, Error> {
         rules::has_code(shader, B::FORMAT)?;
+        rules::has_workgroups(shader, workgroups)?;
         B::Node::validate_workgroups(workgroups).map_err(Error::Backend)?;
         for role in shader.layout {
             rules::supported_kind(self, role.kind())?;
@@ -453,8 +456,10 @@ impl<B: Backend + Topology + Areable> DeviceArea<'_, B> {
 
     /// A buffer of `len` elements of `kind`, cut out of the area, with
     /// [`ComputeDevice::alloc`]'s length rule. Its memory goes back with the
-    /// area, not to the pool. Fails if the area has no room left.
+    /// area, not to the pool. Fails if the device doesn't support `kind`, or
+    /// the area has no room left.
     pub fn alloc(&self, kind: DataKind, len: usize) -> Result<Tensor<'_, B>, Error> {
+        rules::supported_kind(self.dev, kind)?;
         let len = whole_words(kind, len);
         let carved = self
             .dev
@@ -507,6 +512,12 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
     /// How many workgroups one run dispatches.
     pub fn workgroups(&self) -> Workgroups {
         self.raw.workgroups()
+    }
+
+    /// The elements each slot needs for the current meta: the shader's
+    /// `min_lens`.
+    pub fn min_lens(&self) -> &[usize] {
+        &self.lens
     }
 
     /// The raw node, to read.

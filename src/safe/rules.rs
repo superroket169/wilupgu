@@ -3,7 +3,7 @@
 //! tools share them.
 
 use crate::backend::dtype::DataKind;
-use crate::backend::shader::{BindingRole, MetaType, Shader, ShaderFormat};
+use crate::backend::shader::{BindingRole, MetaType, Shader, ShaderFormat, Workgroups};
 use crate::backend::{Backend, DeviceInfo as _, Topology};
 use crate::error::Error;
 
@@ -101,6 +101,16 @@ pub(crate) fn has_code(shader: &Shader, format: ShaderFormat) -> Result<(), Erro
             shader: shader.name,
             format,
         })
+    }
+}
+
+pub(crate) fn has_workgroups(shader: &Shader, workgroups: Workgroups) -> Result<(), Error> {
+    if workgroups.dims().contains(&0) {
+        Err(Error::NoWorkgroups {
+            shader: shader.name,
+        })
+    } else {
+        Ok(())
     }
 }
 

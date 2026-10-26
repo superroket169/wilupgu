@@ -63,6 +63,8 @@ pub enum Error {
         shader: &'static str,
         format: ShaderFormat,
     },
+    /// A workgroup count of 0 in some dimension.
+    NoWorkgroups { shader: &'static str },
     /// The device doesn't support this kind.
     UnsupportedKind { device: String, kind: DataKind },
     /// Elements `offset..offset + len` don't fit a tensor of `tensor_len`.
@@ -157,6 +159,9 @@ impl fmt::Display for Error {
                 "shader `{shader}`: meta field `{field}` is {expected:?}, got {got:?}"
             ),
             Error::NoCode { shader, format } => write!(f, "shader `{shader}` has no {format:?} code"),
+            Error::NoWorkgroups { shader } => {
+                write!(f, "shader `{shader}`: a workgroup count of 0")
+            }
             Error::UnsupportedKind { device, kind } => {
                 write!(f, "device `{device}` doesn't support {kind:?}")
             }

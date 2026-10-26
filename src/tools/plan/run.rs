@@ -40,8 +40,8 @@ impl Spec for RunPlan {
     type Description = PlanDesc;
     type Outcome<'d, B: Backend + Topology + 'd> = Runnable<'d, B>;
 
-    /// Fails if a call names a tensor that isn't in the plan, or one of
-    /// another kind than its slot's.
+    /// Fails if a call names a tensor that isn't in the plan, one of another
+    /// kind than its slot's, or a written slot's tensor in another slot too.
     fn new(desc: PlanDesc) -> Result<Self, Error> {
         for call in &desc.calls {
             let kinds = call
@@ -53,6 +53,7 @@ impl Spec for RunPlan {
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
             rules::slot_kinds(call.node().shader(), kinds.into_iter())?;
+            rules::not_aliased(call.node().shader(), call.tensors())?;
         }
         Ok(Self {
             id: GlobalId::new(),
@@ -75,7 +76,8 @@ impl Spec for RunPlan {
         Ok(())
     }
 
-    /// Builds every tensor, then every call.
+    /// Builds every tensor, then every call. Also fails if a tensor is
+    /// shorter than its slot needs for its call's meta.
     fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,

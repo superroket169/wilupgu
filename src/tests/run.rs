@@ -462,12 +462,27 @@ fn reads_reach_everything_in_a_runnable() {
     assert!(runnable.tensor(f32_tensor(vec![0.0]).id()).is_err());
 }
 
+// Puts a 1-element tensor in place of `id`, shorter than its call needs.
+fn shorten(runnable: &mut Runnable<'_, CpuBackend>, id: GlobalId<TensorSpec>) {
+    let dev = runnable.device();
+    runnable
+        .edit(|edit| {
+            let short = dev.alloc(DataKind::F32, 1)?;
+            edit.tensor(id)?.replace(short).map_err(|(_, e)| e)?;
+            Ok(())
+        })
+        .unwrap();
+}
+
 #[test]
-fn run_fails_on_a_tensor_shorter_than_a_call_needs() {
+fn run_fails_on_a_tensor_shortened_by_edit() {
     let x = f32_tensor(vec![1.0, 2.0]);
-    let short = scale_call(x.id(), 4, fixed(2.0));
+    let x_id = x.id();
     let dev = device();
-    let mut runnable = plan(vec![x], vec![short]).build(&dev).unwrap();
+    let mut runnable = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
+        .build(&dev)
+        .unwrap();
+    shorten(&mut runnable, x_id);
     assert!(dev.scope(|s| runnable.bind(s)?.run()).is_err());
 }
 
@@ -536,11 +551,48 @@ fn release_gives_back_a_runnable_that_runs() {
 fn a_failed_capture_gives_the_runnable_back() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
-    let short = scale_call(x_id, 4, fixed(2.0));
     let dev = device();
-    let runnable = plan(vec![x], vec![short]).build(&dev).unwrap();
+    let mut runnable = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
+        .build(&dev)
+        .unwrap();
+    shorten(&mut runnable, x_id);
     let Err((runnable, _)) = runnable.capture() else {
         panic!("a node needs more than its tensor holds")
     };
-    assert_eq!(values(&runnable, x_id), vec![1.0, 2.0]);
+    assert_eq!(runnable.tensor(x_id).unwrap().len(), 1);
+}
+
+#[test]
+fn new_rejects_a_written_tensor_in_two_slots() {
+    let y = f32_tensor(vec![1.0]);
+    let y_id = y.id();
+    let err = RunPlan::new(PlanDesc {
+        tensors: vec![y],
+        calls: vec![add_call(y_id, y_id, 1)],
+    })
+    .err();
+    assert_eq!(
+        err,
+        Some(Error::Aliased {
+            shader: "add_like",
+            slot: 0
+        })
+    );
+}
+
+#[test]
+fn build_rejects_a_tensor_shorter_than_its_slot_needs() {
+    let x = f32_tensor(vec![1.0, 2.0]);
+    let x_id = x.id();
+    let p = plan(vec![x], vec![scale_call(x_id, 3, fixed(2.0))]);
+    let err = p.build(&device()).err();
+    assert_eq!(
+        err,
+        Some(Error::TooShort {
+            shader: "scale_like",
+            slot: 0,
+            needs: 3,
+            holds: 2
+        })
+    );
 }

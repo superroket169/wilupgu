@@ -748,3 +748,22 @@ fn node_replace_checks_device_slots_and_meta_types() {
     assert_eq!(back.shader().name, "scale_uint");
     assert_eq!(node.meta(), &[MetaValue::Uint(2), MetaValue::Float(3.0)]);
 }
+
+#[test]
+fn node_rejects_zero_workgroups() {
+    let dev = device(0);
+    let meta = [MetaValue::Uint(1), MetaValue::Float(1.0)];
+    for wg in [
+        Workgroups { x: 0, y: 1, z: 1 },
+        Workgroups { x: 1, y: 0, z: 1 },
+        Workgroups { x: 1, y: 1, z: 0 },
+    ] {
+        let err = dev.node(&SCALE_LIKE, &meta, wg).err();
+        assert_eq!(
+            err,
+            Some(Error::NoWorkgroups {
+                shader: "scale_like"
+            })
+        );
+    }
+}

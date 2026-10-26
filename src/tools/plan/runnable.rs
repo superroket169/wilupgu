@@ -36,7 +36,7 @@ pub struct Runnable<'d, B: Backend + Topology> {
 impl<'d, B: Backend + Topology> Runnable<'d, B> {
     // `RunPlan::build`, once the plan is ready.
     pub(super) fn build(plan: &RunPlan, device: &'d ComputeDevice<B>) -> Result<Self, Error> {
-        Ok(Self {
+        let runnable = Self {
             device,
             tensors: plan
                 .tensors()
@@ -49,7 +49,14 @@ impl<'d, B: Backend + Topology> Runnable<'d, B> {
                 .map(|spec| Ok((spec.id(), spec.build(device)?)))
                 .collect::<Result<_, Error>>()?,
             order: plan.calls().iter().map(|c| c.id()).collect(),
-        })
+        };
+        for call in runnable.calls.values() {
+            let shader = call.node.shader();
+            for (slot, (&id, &needs)) in call.tensors.iter().zip(call.node.min_lens()).enumerate() {
+                rules::long_enough(shader, slot, needs, runnable.tensor(id)?.len())?;
+            }
+        }
+        Ok(runnable)
     }
 
     /// The device it was built on.
