@@ -23,7 +23,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   tools. Backend errors stay `String`, carried by `Error::Backend`.
 - `src/backends/` holds backend implementations, one file each. `cpu.rs` is
   behind the `cpu` feature and always built for tests; it implements
-  `Capturable` and `Areable`.
+  `Capturable` and `Areable`. `cuda.rs` is behind `cuda`; its tests need
+  `compile-nvrtc` and skip without a device.
 - `src/tools/` holds optional packages, each behind its own feature. A user
   can pick a backend and use none of them.
   - `builtins/` (`tool-builtins`, default): the builtin shader table;

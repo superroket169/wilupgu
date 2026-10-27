@@ -50,11 +50,10 @@ for that is still to write.
   `Resolvable` handed to SysTopology is resolved to the largest value these
   devices can hold. Which backends are usable at runtime is decided here,
   not by `cfg`s on shader code.
-- **CUDA backend** (cudarc). Use a fixed CUDA build-system version feature
-  (like `cuda-13030`) that matches the driver; `cuda-version-from-build-system`
-  can't find new CUDA versions.
-- **cuda-blas backend**, separate from the plain CUDA backend: cuBLAS for the
-  matmul family, for training-sized GEMMs.
+- **CUDA backend**: written, not yet run on a GPU. Its tests
+  (`CUDARC_CUDA_VERSION=13030 cargo test --features cpu,cuda,compile-nvrtc cuda`)
+  skip without a device and NVRTC; run them on the workstation. A module is
+  loaded per node, with no cache by shader.
 - **wgpu backend**, rewritten on the new contract, with f16 and other dtypes.
   Known wgpu bug: in one compute pass with several nodes, barriers between
   dispatches are missing or late and the run dies with `Parent device is
@@ -82,7 +81,9 @@ for that is still to write.
   error enum carries as one variant. Turn it into an enum once more than
   one backend exists. If backends' errors turn out very different, each
   backend could name its own error type in the contract instead; that is
-  not expected to be needed.
+  not expected to be needed. `upload_raw`, `download_raw`, `update_meta`,
+  `synchronize` and `reserve` return nothing: a driver error there means the
+  device is gone, and the backend panics with the driver's message.
 - **Backend and shader checks**, to look at when a GPU backend is written:
   - an empty tensor asks `alloc_raw` for 0 bytes, which CUDA may refuse;
     and empty buffers share an address, so `replay` can't tell them apart;

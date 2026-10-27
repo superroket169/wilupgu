@@ -30,9 +30,10 @@ tool-compile = []
 compile-nvrtc = ["tool-compile", "dep:cudarc"]
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:naga"]
 cpu = []
+cuda = ["dep:cudarc", "cudarc/driver"]
 
 [package.metadata.docs.rs]
-features = ["cpu", "tool-plan", "compile-nvrtc", "cudarc/cuda-13030"]
+features = ["cpu", "cuda", "tool-plan", "compile-nvrtc", "cudarc/cuda-13030"]
 
 [[example]]
 name = "add"
