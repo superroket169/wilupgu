@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The checks CLAUDE.md asks for before a change is done, and the examples.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --features cpu,tool-plan --all-targets -- -D warnings
+      - run: cargo test --features cpu
+      - run: cargo build --no-default-features
+      - run: cargo run --example add --features cpu
+      - run: cargo run --example plan --features cpu,tool-plan
+
+  # No GPU on the runner: Mesa's lavapipe is a Vulkan device on the CPU.
+  wgpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - run: cargo clippy --features cpu,wgpu --all-targets -- -D warnings
+      - run: cargo test --features cpu,wgpu
+      - run: cargo run --example add --features cpu,wgpu
+
+  # Built only: cudarc loads the CUDA libraries at runtime, so no toolkit is
+  # needed, and the tests skip without a device.
+  cuda:
+    runs-on: ubuntu-latest
+    env:
+      CUDARC_CUDA_VERSION: "13030"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --features cpu,cuda,compile-nvrtc --all-targets -- -D warnings
+      - run: cargo test --features cpu,cuda,compile-nvrtc
