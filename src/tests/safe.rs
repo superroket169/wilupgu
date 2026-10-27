@@ -777,3 +777,9 @@ fn node_rejects_zero_workgroups() {
         );
     }
 }
+
+#[test]
+fn first_opens_the_first_device() {
+    let dev = ComputeDevice::<CpuBackend>::first().unwrap();
+    assert_eq!(crate::backend::DeviceInfo::label(dev.raw().info()), "cpu");
+}

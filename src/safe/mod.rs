@@ -61,6 +61,16 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         }
     }
 
+    // The first device `B` finds, with the default config.
+    pub fn first() -> Result<Self, Error> {
+        let info = B::choosable_devices()
+            .into_iter()
+            .next()
+            .ok_or(Error::NoDevice { backend: B::NAME })?;
+        let raw = B::attach(info).map_err(Error::Backend)?;
+        Ok(Self::new(raw, DeviceConfig::default()))
+    }
+
     /// The raw device. Its methods that can cause undefined behavior are
     /// `unsafe fn`, so lending it out is harmless.
     pub fn raw(&self) -> &B {

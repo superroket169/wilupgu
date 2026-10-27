@@ -60,6 +60,8 @@ pub enum Error {
     },
     /// The shader's binary is of a form the backend doesn't take.
     UnsupportedBinary { shader: &'static str },
+    /// No device of this backend on this machine.
+    NoDevice { backend: &'static str },
     /// A workgroup count of 0 in some dimension.
     NoWorkgroups { shader: &'static str },
     /// The device doesn't support this kind.
@@ -162,6 +164,7 @@ impl fmt::Display for Error {
             Error::UnsupportedBinary { shader } => {
                 write!(f, "shader `{shader}`: the backend doesn't take this binary")
             }
+            Error::NoDevice { backend } => write!(f, "{backend}: no device on this machine"),
             Error::NoWorkgroups { shader } => {
                 write!(f, "shader `{shader}`: a workgroup count of 0")
             }
