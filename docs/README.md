@@ -81,7 +81,7 @@ Open work is in
 | `compile-nvrtc` | no | `Nvrtc`: CUDA C++ into PTX or cubin; the CUDA version is picked with `CUDARC_CUDA_VERSION` or a cudarc `cuda-XXXXX` feature |
 | `cpu` | no | `wilupgu::backends::CpuBackend` |
 | `cuda` | no | `wilupgu::backends::CudaBackend`, runs PTX and cubin; the CUDA version is picked like for `compile-nvrtc` |
-| `wgpu` | no | only the WGSL standards test (parses WGSL with naga); no backend yet |
+| `wgpu` | no | `wilupgu::backends::WgpuBackend` (Vulkan, Metal, DX12), runs WGSL, GLSL and SPIR-V |
 
 ## Examples
 

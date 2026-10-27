@@ -5,8 +5,7 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 
 ## Next
 
-1. **Release 0.7.0.**
-2. **Spread tool**, reworked on plan, back in the build.
+1. **Spread tool**, reworked on plan, back in the build.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the
      `Device<X>` enum below, ...) is open.
@@ -21,8 +20,8 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
    - `ComputeMesh` is still a skeleton (`todo!()` bodies, no constructor);
      `Placement` is unused outside tests. Several design parts don't exist
      yet.
-3. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
-4. **Backend parity tool**: every shader on every backend against the CPU
+2. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
+3. **Backend parity tool**: every shader on every backend against the CPU
    reference (strategy note 2), as a tool.
 
 Each tool gets its own feature once it builds (`tool-plan`,
@@ -54,19 +53,18 @@ for that is still to write.
   (`CUDARC_CUDA_VERSION=13030 cargo test --features cpu,cuda,compile-nvrtc cuda`)
   skip without a device and NVRTC; run them on the workstation. A module is
   loaded per node, with no cache by shader.
-- **wgpu backend**, rewritten on the new contract, with f16 and other dtypes.
-  Known wgpu bug: in one compute pass with several nodes, barriers between
-  dispatches are missing or late and the run dies with `Parent device is
-  lost`. The only working workaround is a submit+wait per node. Upgrading
-  wgpu didn't fix it; the native Vulkan backend below is the real fix.
-  `update_meta` must not reach runs queued before it: `queue.write_buffer`
-  lands before every command of the next submit, so two runs with an
-  `update_meta` between them in one submit would both see the new meta.
-  Write each update into its own region of a staging buffer and copy it
-  into the meta buffer with `copy_buffer_to_buffer` in the command stream,
-  so it is ordered with the dispatches; the meta buffer keeps its address
-  (which capture needs). Checked by
-  `scope_upload_and_update_meta_apply_to_the_next_run`.
+- **wgpu backend**: tested on an Intel iGPU (Mesa, Vulkan) only.
+  - `Parent device is lost`: many nodes in one compute pass and one submit
+    died with it in training runs, not in inference. A missing barrier, or
+    a submit long enough for the driver's GPU timeout? `submit_every` (1
+    by default; one compute pass per dispatch) is the knob to find out: a
+    test with N independent dispatches in one submit tells the two apart.
+  - No `Areable`: WebGPU forbids one buffer bound both read-only and
+    writable in one dispatch, for the whole buffer, so tensors cut out of
+    one buffer can't be an `Input` and an `Output` of the same run. No
+    `Capturable`: wgpu can't record compute work for replay.
+  - A pipeline is made per node, with no cache by shader.
+  - `total_memory_bytes` is 0: wgpu doesn't tell it.
 - **Native Vulkan backend** (vulkano). WGSL → `naga` → SPIR-V →
   `vulkano::ShaderModule`, with barriers derived from the nodes'
   `BindingRole`s (real RAW/WAW hazards) and recorded by hand. First step:

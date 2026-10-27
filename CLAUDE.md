@@ -24,7 +24,9 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
 - `src/backends/` holds backend implementations, one file each. `cpu.rs` is
   behind the `cpu` feature and always built for tests; it implements
   `Capturable` and `Areable`. `cuda.rs` is behind `cuda`; its tests need
-  `compile-nvrtc` and skip without a device.
+  `compile-nvrtc` and skip without a device. `wgpu.rs` is behind `wgpu`;
+  it implements neither `Capturable` nor `Areable`, and its tests skip
+  without an adapter.
 - `src/tools/` holds optional packages, each behind its own feature. A user
   can pick a backend and use none of them.
   - `builtins/` (`tool-builtins`, default): the builtin shader table;
