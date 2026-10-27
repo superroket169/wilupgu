@@ -252,7 +252,7 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
         rules::same_kind(self.kind, data.kind())?;
         let range = byte_range(self.kind, self.len, offset, data.len(), true)?;
         let bytes = data.as_bytes();
-        io_log::log("htod", "-", bytes.len() as u64);
+        io_log::log("htod", bytes.len() as u64);
 
         // Zero-padded to `COPY_ALIGN`; `byte_range` let it only into the
         // tensor's padding.
@@ -274,7 +274,7 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     /// of [`COPY_ALIGN`] bytes.
     pub fn download_range(&self, offset: usize, len: usize) -> Result<HostData, Error> {
         let range = byte_range(self.kind, self.len, offset, len, false)?;
-        io_log::log("dtoh", "-", range.exact);
+        io_log::log("dtoh", range.exact);
 
         // SAFETY: `byte_range` checked that the range is aligned and inside the
         // `buffer_bytes(kind, len)` that `alloc` asked for.
