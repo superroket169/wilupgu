@@ -93,6 +93,12 @@ pub enum NativeBinding<'a> {
 #[derive(Debug, Clone)]
 pub struct Wgsl(pub Cow<'static, str>);
 
+#[derive(Debug, Clone)]
+pub struct Glsl(pub Cow<'static, str>);
+
+#[derive(Debug, Clone)]
+pub struct Spirv(pub Cow<'static, [u32]>);
+
 /// CUDA C++ source. No backend takes it; it is compiled to [`Ptx`] or [`Cubin`].
 #[derive(Debug, Clone)]
 pub struct Cuda(pub Cow<'static, str>);
@@ -116,6 +122,8 @@ pub struct Native(pub fn(&[u32], &mut [NativeBinding]));
 #[non_exhaustive]
 pub enum ShaderBinary {
     Wgsl(Wgsl),
+    Glsl(Glsl),
+    Spirv(Spirv),
     Ptx(Ptx),
     Cubin(Cubin),
     Native(Native),
