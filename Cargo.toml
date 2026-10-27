@@ -42,3 +42,7 @@ required-features = ["cpu"]
 [[example]]
 name = "plan"
 required-features = ["cpu", "tool-plan"]
+
+[[example]]
+name = "parity"
+required-features = ["cpu", "tool-parity"]

@@ -42,7 +42,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `parity/` (`tool-parity`, always built for tests): runs one `Case` of
     a shader on two devices from the same seeded data and compares each
     slot by its `Check`; the `Report` also flags `Output` slots left NaN
-    and writes past `min_lens`.
+    and writes past `min_lens`. `builtins` holds the edge cases of every
+    builtin and `compare_builtins`.
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module

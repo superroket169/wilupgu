@@ -21,8 +21,6 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
      `Placement` is unused outside tests. Several design parts don't exist
      yet.
 2. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
-3. **Backend parity tool**: every shader on every backend against the CPU
-   reference (strategy note 2), as a tool.
 
 Each tool gets its own feature once it builds (`tool-plan`,
 `tool-spread = ["tool-plan"]`). Tools import each other as a DAG; a check

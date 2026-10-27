@@ -1,5 +1,8 @@
 use std::fmt;
 
+#[cfg(feature = "tool-builtins")]
+pub mod builtins;
+
 use crate::backend::dtype::{DataKind, DataType, F32};
 use crate::backend::shader::{BindingRole, Shader, Signature, Workgroups};
 use crate::backend::{Backend, Topology};

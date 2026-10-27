@@ -53,6 +53,9 @@ More in [`examples/`](https://github.com/superroket169/wilupgu/tree/main/example
 - `plan.rs`: the same work described up front with the plan tool:
   `x *= factor`, then `y += x`, run twice with a factor set from the host
   each time. `cargo run --example plan --features cpu,tool-plan`
+- `parity.rs`: every builtin on every pair of backends that are on and
+  have a device here, one line per case.
+  `cargo run --example parity --features cpu,wgpu,tool-parity`
 
 ## Status
 
@@ -83,6 +86,12 @@ In it:
   (`Dynamic`). A `RunPlan` builds into a `Runnable`, bound into the caller's
   scope once and run as often as needed; on a backend with capture it can
   become a `CapturedRunnable`, which replays one recording.
+- **The parity tool** (`tool-parity` feature, `wilupgu::tools::parity`):
+  `compare` runs one `Case` of a shader on two devices, of the same backend
+  or not, from the same seeded data, and checks each slot by its `Check`.
+  The `Report` also flags `Output` slots left unwritten and writes past
+  `min_lens`. `compare_builtins` does it for every builtin, with edge cases
+  for each.
 - **Backends**, each behind its feature:
   - `cpu`: single-threaded, for tests and reference results, with capture
     and areas;
@@ -129,6 +138,7 @@ Open work is in
 |---|---|---|
 | `tool-builtins` | yes | `wilupgu::tools::builtins`, the builtin shader table |
 | `tool-plan` | no | `wilupgu::tools::plan`, the plan tool |
+| `tool-parity` | no | `wilupgu::tools::parity`, the parity tool |
 | `tool-compile` | no | `wilupgu::tools::compile`, the `ShaderCompiler` trait |
 | `compile-nvrtc` | no | `Nvrtc`: CUDA C++ into PTX or cubin; the CUDA version is picked with `CUDARC_CUDA_VERSION` or a cudarc `cuda-XXXXX` feature |
 | `cpu` | no | `wilupgu::backends::CpuBackend` |

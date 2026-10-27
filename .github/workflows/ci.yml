@@ -24,6 +24,7 @@ jobs:
       - run: cargo build --no-default-features
       - run: cargo run --example add --features cpu
       - run: cargo run --example plan --features cpu,tool-plan
+      - run: cargo run --example parity --features cpu,tool-parity
 
   # No GPU on the runner: Mesa's lavapipe is a Vulkan device on the CPU.
   wgpu:
@@ -38,6 +39,7 @@ jobs:
       - run: cargo clippy --features cpu,wgpu --all-targets -- -D warnings
       - run: cargo test --features cpu,wgpu
       - run: cargo run --example add --features cpu,wgpu
+      - run: cargo run --example parity --features cpu,wgpu,tool-parity
 
   # Built only: cudarc loads the CUDA libraries at runtime, so no toolkit is
   # needed, and the tests skip without a device.
