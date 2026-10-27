@@ -2,12 +2,24 @@
 
 Borrow-checked GPU dispatch for Rust, with optional tools on top.
 
-GPU memory, shaders and dispatches, checked by the borrow checker: while
-the device uses a buffer, the host can't touch it, and a run's tensors are
-checked against its shader before anything reaches the device. The same
-code runs on every backend (CPU, CUDA, wgpu). No shape system; aimed at
-low-end hardware, iGPUs included.
+- **The borrow checker guards device memory.** GPU work runs in a scope,
+  like `std::thread::scope`. A buffer bound to it stays borrowed until the
+  device is done with it, so the host can't read, write or free it early.
+- **Every run is checked before it reaches the device:** slot count,
+  read/write roles, data kinds, aliasing, and each buffer's length against
+  what the shader declares it touches (`min_lens`).
+- **One API on every backend:** CUDA, wgpu (Vulkan, Metal, DX12) and a
+  CPU reference backend. Bring your own backend by implementing three
+  traits.
+- **Optional tools on the safe layer:** describe work once and run it many
+  times (plan), check a shader on two backends from the same seeded data
+  (parity), compile CUDA C++ at runtime (NVRTC).
 
+A `Tensor` here is a flat, typed device buffer; there is no shape system.
+
+**Status: early.** Tested on CPU and an Intel iGPU (wgpu, Vulkan); the
+CUDA backend builds but hasn't run on an NVIDIA GPU yet. Aimed at low-end
+hardware, iGPUs included.
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
 
@@ -40,6 +52,31 @@ fn main() -> Result<(), Error> {
 
 Swap `CpuBackend` for `WgpuBackend` or `CudaBackend` and nothing else
 changes: `shader_for` picks the code the backend runs.
+
+Reading `x` while the scope still holds it doesn't compile:
+
+```rust,ignore
+dev.scope(|s| {
+    let (xs, ys, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
+    s.run(add, &[Arg::Write(xs), Arg::Read(ys)])?;
+    x.download_vec::<F32>()?; // error[E0502]: cannot borrow `x` as immutable
+                              // because it is also borrowed as mutable
+    Ok(())
+})?;
+```
+
+## Compared to
+
+- **wgpu**: the layer below wilupgu's wgpu backend. With wgpu you build
+  pipelines and bind groups yourself; wilupgu adds buffer ownership, the
+  per-run checks above, and the same API on CUDA.
+- **CubeCL**: kernels written once in Rust and compiled for each backend.
+  wilupgu doesn't generate kernels: a shader brings code per backend (WGSL,
+  CUDA, native Rust; every builtin ships all three). In return, existing
+  WGSL and CUDA kernels run as they are, and the safety lives in the host
+  API, not in a kernel language.
+- **krnl**: Rust kernels compiled to SPIR-V, run on Vulkan or the host.
+  wilupgu runs CUDA directly as well, and takes existing kernel code.
 
 ```toml
 [dependencies]
