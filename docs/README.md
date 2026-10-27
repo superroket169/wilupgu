@@ -43,7 +43,7 @@ changes: `shader_for` picks the code the backend runs.
 
 ```toml
 [dependencies]
-wilupgu = { version = "0.7", features = ["cpu"] }
+wilupgu = { version = "0.8", features = ["cpu"] }
 ```
 
 More in [`examples/`](https://github.com/superroket169/wilupgu/tree/main/examples):
