@@ -1,15 +1,62 @@
 # wilupgu
 
-Backend-independent GPU compute for Rust, aimed at low-end hardware (iGPUs
-included). No shape system: GPU memory, shaders and dispatches,
-on a backend contract built on Rust ownership.
+Borrow-checked GPU dispatch for Rust, with optional tools on top.
+
+GPU memory, shaders and dispatches, checked by the borrow checker: while
+the device uses a buffer, the host can't touch it, and a run's tensors are
+checked against its shader before anything reaches the device. The same
+code runs on every backend (CPU, CUDA, wgpu). No shape system; aimed at
+low-end hardware, iGPUs included.
 
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
 
-## Status (0.7.0)
+## Example
 
-In this release:
+```rust
+use wilupgu::backends::CpuBackend;
+use wilupgu::prelude::*;
+use wilupgu::tools::builtins::ADD;
+
+fn main() -> Result<(), Error> {
+    let dev = ComputeDevice::<CpuBackend>::first()?;
+    let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 2.0, 3.0]))?;
+    let mut y = dev.tensor_from(&F32::wrap(vec![10.0, 20.0, 30.0]))?;
+
+    // x[i] += y[i] for i < n; the meta is n.
+    let shader = ADD.shader_for::<CpuBackend>()?;
+    let mut add = dev.node(&shader, &[MetaValue::Uint(3)], Workgroups::linear(1))?;
+
+    // While bound, the host can't touch x or y; the scope waits for the
+    // device before it returns.
+    dev.scope(|s| {
+        let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
+        s.run(add, &[Arg::Write(x), Arg::Read(y)])
+    })?;
+    assert_eq!(x.download_vec::<F32>()?, vec![11.0, 22.0, 33.0]);
+    Ok(())
+}
+```
+
+Swap `CpuBackend` for `WgpuBackend` or `CudaBackend` and nothing else
+changes: `shader_for` picks the code the backend runs.
+
+```toml
+[dependencies]
+wilupgu = { version = "0.7", features = ["cpu"] }
+```
+
+More in [`examples/`](https://github.com/superroket169/wilupgu/tree/main/examples):
+
+- `add.rs`: the code above, generic over the backend; it also runs on wgpu
+  when that feature is on. `cargo run --example add --features cpu`
+- `plan.rs`: the same work described up front with the plan tool:
+  `x *= factor`, then `y += x`, run twice with a factor set from the host
+  each time. `cargo run --example plan --features cpu,tool-plan`
+
+## Status
+
+In it:
 
 - **The safe layer** (`wilupgu::safe`), the API users call. It is generic
   over the backend and holds every check that can be written once for all
@@ -36,8 +83,13 @@ In this release:
   (`Dynamic`). A `RunPlan` builds into a `Runnable`, bound into the caller's
   scope once and run as often as needed; on a backend with capture it can
   become a `CapturedRunnable`, which replays one recording.
-- **A CPU backend** (`cpu` feature): single-threaded, for tests and reference
-  results, with capture and areas.
+- **Backends**, each behind its feature:
+  - `cpu`: single-threaded, for tests and reference results, with capture
+    and areas;
+  - `wgpu`: Vulkan, Metal and DX12 through wgpu, tested on an Intel iGPU
+    (Vulkan); no capture, no areas;
+  - `cuda`: PTX and cubin through the CUDA driver, with capture (CUDA
+    graphs) and areas; not yet run on an NVIDIA GPU.
 - **17 builtin shaders** (`tool-builtins` feature, on by default), each with
   WGSL, native and CUDA code, and the `min_lens` every shader declares. The
   catalog is
@@ -46,7 +98,7 @@ In this release:
 Not in it yet:
 
 - spreading work over devices;
-- GPU backends (wgpu, Vulkan, CUDA).
+- a native Vulkan backend.
 
 Open work is in
 [TODO.md](https://github.com/superroket169/wilupgu/blob/main/docs/TODO.md).
@@ -83,20 +135,7 @@ Open work is in
 | `cuda` | no | `wilupgu::backends::CudaBackend`, runs PTX and cubin; the CUDA version is picked like for `compile-nvrtc` |
 | `wgpu` | no | `wilupgu::backends::WgpuBackend` (Vulkan, Metal, DX12), runs WGSL, GLSL and SPIR-V |
 
-## Examples
-
-```toml
-[dependencies]
-wilupgu = { version = "0.7", features = ["cpu"] }
-```
-
-In [`examples/`](https://github.com/superroket169/wilupgu/tree/main/examples):
-
-- `add.rs`: the builtin `add` (`x[i] += y[i]`) on the CPU backend.
-  `cargo run --example add --features cpu`
-- `plan.rs`: the same work described up front with the plan tool:
-  `x *= factor`, then `y += x`, run twice with a factor set from the host
-  each time. `cargo run --example plan --features cpu,tool-plan`
+## The plan tool
 
 In the plan tool, between runs, `Runnable::edit` lends every tensor and node
 as `&mut`; inside a scope, `run_call` runs one call and `tensor` gives a
@@ -104,7 +143,7 @@ tensor's slot for the scope's own work.
 
 ## Capture and areas
 
-On a backend that has them (the CPU backend does):
+On a backend that has them (CPU and CUDA; not wgpu):
 
 - `Scope::capture` records the runs its closure makes instead of running
   them. `Scope::replay` runs them again in a later scope, once every

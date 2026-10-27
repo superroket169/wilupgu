@@ -2,7 +2,7 @@
 name = "wilupgu"
 version = "0.7.0"
 edition = "2021"
-description = "Backend-independent GPU compute for Rust, built on an ownership-based backend contract. Aimed at low-end hardware; no shape system."
+description = "Borrow-checked GPU dispatch for Rust, with optional tools on top."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/superroket169/wilupgu"
 readme = "docs/README.md"

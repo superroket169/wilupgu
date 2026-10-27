@@ -43,8 +43,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
   it tests. There is only one tests directory.
-- `examples/`: runnable examples; the README points to them and holds no
-  code of its own.
+- `examples/`: runnable examples. The README shows `add.rs` (with a
+  `main` on the CPU backend) and points to the rest; keep the two the same.
 
 ## Builtin shaders
 
