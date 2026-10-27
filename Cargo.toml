@@ -25,6 +25,7 @@ cudarc = { version = "0.19", optional = true, default-features = false, features
 default = ["tool-builtins"]
 tool-builtins = []
 tool-plan = []
+tool-parity = []
 tool-compile = []
 compile-nvrtc = ["tool-compile", "dep:cudarc"]
 wgpu = ["dep:wgpu", "dep:pollster", "dep:naga"]
@@ -32,7 +33,7 @@ cpu = []
 cuda = ["dep:cudarc", "cudarc/driver"]
 
 [package.metadata.docs.rs]
-features = ["cpu", "cuda", "wgpu", "tool-plan", "compile-nvrtc", "cudarc/cuda-13030"]
+features = ["cpu", "cuda", "wgpu", "tool-plan", "tool-parity", "compile-nvrtc", "cudarc/cuda-13030"]
 
 [[example]]
 name = "add"

@@ -10,6 +10,9 @@ pub mod compile;
 // Always built for tests, like the CPU backend.
 #[cfg(any(feature = "tool-plan", test))]
 pub mod plan;
+// Always built for tests, like the CPU backend.
+#[cfg(any(feature = "tool-parity", test))]
+pub mod parity;
 // TODO: spread is out of the build until it's rewritten on the safe layer.
 #[cfg(any())]
 pub mod spread;

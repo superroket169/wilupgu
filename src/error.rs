@@ -99,6 +99,20 @@ pub enum Error {
     DynamicUnset,
     /// A compiler failed; `log` is its report.
     Compile { compiler: &'static str, log: String },
+    /// Two shaders compared by parity with different signatures.
+    SignatureMismatch { a: &'static str, b: &'static str },
+    /// Another count of parity checks than the shader has slots.
+    CheckCount {
+        shader: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    /// A slot of a kind parity can't make data for.
+    ParityKind {
+        shader: &'static str,
+        slot: usize,
+        kind: DataKind,
+    },
     /// A run's call at `index` in its order failed with `error`.
     InCall { index: usize, error: Box<Error> },
     /// The backend's own error.
@@ -197,6 +211,18 @@ impl fmt::Display for Error {
             Error::Computed => write!(f, "this value is computed by a Relation"),
             Error::DynamicUnset => write!(f, "a Dynamic was read before it was ever set"),
             Error::Compile { compiler, log } => write!(f, "{compiler}: {log}"),
+            Error::SignatureMismatch { a, b } => {
+                write!(f, "shaders `{a}` and `{b}` have different signatures")
+            }
+            Error::CheckCount {
+                shader,
+                expected,
+                got,
+            } => write!(f, "shader `{shader}` has {expected} slots, got {got} checks"),
+            Error::ParityKind { shader, slot, kind } => write!(
+                f,
+                "shader `{shader}`: slot {slot} holds {kind:?}; parity makes only F32 data"
+            ),
             Error::InCall { index, error } => write!(f, "call {index}: {error}"),
             Error::Backend(e) => write!(f, "backend: {e}"),
         }

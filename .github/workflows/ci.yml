@@ -19,7 +19,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-      - run: cargo clippy --features cpu,tool-plan --all-targets -- -D warnings
+      - run: cargo clippy --features cpu,tool-plan,tool-parity --all-targets -- -D warnings
       - run: cargo test --features cpu
       - run: cargo build --no-default-features
       - run: cargo run --example add --features cpu

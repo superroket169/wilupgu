@@ -39,6 +39,10 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `compile/` (`tool-compile`, always built for tests): the
     `ShaderCompiler` trait; each compiler goes in `compile/compilers/`, one
     file each, behind its own feature.
+  - `parity/` (`tool-parity`, always built for tests): runs one `Case` of
+    a shader on two devices from the same seeded data and compares each
+    slot by its `Check`; the `Report` also flags `Output` slots left NaN
+    and writes past `min_lens`.
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
