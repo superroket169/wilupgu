@@ -16,7 +16,9 @@ fn device(submit_every: u8) -> Option<ComputeDevice<WgpuBackend>> {
 }
 
 fn shader(builtin: &'static Builtin) -> Shader {
-    Shader::new(&builtin.signature, ShaderBinary::Wgsl(builtin.wgsl.clone()))
+    let shader = builtin.shader_for::<WgpuBackend>().unwrap();
+    assert!(matches!(shader.binary(), ShaderBinary::Wgsl(_)));
+    shader
 }
 
 fn scale_meta(n: u32, factor: f32) -> [MetaValue; 2] {

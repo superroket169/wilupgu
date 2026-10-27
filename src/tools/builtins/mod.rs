@@ -7,7 +7,11 @@ use crate::backend::dtype::DataKind::F32;
 use crate::backend::shader::BindingRole::{Accumulate, InOut, Input, Output};
 use std::borrow::Cow;
 
-use crate::backend::shader::{Cuda, MetaField, MetaType, Native, Signature, Wgsl, Workgroups};
+use crate::backend::shader::{
+    Cuda, MetaField, MetaType, Native, Shader, ShaderBinary, Signature, Wgsl, Workgroups,
+};
+use crate::backend::Dispatch;
+use crate::error::Error;
 
 #[path = "codes/native"]
 mod native {
@@ -43,6 +47,32 @@ pub struct Builtin {
     pub cuda: Cuda,
     /// Native code.
     pub native: Native,
+}
+
+impl Builtin {
+    // Native or WGSL as they are; CUDA compiled to PTX with NVRTC, when
+    // `compile-nvrtc` is on.
+    pub fn shader_for<B: Dispatch>(&'static self) -> Result<Shader, Error> {
+        let ready = [
+            ShaderBinary::Native(self.native),
+            ShaderBinary::Wgsl(self.wgsl.clone()),
+        ];
+        if let Some(binary) = ready.into_iter().find(B::accepts) {
+            return Ok(Shader::new(&self.signature, binary));
+        }
+        #[cfg(feature = "compile-nvrtc")]
+        {
+            use crate::backend::shader::Ptx;
+            use crate::tools::compile::{compilers::nvrtc::Nvrtc, ShaderCompiler};
+            if B::accepts(&ShaderBinary::Ptx(Ptx(Cow::Borrowed("")))) {
+                let ptx = Nvrtc::default().compile(&self.cuda)?;
+                return Ok(Shader::new(&self.signature, ShaderBinary::Ptx(ptx)));
+            }
+        }
+        Err(Error::UnsupportedBinary {
+            shader: self.signature.name,
+        })
+    }
 }
 
 // File names and the native fn name all come from `$name`, so they can't

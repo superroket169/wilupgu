@@ -339,3 +339,12 @@ fn min_lens_cover_what_native_code_touches() {
         }
     }
 }
+
+#[test]
+fn shader_for_picks_the_backends_format() {
+    use crate::backends::CpuBackend;
+    for b in ALL {
+        let shader = b.shader_for::<CpuBackend>().unwrap();
+        assert!(matches!(shader.binary(), ShaderBinary::Native(_)));
+    }
+}
