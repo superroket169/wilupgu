@@ -9,3 +9,7 @@ pub use cpu::{CpuArea, CpuBackend, CpuBuffer, CpuCapture, CpuInfo, CpuNode};
 mod cuda;
 #[cfg(feature = "cuda")]
 pub use cuda::{CudaArea, CudaBackend, CudaBuffer, CudaCapture, CudaInfo, CudaNode};
+#[cfg(feature = "wgpu")]
+mod wgpu;
+#[cfg(feature = "wgpu")]
+pub use self::wgpu::{WgpuBackend, WgpuBuffer, WgpuInfo, WgpuNode};
