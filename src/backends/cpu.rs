@@ -387,7 +387,7 @@ impl Areable for CpuBackend {
         let total = area.words.len();
         let start = area
             .next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 (words <= total - next).then_some(next + words)
             })
             .map_err(|_| {

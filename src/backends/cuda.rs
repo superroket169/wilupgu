@@ -539,7 +539,7 @@ impl Areable for CudaBackend {
         let taken = bytes.next_multiple_of(CARVE_ALIGN);
         let start = area
             .next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 (taken <= area.bytes - next).then_some(next + taken)
             })
             .map_err(|_| {
