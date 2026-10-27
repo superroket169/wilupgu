@@ -1,20 +1,9 @@
-use wilupgu::backend::dtype::{DataKind, DataType, F32};
-use wilupgu::backend::shader::{Shader, ShaderBinary, Workgroups};
-use wilupgu::backend::Topology;
 use wilupgu::backends::CpuBackend;
-use wilupgu::safe::{ComputeDevice, DeviceConfig};
+use wilupgu::prelude::*;
 use wilupgu::tools::builtins::{ADD, SCALE};
-use wilupgu::tools::plan::call::{CallDesc, CallSpec};
-use wilupgu::tools::plan::deferred::{Dynamic, Resolvable};
-use wilupgu::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
-use wilupgu::tools::plan::run::{PlanDesc, RunPlan};
-use wilupgu::tools::plan::spec::Spec;
-use wilupgu::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
-use wilupgu::Error;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cpu = CpuBackend::attach(CpuBackend::choosable_devices().remove(0))?;
-    let dev = ComputeDevice::new(cpu, DeviceConfig::default());
+    let dev = ComputeDevice::<CpuBackend>::first()?;
 
     // Described before anything exists on the device.
     let n = 3;
@@ -34,12 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wg = Resolvable::fixed(Workgroups::linear(1));
     let len = || MetaSource::Uint(Resolvable::fixed(n as u32));
     let scale = NodeSpec::new(NodeDesc {
-        shader: Shader::new(&SCALE.signature, ShaderBinary::Native(SCALE.native)),
+        shader: SCALE.shader_for::<CpuBackend>()?,
         meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
         workgroups: wg.clone(),
     })?;
     let add = NodeSpec::new(NodeDesc {
-        shader: Shader::new(&ADD.signature, ShaderBinary::Native(ADD.native)),
+        shader: ADD.shader_for::<CpuBackend>()?,
         meta: vec![len()],
         workgroups: wg,
     })?;
