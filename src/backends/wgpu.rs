@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Mutex, OnceLock};
 
 use crate::backend::dtype::DataKind;
 use crate::backend::shader::{BindingRole, Shader, ShaderBinary, Signature, Workgroups};
@@ -21,6 +21,17 @@ const MIN_BYTES: u64 = COPY_ALIGN;
 // doesn't work.
 fn backends() -> wgpu::Backends {
     wgpu::Backends::PRIMARY.with_env()
+}
+
+// One per process: the Vulkan loader can crash when two threads make an
+// instance at once.
+fn instance() -> &'static wgpu::Instance {
+    static INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = backends();
+        wgpu::Instance::new(desc)
+    })
 }
 
 pub struct WgpuBuffer {
@@ -157,10 +168,7 @@ impl Topology for WgpuBackend {
     const NAME: &'static str = "wgpu";
 
     fn choosable_devices() -> Vec<WgpuInfo> {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = backends();
-        let instance = wgpu::Instance::new(desc);
-        let adapters = pollster::block_on(instance.enumerate_adapters(backends()));
+        let adapters = pollster::block_on(instance().enumerate_adapters(backends()));
         adapters
             .into_iter()
             .enumerate()
