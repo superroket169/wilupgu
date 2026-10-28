@@ -3,9 +3,46 @@
 Open wilupgu work only. Finished items are deleted; history is in git log.
 Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list.
 
+## Before announcing
+
+The first public post (Reddit, HN) waits for these, whichever release they
+land in. New tools are not on the list.
+
+1. CUDA and wgpu run on at least one discrete GPU, and
+   `examples/parity.rs` passes there.
+2. An example that brings its own WGSL shader (`Signature`, `min_lens`),
+   linked from README.
+3. README's top bullets match what has been tested by then.
+4. The post names only what the release has: a naga compiler if it has
+   landed, autograd and quantization as planned.
+
 ## Next
 
-1. **Spread tool**, reworked on plan, back in the build.
+In release order. 0.9 and 0.10 may swap.
+
+1. **0.9: rayon, Vulkan, barriers.**
+   - **Vulkan backend** (ash, with `gpu-allocator`). It takes `Spirv`;
+     WGSL comes through `compile-naga`, which `shader_for` calls like it
+     calls NVRTC. `Capturable`: a command buffer is recorded once and
+     submitted again. `Areable`: Vulkan binds one buffer at several
+     offsets, read-only and writable in one dispatch (offsets aligned to
+     `minStorageBufferOffsetAlignment`). Needs the owner-value backend
+     tool and the barrier tool. First step: prove "WGSL → naga → SPIR-V →
+     ash, one dispatch" in a scratch crate.
+   - **Barrier tool**, a backend tool in `src/backend/` (not a `tool-*`):
+     from the ordered dispatches and copies and what each reads and
+     writes, where a barrier is needed (RAW, WAR, WAW; none for RAR).
+     Pure logic, tested on the CPU.
+   - **`compile-naga`** (`compile/compilers/naga.rs`): WGSL → SPIR-V.
+     Writing naga IR to a file and a `ShaderBinary::Naga` wait.
+   - **Rayon backend**: parallel native code for many-core machines;
+     `CpuBackend` stays single-threaded for deterministic tests. Open:
+     `Native` gets no workgroup id, so the backend can't split a dispatch.
+     Either (a) a native form per workgroup, where threads write one slot
+     together (needs `unsafe` in native code), or (b) rayon inside the
+     native code itself, with no backend of its own.
+2. **0.10: the spread tool**, reworked on plan, back in the build. Needs
+   `Device<X>`.
    - Placement and `SpreadSpec` name devices with an id that no longer
      exists; how a plan names a device (an index into a device list, the
      `Device<X>` enum below, ...) is open.
@@ -20,20 +57,31 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
    - `ComputeMesh` is still a skeleton (`todo!()` bodies, no constructor);
      `Placement` is unused outside tests. Several design parts don't exist
      yet.
-2. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
+3. **0.11: SysTopology, and parity on it.** Parity runs every builtin on
+   every pair of devices SysTopology finds, with no `cfg` list of pairs
+   in the example. Needs `Device<X>`.
+4. **Quantization** (int8/int4), a release of its own: the dtype side and
+   a tool, quantized matmul/gemv builtins, and parity data for kinds other
+   than F32 (`Error::ParityKind` now). Decode is bandwidth-bound, so this
+   is a general iGPU lever.
+5. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
+6. **1.0**: stabilization; the API is frozen.
 
 Each tool gets its own feature once it builds (`tool-plan`,
 `tool-spread = ["tool-plan"]`). Tools import each other as a DAG; a check
 for that is still to write.
 
+- `compare_builtins` picks `with_native` from the shaders' binaries; it
+  could be a parameter.
+- `cargo doc` without `tool-plan` warns: `error.rs` links to plan types.
 - Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
   over a run (rolling) is still open.
 
 ## Design
 
-- **Owner-value backend tool** for raw backends (ash): the value a buffer
-  carries so `execute_raw` can reject another device's buffer. `CpuBackend`
-  has its own copy of it.
+- **Owner-value backend tool** for raw backends (Vulkan through ash): the
+  value a buffer carries so `execute_raw` can reject another device's
+  buffer. `CpuBackend` has its own copy of it.
 - **`Device<X>`** (idea). The tools' `Device` enum keeps one variant per
   in-tree backend, each behind its feature, plus `Extra(X)` for a user's
   own backend (`X: Backend`, default an empty enum). A user with several
@@ -63,12 +111,9 @@ for that is still to write.
     `Capturable`: wgpu can't record compute work for replay.
   - A pipeline is made per node, with no cache by shader.
   - `total_memory_bytes` is 0: wgpu doesn't tell it.
-- **Native Vulkan backend** (vulkano). WGSL → `naga` → SPIR-V →
-  `vulkano::ShaderModule`, with barriers derived from the nodes'
-  `BindingRole`s (real RAW/WAW hazards) and recorded by hand. First step:
-  prove "WGSL → naga → SPIR-V → vulkano, one dispatch" in a scratch crate.
-- **Rayon backend**: real parallel native shader code for many-core servers.
-  `CpuBackend` stays single-threaded for deterministic tests.
+  - `supports_kind` is true for every kind, but F16 needs the adapter's
+    `SHADER_F16`; without it an F16 node fails to build instead of
+    returning `UnsupportedKind`.
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
@@ -113,8 +158,6 @@ for that is still to write.
   with `UnsupportedBinary`. Needs a `ShaderBinary` form that is a library
   call, not kernel code.
 - **WASM/WebGPU browser demo**, a natural by-product of the wgpu backend.
-- **Quantization (int8/int4 inference)**: decode is bandwidth-bound, so
-  this is a general iGPU lever.
 
 ## Strategy notes
 

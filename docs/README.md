@@ -8,14 +8,20 @@ Borrow-checked GPU dispatch for Rust, with optional tools on top.
 - **Every run is checked before it reaches the device:** slot count,
   read/write roles, data kinds, aliasing, and each buffer's length against
   what the shader declares it touches (`min_lens`).
-- **One API on every backend:** CUDA, wgpu (Vulkan, Metal, DX12) and a
-  CPU reference backend. Bring your own backend by implementing three
-  traits.
+- **One API on every backend:** a CPU reference backend, wgpu (Vulkan,
+  Metal, DX12) and CUDA; so far tested on the CPU and on wgpu with Vulkan.
+  Bring your own backend by implementing three traits.
 - **Optional tools on the safe layer:** describe work once and run it many
   times (plan), check a shader on two backends from the same seeded data
   (parity), compile CUDA C++ at runtime (NVRTC).
 
 A `Tensor` here is a flat, typed device buffer; there is no shape system.
+
+The checks stop at the shader's code. Building a node from a shader is
+safe, so wilupgu trusts the code to stay within the `min_lens` the shader
+declares; code that goes past it is a bug in the shader, and on CUDA it is
+undefined behavior. The builtins follow the standards in
+[SHADERS.md](https://github.com/superroket169/wilupgu/blob/v0.8.1/docs/SHADERS.md).
 
 **Status: early.** Tested on CPU and an Intel iGPU (wgpu, Vulkan); the
 CUDA backend builds but hasn't run on an NVIDIA GPU yet. Aimed at low-end
@@ -52,10 +58,13 @@ fn main() -> Result<(), Error> {
 }
 ```
 
-Swap `CpuBackend` for `WgpuBackend` or `CudaBackend` and nothing else
-changes: `shader_for` picks the code the backend runs.
+Swap `CpuBackend` for `WgpuBackend` and nothing else changes:
+`shader_for` picks the code the backend runs. On `CudaBackend` it compiles
+the builtin's CUDA C++ at runtime, so the `compile-nvrtc` feature is needed
+too.
 
-Reading `x` while the scope still holds it doesn't compile:
+Reading `x` while the scope still holds it doesn't compile (a
+`compile_fail` doctest in the crate docs checks it):
 
 ```rust,ignore
 dev.scope(|s| {
@@ -145,8 +154,11 @@ In it:
 
 Not in it yet:
 
+- a Vulkan backend (ash), with WGSL compiled to SPIR-V by naga;
+- a parallel CPU backend (rayon);
 - spreading work over devices;
-- a native Vulkan backend.
+- quantization (int8/int4);
+- autograd.
 
 Open work is in
 [TODO.md](https://github.com/superroket169/wilupgu/blob/main/docs/TODO.md).

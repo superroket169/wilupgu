@@ -3,6 +3,13 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
+## 0.9.0 (unreleased)
+
+### Changed
+- README: which backends are tested, where the checks stop (the shader's
+  code), that CUDA builtins need `compile-nvrtc`, and the planned work.
+- `cuda` replaces `tensor` in the crates.io keywords.
+
 ## 0.8.1 (2026-10-28)
 
 ### Added
