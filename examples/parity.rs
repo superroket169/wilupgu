@@ -24,7 +24,9 @@ fn pair<A: Backend + Topology, B: Backend + Topology>() -> Result<Option<(usize,
 }
 
 fn main() -> Result<(), Error> {
-    let runs = vec![pair::<CpuBackend, CpuBackend>()?];
+    // Pushed to only when another backend is on.
+    #[allow(unused_mut)]
+    let mut runs = vec![pair::<CpuBackend, CpuBackend>()?];
     #[cfg(feature = "wgpu")]
     runs.push(pair::<wilupgu::backends::WgpuBackend, CpuBackend>()?);
     #[cfg(all(feature = "cuda", feature = "compile-nvrtc"))]
