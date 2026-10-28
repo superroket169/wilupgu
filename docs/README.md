@@ -36,8 +36,10 @@ fn main() -> Result<(), Error> {
     let mut y = dev.tensor_from(&F32::wrap(vec![10.0, 20.0, 30.0]))?;
 
     // x[i] += y[i] for i < n; the meta is n.
+    let n = 3;
     let shader = ADD.shader_for::<CpuBackend>()?;
-    let mut add = dev.node(&shader, &[MetaValue::Uint(3)], Workgroups::linear(1))?;
+    let wg = Workgroups::cover(n, &shader);
+    let mut add = dev.node(&shader, &[MetaValue::Uint(n)], wg)?;
 
     // While bound, the host can't touch x or y; the scope waits for the
     // device before it returns.

@@ -6,24 +6,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dev = ComputeDevice::<CpuBackend>::first()?;
 
     // Described before anything exists on the device.
-    let n = 3;
+    let n: u32 = 3;
     let mut p = PlanBuilder::new();
     let x = p
-        .tensor(DataKind::F32, n)
+        .tensor(DataKind::F32, n as usize)
         .upload(F32::wrap(vec![1.0, 2.0, 3.0]))?;
-    let y = p.tensor(DataKind::F32, n).zero();
+    let y = p.tensor(DataKind::F32, n as usize).zero();
 
     // x *= factor, then y += x.
     let factor = Dynamic::new(); // set from the host between runs
-    let len = || MetaSource::Uint((n as u32).into());
-    let wg = Workgroups::linear(1);
+    let len = || MetaSource::Uint(n.into());
     let (scale, add) = (
         SCALE.shader_for::<CpuBackend>()?,
         ADD.shader_for::<CpuBackend>()?,
     );
     let per_run_factor = MetaSource::FloatPerRun(factor.clone());
-    p.call(scale, vec![len(), per_run_factor], wg, &[x])?;
-    p.call(add, vec![len()], wg, &[y, x])?;
+    let (scale_wg, add_wg) = (Workgroups::cover(n, &scale), Workgroups::cover(n, &add));
+    p.call(scale, vec![len(), per_run_factor], scale_wg, &[x])?;
+    p.call(add, vec![len()], add_wg, &[y, x])?;
 
     let mut runnable = p.finish()?.build(&dev)?;
     dev.scope(|s| {

@@ -76,6 +76,13 @@ impl Workgroups {
         Self { x: n, y: 1, z: 1 }
     }
 
+    /// Enough workgroups along x for `len` threads of `shader`, one per
+    /// element: `len` over the shader's workgroup width, rounded up. 0 for a
+    /// `len` of 0, which a node rejects.
+    pub fn cover(len: u32, shader: &Shader) -> Self {
+        Self::linear(len.div_ceil(shader.signature().workgroup_size[0]))
+    }
+
     pub(crate) fn dims(self) -> [u32; 3] {
         [self.x, self.y, self.z]
     }

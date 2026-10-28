@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::shader::{
     BindingRole, MetaField, MetaType, Native, NativeBinding, Shader, ShaderBinary, Signature,
+    Workgroups,
 };
 use crate::backends::{CpuBackend, CpuBuffer};
 
@@ -385,4 +386,24 @@ fn clear_raw_rejects_another_devices_buffer() {
     // SAFETY: the call must fail before clearing anything.
     assert!(unsafe { ours.clear_raw(&mut buf) }.is_err());
     assert_eq!(read_back(&theirs, &buf, 1), vec![1.0]);
+}
+
+static WIDE_SHADER: Signature = Signature {
+    name: "Wide",
+    meta: &[],
+    layout: &[],
+    min_lens: |_, _, _| {},
+    workgroup_size: [256, 1, 1],
+};
+
+#[test]
+fn cover_rounds_up_to_whole_workgroups() {
+    let wide = Shader::new(&WIDE_SHADER, ShaderBinary::Native(Native(copy)));
+    let x = |len| Workgroups::cover(len, &wide).dims();
+    assert_eq!(x(0), [0, 1, 1]);
+    assert_eq!(x(1), [1, 1, 1]);
+    assert_eq!(x(256), [1, 1, 1]);
+    assert_eq!(x(257), [2, 1, 1]);
+    assert_eq!(x(1000), [4, 1, 1]);
+    assert_eq!(Workgroups::cover(5, &copy_shader()).dims(), [5, 1, 1]);
 }
