@@ -1,0 +1,90 @@
+# Changelog
+
+What each release changed. Versions before 0.4.3 were git tags only and
+were never published to crates.io.
+
+## 0.8.1 (unreleased)
+
+### Added
+- `PlanBuilder` and `TensorBuilder`: a `RunPlan` made a step at a time;
+  ids come back to name tensors in calls.
+- `Workgroups::cover`: enough workgroups for a length, from the shader's
+  workgroup width.
+- `From<T> for Resolvable<T>`: a fixed value is given as `n.into()`.
+- Crate docs with a runnable example and a `compile_fail` doctest for the
+  scope's borrow.
+- Feature labels on docs.rs.
+
+### Changed
+- README: what is checked, a compile-fail example, a comparison with wgpu,
+  CubeCL and krnl.
+- Examples use the builder and `Workgroups::cover`.
+
+### Fixed
+- `examples/parity.rs` builds with every backend feature set.
+
+## 0.8.0 (2026-10-27)
+
+### Added
+- wgpu backend (`wgpu`): WGSL, GLSL and SPIR-V.
+- CUDA backend (`cuda`): PTX and cubin; not yet run on an NVIDIA GPU.
+- `tool-compile` with the `ShaderCompiler` trait; `compile-nvrtc` compiles
+  CUDA C++ into PTX or cubin.
+- `tool-parity`: one shader case on two devices from the same seeded data,
+  compared slot by slot; edge cases for every builtin.
+- `Builtin::shader_for`, `ComputeDevice::first`, `wilupgu::prelude`.
+
+### Changed (breaking)
+- A shader is a `Signature` and a `ShaderBinary`; backends take binaries,
+  and `build_node` can fail.
+
+## 0.7.0 (2026-10-26)
+
+### Added
+- The plan tool (`tool-plan`): the `Spec` trait, `TensorSpec`, `NodeSpec`,
+  `CallSpec`, `RunPlan`, `Runnable` and `CapturedRunnable`.
+- Tensor ranges, copies and zero; `Scope::copy`; `Tensor::replace`,
+  `Node::replace`, `Node::meta`.
+- Backend contract: offsets on upload and download, `copy_raw`,
+  `clear_raw`, `COPY_ALIGN`.
+- The `add` and `plan` examples.
+
+### Changed (breaking)
+- `Buf` is `Tensor`, `BufSlot` is `TensorSlot`.
+- One `Error` enum for the safe layer and the tools.
+
+### Removed
+- Tools whose work the safe layer now does.
+
+## 0.6.0 (2026-10-19)
+
+### Added
+- The safe layer: `ComputeDevice`, buffers, `Node`, and `Scope` with
+  checked runs.
+- `min_lens` on every shader; a run checks buffer lengths against it.
+- CPU backend: capture and replay, areas; `DeviceArea`.
+
+## 0.5.0 (2026-10-08)
+
+### Added
+- `Resolvable`, `GlobalId`, placement and a first `SpreadTensor`.
+- 17 builtins with WGSL, native and CUDA code: add, mul, scale, max, min,
+  clamp, sum, dot, transpose, matmul, gemv and more. Some are general
+  shaders from before 0.4.3, brought back.
+
+## 0.4.3 (2026-09-30), first on crates.io
+
+### Changed (breaking)
+- The backend contract as traits (`Storage`, `Topology`, `Areable`, ...).
+
+### Added
+- `TensorSpec`; CUDA graph capture; wgpu GL fallback.
+
+### Removed
+- The graph and the tensor structures of 0.4.x. They are unrelated to
+  today's `Tensor`, which came in 0.7.0 as the new name of `Buf`.
+
+## Before 0.4.3 (git tags v0.4.0 to v0.4.2)
+
+- wgpu and CUDA backends with model shaders (matmul, softmax, RMSNorm,
+  attention, AdamW). Most of them moved to sequexa-core.

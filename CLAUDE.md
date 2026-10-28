@@ -89,4 +89,6 @@ a scratch crate outside the repo, depending on wilupgu by path.
 - `docs/TODO.md`: open work. Planned work lives there, not in code comments
   (except `TODO:` lines).
 - `docs/CHANGELOG.md`: what each release changed. It is the only file that
-  refers to the past; everything else describes the code as it is.
+  refers to the past; everything else describes the code as it is. Work
+  goes under the top `(unreleased)` heading; a release's last commit puts
+  the date there and bumps the version in `Cargo.toml`.
