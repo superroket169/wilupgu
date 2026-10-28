@@ -7,47 +7,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Described before anything exists on the device.
     let n = 3;
-    let x = TensorSpec::new(TensorDesc {
-        kind: DataKind::F32,
-        len: n.into(),
-        init: TensorInit::Upload(F32::wrap(vec![1.0, 2.0, 3.0])),
-    })?;
-    let y = TensorSpec::new(TensorDesc {
-        kind: DataKind::F32,
-        len: n.into(),
-        init: TensorInit::Zero,
-    })?;
-    let (x_id, y_id) = (x.id(), y.id());
-
-    let factor = Dynamic::new(); // set from the host between runs
-    let len = || MetaSource::Uint((n as u32).into());
-    let scale = NodeSpec::new(NodeDesc {
-        shader: SCALE.shader_for::<CpuBackend>()?,
-        meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
-        workgroups: Workgroups::linear(1).into(),
-    })?;
-    let add = NodeSpec::new(NodeDesc {
-        shader: ADD.shader_for::<CpuBackend>()?,
-        meta: vec![len()],
-        workgroups: Workgroups::linear(1).into(),
-    })?;
+    let mut p = PlanBuilder::new();
+    let x = p
+        .tensor(DataKind::F32, n)
+        .upload(F32::wrap(vec![1.0, 2.0, 3.0]))?;
+    let y = p.tensor(DataKind::F32, n).zero();
 
     // x *= factor, then y += x.
-    let plan = RunPlan::new(PlanDesc {
-        tensors: vec![x, y],
-        calls: vec![
-            CallSpec::new(CallDesc {
-                node: scale,
-                tensors: vec![x_id],
-            })?,
-            CallSpec::new(CallDesc {
-                node: add,
-                tensors: vec![y_id, x_id],
-            })?,
-        ],
-    })?;
+    let factor = Dynamic::new(); // set from the host between runs
+    let len = || MetaSource::Uint((n as u32).into());
+    let wg = Workgroups::linear(1);
+    let (scale, add) = (
+        SCALE.shader_for::<CpuBackend>()?,
+        ADD.shader_for::<CpuBackend>()?,
+    );
+    let per_run_factor = MetaSource::FloatPerRun(factor.clone());
+    p.call(scale, vec![len(), per_run_factor], wg, &[x])?;
+    p.call(add, vec![len()], wg, &[y, x])?;
 
-    let mut runnable = plan.build(&dev)?;
+    let mut runnable = p.finish()?.build(&dev)?;
     dev.scope(|s| {
         let bound = runnable.bind(s)?; // bound once, run as often as needed
         for f in [2.0, 3.0] {
@@ -59,11 +37,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     assert_eq!(
-        runnable.tensor(x_id)?.download_vec::<F32>()?,
+        runnable.tensor(x)?.download_vec::<F32>()?,
         vec![6.0, 12.0, 18.0]
     );
     assert_eq!(
-        runnable.tensor(y_id)?.download_vec::<F32>()?,
+        runnable.tensor(y)?.download_vec::<F32>()?,
         vec![8.0, 16.0, 24.0]
     );
     Ok(())

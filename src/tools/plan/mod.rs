@@ -3,6 +3,7 @@
 //! later ([`deferred`]); build them on a device and run them inside its
 //! scope ([`runnable`]).
 
+pub mod builder;
 pub mod call;
 pub mod deferred;
 pub mod id;

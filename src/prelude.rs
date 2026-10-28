@@ -9,6 +9,7 @@ pub use crate::Error;
 
 #[cfg(feature = "tool-plan")]
 pub use crate::tools::plan::{
+    builder::{PlanBuilder, TensorBuilder},
     call::{CallDesc, CallSpec},
     deferred::{Dynamic, Relation, Resolvable},
     node::{MetaSource, NodeDesc, NodeSpec},
