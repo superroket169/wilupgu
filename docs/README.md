@@ -85,7 +85,7 @@ dev.scope(|s| {
 wilupgu = { version = "0.8", features = ["cpu"] }
 ```
 
-More in [`examples/`](https://github.com/superroket169/wilupgu/tree/main/examples):
+More in [`examples/`](https://github.com/superroket169/wilupgu/tree/v0.8.1/examples):
 
 - `add.rs`: the code above, generic over the backend; it also runs on wgpu
   when that feature is on. `cargo run --example add --features cpu`
@@ -141,7 +141,7 @@ In it:
 - **17 builtin shaders** (`tool-builtins` feature, on by default), each with
   WGSL, native and CUDA code, and the `min_lens` every shader declares. The
   catalog is
-  [SHADERS.md](https://github.com/superroket169/wilupgu/blob/main/docs/SHADERS.md).
+  [SHADERS.md](https://github.com/superroket169/wilupgu/blob/v0.8.1/docs/SHADERS.md).
 
 Not in it yet:
 
@@ -213,7 +213,7 @@ takes (native code for the CPU backend). `min_lens` tells, from the meta and
 the workgroup count, how many elements each slot needs; the safe layer
 rejects a shorter buffer, so the code must never go past it. The
 builtins follow the standards in
-[SHADERS.md](https://github.com/superroket169/wilupgu/blob/main/docs/SHADERS.md);
+[SHADERS.md](https://github.com/superroket169/wilupgu/blob/v0.8.1/docs/SHADERS.md);
 a shader of your own should too.
 
 ## Writing a backend
@@ -236,8 +236,8 @@ with its current meta.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../licenses/LICENSE-APACHE) or
-[MIT license](../licenses/LICENSE-MIT) at your option.
+Licensed under either of [Apache License, Version 2.0](https://github.com/superroket169/wilupgu/blob/v0.8.1/licenses/LICENSE-APACHE) or
+[MIT license](https://github.com/superroket169/wilupgu/blob/v0.8.1/licenses/LICENSE-MIT) at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in this work by you, as defined in the Apache-2.0

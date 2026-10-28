@@ -91,4 +91,5 @@ a scratch crate outside the repo, depending on wilupgu by path.
 - `docs/CHANGELOG.md`: what each release changed. It is the only file that
   refers to the past; everything else describes the code as it is. Work
   goes under the top `(unreleased)` heading; a release's last commit puts
-  the date there and bumps the version in `Cargo.toml`.
+  the date there, bumps the version in `Cargo.toml` and points README's
+  links (all but TODO.md's) to the new tag.

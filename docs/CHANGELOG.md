@@ -3,7 +3,7 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
-## 0.8.1 (unreleased)
+## 0.8.1 (2026-10-28)
 
 ### Added
 - `PlanBuilder` and `TensorBuilder`: a `RunPlan` made a step at a time;
@@ -19,6 +19,7 @@ were never published to crates.io.
 - README: what is checked, a compile-fail example, a comparison with wgpu,
   CubeCL and krnl.
 - Examples use the builder and `Workgroups::cover`.
+- README links point to the release's tag; TODO.md's stays on `main`.
 
 ### Fixed
 - `examples/parity.rs` builds with every backend feature set.
