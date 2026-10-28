@@ -24,7 +24,7 @@ fn pair<A: Backend + Topology, B: Backend + Topology>() -> Result<Option<(usize,
 }
 
 fn main() -> Result<(), Error> {
-    let mut runs = vec![pair::<CpuBackend, CpuBackend>()?];
+    let runs = vec![pair::<CpuBackend, CpuBackend>()?];
     #[cfg(feature = "wgpu")]
     runs.push(pair::<wilupgu::backends::WgpuBackend, CpuBackend>()?);
     #[cfg(all(feature = "cuda", feature = "compile-nvrtc"))]
