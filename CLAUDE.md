@@ -35,7 +35,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
     (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
-    (`RunPlan`) and `runnable` (`Runnable`, `CapturedRunnable`).
+    (`RunPlan`), `builder` (`PlanBuilder`, `TensorBuilder`) and `runnable`
+    (`Runnable`, `CapturedRunnable`).
   - `compile/` (`tool-compile`, always built for tests): the
     `ShaderCompiler` trait; each compiler goes in `compile/compilers/`, one
     file each, behind its own feature.
