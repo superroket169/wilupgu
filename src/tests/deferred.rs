@@ -43,6 +43,13 @@ fn fixed_is_known_from_the_start_and_has_no_resolver() {
 }
 
 #[test]
+fn from_value_is_fixed() {
+    let r: Resolvable<usize> = 3.into();
+    assert_eq!(r.value(), Ok(&3));
+    assert!(r.resolver().is_err());
+}
+
+#[test]
 fn relation_computes_from_its_inputs() {
     let (m, k) = (Resolvable::new(), Resolvable::new());
     let len = Relation::new([&m, &k], |[m, k]| m * k);

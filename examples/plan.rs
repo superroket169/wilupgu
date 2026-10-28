@@ -9,28 +9,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = 3;
     let x = TensorSpec::new(TensorDesc {
         kind: DataKind::F32,
-        len: Resolvable::fixed(n),
+        len: n.into(),
         init: TensorInit::Upload(F32::wrap(vec![1.0, 2.0, 3.0])),
     })?;
     let y = TensorSpec::new(TensorDesc {
         kind: DataKind::F32,
-        len: Resolvable::fixed(n),
+        len: n.into(),
         init: TensorInit::Zero,
     })?;
     let (x_id, y_id) = (x.id(), y.id());
 
     let factor = Dynamic::new(); // set from the host between runs
-    let wg = Resolvable::fixed(Workgroups::linear(1));
-    let len = || MetaSource::Uint(Resolvable::fixed(n as u32));
+    let len = || MetaSource::Uint((n as u32).into());
     let scale = NodeSpec::new(NodeDesc {
         shader: SCALE.shader_for::<CpuBackend>()?,
         meta: vec![len(), MetaSource::FloatPerRun(factor.clone())],
-        workgroups: wg.clone(),
+        workgroups: Workgroups::linear(1).into(),
     })?;
     let add = NodeSpec::new(NodeDesc {
         shader: ADD.shader_for::<CpuBackend>()?,
         meta: vec![len()],
-        workgroups: wg,
+        workgroups: Workgroups::linear(1).into(),
     })?;
 
     // x *= factor, then y += x.

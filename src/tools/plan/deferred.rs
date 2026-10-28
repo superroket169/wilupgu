@@ -108,6 +108,12 @@ impl<T> Default for Resolvable<T> {
     }
 }
 
+impl<T> From<T> for Resolvable<T> {
+    fn from(value: T) -> Self {
+        Self::fixed(value)
+    }
+}
+
 impl<T: std::fmt::Debug> std::fmt::Debug for Resolvable<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.slot.value.get() {
