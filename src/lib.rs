@@ -64,6 +64,9 @@
 //! - [`tools`]: optional packages built on top, each behind its feature
 //!   (`tool-builtins`, on by default).
 
+// Labels feature-gated items on docs.rs, which builds with nightly.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod backend;
 pub mod backends;
 mod error;

@@ -88,3 +88,5 @@ a scratch crate outside the repo, depending on wilupgu by path.
 - `docs/SHADERS.md`: shader standards and catalog.
 - `docs/TODO.md`: open work. Planned work lives there, not in code comments
   (except `TODO:` lines).
+- `docs/CHANGELOG.md`: what each release changed. It is the only file that
+  refers to the past; everything else describes the code as it is.

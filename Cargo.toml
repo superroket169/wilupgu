@@ -34,6 +34,7 @@ cuda = ["dep:cudarc", "cudarc/driver"]
 
 [package.metadata.docs.rs]
 features = ["cpu", "cuda", "wgpu", "tool-plan", "tool-parity", "compile-nvrtc", "cudarc/cuda-13030"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name = "add"
