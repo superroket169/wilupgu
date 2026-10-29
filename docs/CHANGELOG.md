@@ -3,7 +3,7 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
-## 0.9.0 (unreleased)
+## 0.9.0 (2026-10-29)
 
 ### Added
 - Hollow tensors: a tensor that lives in another run. `HollowTensor` (its
