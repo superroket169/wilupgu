@@ -122,6 +122,49 @@ impl HollowTensor {
     }
 }
 
+pub enum AnyTensor<'d, B: Backend + Topology> {
+    Live(Tensor<'d, B>),
+    Hollow(HollowTensor),
+}
+
+impl<'d, B: Backend + Topology> AnyTensor<'d, B> {
+    pub fn kind(&self) -> DataKind {
+        match self {
+            AnyTensor::Live(t) => t.kind(),
+            AnyTensor::Hollow(h) => h.kind(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            AnyTensor::Live(t) => t.len(),
+            AnyTensor::Hollow(h) => h.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn is_hollow(&self) -> bool {
+        matches!(self, AnyTensor::Hollow(_))
+    }
+
+    pub fn live(&self) -> Result<&Tensor<'d, B>, Error> {
+        match self {
+            AnyTensor::Live(t) => Ok(t),
+            AnyTensor::Hollow(_) => Err(Error::Hollow),
+        }
+    }
+
+    pub fn live_mut(&mut self) -> Result<&mut Tensor<'d, B>, Error> {
+        match self {
+            AnyTensor::Live(t) => Ok(t),
+            AnyTensor::Hollow(_) => Err(Error::Hollow),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/tensor.rs"]
 mod tests;

@@ -616,3 +616,55 @@ fn a_failed_run_names_the_call() {
     );
     assert_eq!(values(&run, x_id), vec![2.0, 4.0]);
 }
+
+#[test]
+fn build_hollow_makes_every_tensor_hollow() {
+    let (plan, x, y) = double_then_add();
+    let dev = device();
+    let run = plan.build_hollow(&dev).unwrap();
+    assert!(run.contains_hollow());
+    assert!(run.tensors().all(|(_, t)| t.is_hollow()));
+    let x_hollow = run.any_tensor(x).unwrap();
+    assert_eq!((x_hollow.kind(), x_hollow.len()), (DataKind::F32, 2));
+    assert_eq!(run.tensor(y).err(), Some(Error::Hollow));
+    assert_eq!(run.order().len(), 2);
+    assert!(!plan.build(&dev).unwrap().contains_hollow());
+}
+
+#[test]
+fn build_hollow_can_be_called_again() {
+    let (plan, _, _) = double_then_add();
+    let dev = device();
+    let a = plan.build_hollow(&dev).unwrap();
+    let b = plan.build_hollow(&dev).unwrap();
+    assert_eq!(a.order(), b.order());
+}
+
+#[test]
+fn a_run_with_a_hollow_tensor_does_not_bind() {
+    let (plan, _, _) = double_then_add();
+    let dev = device();
+    let mut run = plan.build_hollow(&dev).unwrap();
+    let err = dev.scope(|s| run.bind(s).map(|_| ())).err();
+    assert_eq!(err, Some(Error::Hollow));
+}
+
+#[test]
+fn edit_does_not_lend_a_hollow_tensor() {
+    let (plan, x, _) = double_then_add();
+    let dev = device();
+    let mut run = plan.build_hollow(&dev).unwrap();
+    let err = run.edit(|e| e.tensor(x).map(|_| ())).err();
+    assert_eq!(err, Some(Error::Hollow));
+}
+
+#[test]
+fn build_hollow_rejects_a_tensor_shorter_than_its_slot_needs() {
+    let x = f32_tensor(vec![1.0, 2.0]);
+    let x_id = x.id();
+    let p = plan(vec![x], vec![scale_call(x_id, 3, fixed(2.0))]);
+    assert!(matches!(
+        p.build_hollow(&device()).err(),
+        Some(Error::TooShort { .. })
+    ));
+}

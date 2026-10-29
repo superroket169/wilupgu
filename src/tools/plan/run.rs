@@ -79,6 +79,16 @@ impl RunSpec {
         self.ready()?;
         Run::build(self, device)
     }
+
+    pub fn build_hollow<'d, B: Backend + Topology>(
+        &self,
+        device: &'d ComputeDevice<B>,
+    ) -> Result<Run<'d, B>, Error> {
+        for call in &self.desc.calls {
+            call.ready()?;
+        }
+        Run::build_hollow(self, device)
+    }
 }
 
 #[cfg(test)]

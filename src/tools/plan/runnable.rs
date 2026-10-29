@@ -19,14 +19,14 @@ use crate::tools::plan::call::{Call, CallSpec};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::MetaSource;
 use crate::tools::plan::run::RunSpec;
-use crate::tools::plan::tensor::TensorSpec;
+use crate::tools::plan::tensor::{AnyTensor, TensorSpec};
 
 /// A built [`RunSpec`]: its tensors and calls on one device, and the order
 /// the calls run in. Everything in it can be read; [`Run::edit`] changes
 /// it between runs, [`Run::bind`] runs it inside a scope.
 pub struct Run<'d, B: Backend + Topology> {
     device: &'d ComputeDevice<B>,
-    tensors: HashMap<GlobalId<TensorSpec>, Tensor<'d, B>>,
+    tensors: HashMap<GlobalId<TensorSpec>, AnyTensor<'d, B>>,
     calls: HashMap<GlobalId<CallSpec>, Call<'d, B>>,
     // The calls' ids, in the order they run.
     order: Vec<GlobalId<CallSpec>>,
@@ -35,13 +35,36 @@ pub struct Run<'d, B: Backend + Topology> {
 impl<'d, B: Backend + Topology> Run<'d, B> {
     // `RunSpec::build`, once the plan is ready.
     pub(super) fn build(plan: &RunSpec, device: &'d ComputeDevice<B>) -> Result<Self, Error> {
+        let tensors = plan
+            .tensors()
+            .iter()
+            .map(|spec| Ok((spec.id(), AnyTensor::Live(spec.build(device)?))))
+            .collect::<Result<_, Error>>()?;
+        Self::with_tensors(plan, device, tensors)
+    }
+
+    // `RunSpec::build_hollow`, once the plan's calls are ready.
+    pub(super) fn build_hollow(
+        plan: &RunSpec,
+        device: &'d ComputeDevice<B>,
+    ) -> Result<Self, Error> {
+        let tensors = plan
+            .tensors()
+            .iter()
+            .map(|spec| Ok((spec.id(), AnyTensor::Hollow(spec.build_hollow()?))))
+            .collect::<Result<_, Error>>()?;
+        Self::with_tensors(plan, device, tensors)
+    }
+
+    // Builds the plan's calls around `tensors`, built from its tensors.
+    fn with_tensors(
+        plan: &RunSpec,
+        device: &'d ComputeDevice<B>,
+        tensors: HashMap<GlobalId<TensorSpec>, AnyTensor<'d, B>>,
+    ) -> Result<Self, Error> {
         let run = Self {
             device,
-            tensors: plan
-                .tensors()
-                .iter()
-                .map(|spec| Ok((spec.id(), spec.build(device)?)))
-                .collect::<Result<_, Error>>()?,
+            tensors,
             calls: plan
                 .calls()
                 .iter()
@@ -52,7 +75,7 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
         for call in run.calls.values() {
             let shader = call.node.signature();
             for (slot, (&id, &needs)) in call.tensors.iter().zip(call.node.min_lens()).enumerate() {
-                rules::long_enough(shader, slot, needs, run.tensor(id)?.len())?;
+                rules::long_enough(shader, slot, needs, run.any_tensor(id)?.len())?;
             }
         }
         Ok(run)
@@ -64,15 +87,23 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
     }
 
     /// Every tensor, with the id of the spec it was built from, in no order.
-    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &Tensor<'d, B>)> {
+    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &AnyTensor<'d, B>)> {
         self.tensors.iter().map(|(&id, tensor)| (id, tensor))
     }
 
     /// The tensor built from the spec with `id`.
     pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<&Tensor<'d, B>, Error> {
+        self.any_tensor(id)?.live()
+    }
+
+    pub fn any_tensor(&self, id: GlobalId<TensorSpec>) -> Result<&AnyTensor<'d, B>, Error> {
         self.tensors
             .get(&id)
             .ok_or(Error::NotInPlan { what: "tensor" })
+    }
+
+    pub fn contains_hollow(&self) -> bool {
+        self.tensors.values().any(AnyTensor::is_hollow)
     }
 
     /// Every call, with the id of the spec it was built from, in no order;
@@ -106,7 +137,9 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
     ) -> Result<R, Error> {
         let out = f(&mut Edit { run: self });
         for tensor in self.tensors.values() {
-            rules::same_device(self.device, tensor.device(), "tensor")?;
+            if let AnyTensor::Live(tensor) = tensor {
+                rules::same_device(self.device, tensor.device(), "tensor")?;
+            }
         }
         for call in self.calls.values() {
             rules::same_device(self.device, call.node.device(), "node")?;
@@ -114,7 +147,7 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
             let kinds = call
                 .tensors
                 .iter()
-                .map(|&id| Ok(self.tensor(id)?.kind()))
+                .map(|&id| Ok(self.any_tensor(id)?.kind()))
                 .collect::<Result<Vec<_>, Error>>()?;
             rules::slot_kinds(shader, kinds.into_iter())?;
             rules::meta_types(shader, call.sources.iter().map(MetaSource::ty))?;
@@ -132,7 +165,7 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
         let tensors: HashMap<GlobalId<TensorSpec>, TensorSlot<'scope>> = self
             .tensors
             .iter_mut()
-            .map(|(&id, tensor)| Ok((id, s.bind(tensor)?)))
+            .map(|(&id, tensor)| Ok((id, s.bind(tensor.live_mut()?)?)))
             .collect::<Result<_, Error>>()?;
         let mut calls = HashMap::with_capacity(self.calls.len());
         let mut per_run = Vec::new();
@@ -183,7 +216,8 @@ impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
         self.run
             .tensors
             .get_mut(&id)
-            .ok_or(Error::NotInPlan { what: "tensor" })
+            .ok_or(Error::NotInPlan { what: "tensor" })?
+            .live_mut()
     }
 
     /// The node of the call built from the spec with `id`. A node put in its
@@ -322,7 +356,7 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRun<'d, B> {
     }
 
     /// [`Run::tensors`].
-    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &Tensor<'d, B>)> {
+    pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &AnyTensor<'d, B>)> {
         self.run.tensors()
     }
 
@@ -362,7 +396,8 @@ impl<'d, B: Backend + Topology + Capturable> CapturedRun<'d, B> {
         self.run
             .tensors
             .get_mut(&id)
-            .ok_or(Error::NotInPlan { what: "tensor" })
+            .ok_or(Error::NotInPlan { what: "tensor" })?
+            .live_mut()
     }
 
     /// Drops the recording and gives back the [`Run`].
