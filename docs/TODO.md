@@ -8,8 +8,8 @@ Model-specific work (attention, rope, optimizers) belongs to sequexa-core's list
 The first public post (Reddit, HN) waits for these, whichever release they
 land in. New tools are not on the list.
 
-1. CUDA and wgpu run on at least one discrete GPU, and
-   `examples/parity.rs` passes there.
+1. wgpu runs on at least one discrete GPU, and `examples/parity.rs`
+   passes there.
 2. README's top bullets match what has been tested by then.
 3. The post names only what the release has: a naga compiler if it has
    landed, autograd and quantization as planned.
@@ -42,10 +42,10 @@ for that is still to write.
   `Resolvable` handed to SysTopology is resolved to the largest value these
   devices can hold. Which backends are usable at runtime is decided here,
   not by `cfg`s on shader code.
-- **CUDA backend**: written, not yet run on a GPU. Its tests
-  (`CUDARC_CUDA_VERSION=13030 cargo test --features cpu,cuda,compile-nvrtc cuda`)
-  skip without a device and NVRTC; run them on the workstation. A module is
-  loaded per node, with no cache by shader.
+- **CUDA backend**: tested on CUDA 13.0 only. Its tests
+  (`CUDARC_CUDA_VERSION=13000 cargo test --features cpu,cuda,compile-nvrtc cuda`)
+  skip without a device and NVRTC. A module is loaded per node, with no
+  cache by shader.
 - **wgpu backend**: tested on an Intel iGPU (Mesa, Vulkan) only.
   - `Parent device is lost`: many nodes in one compute pass and one submit
     died with it in training runs, not in inference. A missing barrier, or

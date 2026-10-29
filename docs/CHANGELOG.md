@@ -3,6 +3,15 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
+## 0.9.1 (unreleased)
+
+### Added
+- `examples/custom_shader.rs`: a shader of your own, with its `Signature`,
+  WGSL and native code.
+
+### Changed
+- README: the CUDA backend is tested, on CUDA 13.0.
+
 ## 0.9.0 (2026-10-29)
 
 ### Added

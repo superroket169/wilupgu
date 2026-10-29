@@ -9,7 +9,8 @@ Borrow-checked GPU dispatch for Rust, with optional tools on top.
   read/write roles, data kinds, aliasing, and each buffer's length against
   what the shader declares it touches (`min_lens`).
 - **One API on every backend:** a CPU reference backend, wgpu (Vulkan,
-  Metal, DX12) and CUDA; so far tested on the CPU and on wgpu with Vulkan.
+  Metal, DX12) and CUDA; so far tested on the CPU, on wgpu with Vulkan and
+  on CUDA 13.0.
   Bring your own backend by implementing three traits.
 - **Optional tools on the safe layer:** describe work once and run it many
   times (plan), check a shader on two backends from the same seeded data
@@ -23,8 +24,8 @@ declares; code that goes past it is a bug in the shader, and on CUDA it is
 undefined behavior. The builtins follow the standards in
 [SHADERS.md](https://github.com/superroket169/wilupgu/blob/v0.9.0/docs/SHADERS.md).
 
-**Status: early.** Tested on CPU and an Intel iGPU (wgpu, Vulkan); the
-CUDA backend builds but hasn't run on an NVIDIA GPU yet. Aimed at low-end
+**Status: early.** Tested on CPU, an Intel iGPU (wgpu, Vulkan) and an
+NVIDIA GPU (CUDA 13.0). Aimed at low-end
 hardware, iGPUs included.
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
@@ -151,7 +152,7 @@ In it:
   - `wgpu`: Vulkan, Metal and DX12 through wgpu, tested on an Intel iGPU
     (Vulkan); no capture, no areas;
   - `cuda`: PTX and cubin through the CUDA driver, with capture (CUDA
-    graphs) and areas; not yet run on an NVIDIA GPU.
+    graphs) and areas, tested on CUDA 13.0.
 - **17 builtin shaders** (`tool-builtins` feature, on by default), each with
   WGSL, native and CUDA code, and the `min_lens` every shader declares. The
   catalog is
