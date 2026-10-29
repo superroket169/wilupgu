@@ -9,7 +9,7 @@ use crate::safe::{Arg, DeviceConfig, MetaValue};
 use crate::tools::plan::call::{CallDesc, CallSpec};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
-use crate::tools::plan::runnable::Run;
+use crate::tools::plan::run::Run;
 use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
