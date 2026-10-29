@@ -5,6 +5,17 @@ were never published to crates.io.
 
 ## 0.9.0 (unreleased)
 
+### Added
+- Hollow tensors: a tensor that lives in another run. `HollowTensor` (its
+  kind and length) and `AnyTensor` (live or hollow).
+- `TensorSpec::build_hollow` and `RunSpec::build_hollow`: a run whose
+  tensors are all hollow, made as many times as needed. A run with a
+  hollow tensor doesn't bind.
+- `Run::fill_from`: moves a live tensor of one run into the hollow place of
+  the same tensor in another, with no copy.
+- `Run::any_tensor`, `Run::contains_hollow`; `Error::Hollow`,
+  `Error::NotHollow`.
+
 ### Changed
 - README: which backends are tested, where the checks stop (the shader's
   code), that CUDA builtins need `compile-nvrtc`, and the planned work.
@@ -15,10 +26,15 @@ were never published to crates.io.
   `Run`, `CapturedRunnable` to `CapturedRun`.
 - Renamed: `Scope::run` to `Scope::execute`; on a bound run, `run` to
   `execute` and `run_call` to `execute_call`.
+- `RunSpec::build` takes the spec, so it makes one live run; on a fail it
+  gives the spec back with the error.
+- `Run::tensors` and `CapturedRun::tensors` give `AnyTensor`s.
+- `Run` and `CapturedRun` are in `tools::plan::run`; the `runnable` module
+  is gone.
 
 ### Removed (breaking)
 - The `Spec` trait. `new`, `id`, `ready` and `build` are methods of each
-  spec (`TensorSpec`, `NodeSpec`, `CallSpec`, `RunPlan`) on its own.
+  spec (`TensorSpec`, `NodeSpec`, `CallSpec`, `RunSpec`) on its own.
 
 ## 0.8.1 (2026-10-28)
 
