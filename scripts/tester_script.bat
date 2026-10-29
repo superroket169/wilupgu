@@ -21,9 +21,9 @@ set ANY_FAILED=0
 set ANY_SKIPPED=0
 
 call :step S1 "cpu tests " "cargo test --features cpu -- --test-threads=1"
-call :step S2 "cuda tests" "cargo test --features cpu,cuda,compile-nvrtc -- --test-threads=1 --nocapture"
+call :step S2 "cuda tests" "cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture"
 call :step S3 "wgpu tests" "cargo test --features cpu,wgpu -- --test-threads=1 --nocapture"
-call :step S4 "parity    " "cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity"
+call :step S4 "parity    " "cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system"
 
 del "%STEPLOG%" 2>nul
 

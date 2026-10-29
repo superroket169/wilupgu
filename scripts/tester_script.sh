@@ -45,9 +45,9 @@ step() {
 }
 
 step "cpu tests " cargo test --features cpu -- --test-threads=1
-step "cuda tests" cargo test --features cpu,cuda,compile-nvrtc -- --test-threads=1 --nocapture
+step "cuda tests" cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture
 step "wgpu tests" cargo test --features cpu,wgpu -- --test-threads=1 --nocapture
-step "parity    " cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity
+step "parity    " cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system
 
 echo
 echo "============================================"
