@@ -10,10 +10,8 @@ land in. New tools are not on the list.
 
 1. CUDA and wgpu run on at least one discrete GPU, and
    `examples/parity.rs` passes there.
-2. An example that brings its own WGSL shader (`Signature`, `min_lens`),
-   linked from README.
-3. README's top bullets match what has been tested by then.
-4. The post names only what the release has: a naga compiler if it has
+2. README's top bullets match what has been tested by then.
+3. The post names only what the release has: a naga compiler if it has
    landed, autograd and quantization as planned.
 
 ## Design
