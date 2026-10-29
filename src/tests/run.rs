@@ -668,3 +668,59 @@ fn build_hollow_rejects_a_tensor_shorter_than_its_slot_needs() {
         Some(Error::TooShort { .. })
     ));
 }
+
+#[test]
+fn fill_from_moves_a_live_tensor_into_a_hollow_place() {
+    let (plan, x, y) = double_then_add();
+    let dev = device();
+    let mut live = plan.build(&dev).unwrap();
+    let mut hollow = plan.build_hollow(&dev).unwrap();
+    hollow.fill_from(&mut live, x).unwrap();
+    hollow.fill_from(&mut live, y).unwrap();
+    assert!(!hollow.contains_hollow());
+    assert!(live.tensors().all(|(_, t)| t.is_hollow()));
+    assert_eq!(values(&hollow, x), vec![1.0, 2.0]);
+    dev.scope(|s| hollow.bind(s)?.execute()).unwrap();
+    assert_eq!(values(&hollow, y), vec![12.0, 24.0]);
+
+    live.fill_from(&mut hollow, x).unwrap();
+    assert_eq!(values(&live, x), vec![2.0, 4.0]);
+    assert!(hollow.any_tensor(x).unwrap().is_hollow());
+}
+
+#[test]
+fn fill_from_needs_a_hollow_place_and_a_live_tensor() {
+    let (plan, x, _) = double_then_add();
+    let dev = device();
+    let mut a = plan.build(&dev).unwrap();
+    let mut b = plan.build(&dev).unwrap();
+    assert_eq!(a.fill_from(&mut b, x), Err(Error::NotHollow));
+    let mut c = plan.build_hollow(&dev).unwrap();
+    let mut d = plan.build_hollow(&dev).unwrap();
+    assert_eq!(c.fill_from(&mut d, x), Err(Error::Hollow));
+    let stranger = f32_tensor(vec![0.0]).id();
+    assert!(matches!(
+        c.fill_from(&mut a, stranger),
+        Err(Error::NotInPlan { .. })
+    ));
+    assert!(!a.contains_hollow());
+}
+
+#[test]
+fn fill_from_rejects_another_device_or_length() {
+    let (plan, x, _) = double_then_add();
+    let (dev, other) = (device(), device());
+    let mut hollow = plan.build_hollow(&dev).unwrap();
+    let mut elsewhere = plan.build(&other).unwrap();
+    assert!(matches!(
+        hollow.fill_from(&mut elsewhere, x),
+        Err(Error::OtherDevice { .. })
+    ));
+    let mut short = plan.build(&dev).unwrap();
+    shorten(&mut short, x);
+    assert!(matches!(
+        hollow.fill_from(&mut short, x),
+        Err(Error::LenMismatch { .. })
+    ));
+    assert!(!short.any_tensor(x).unwrap().is_hollow());
+}

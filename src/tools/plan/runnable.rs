@@ -106,6 +106,31 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
         self.tensors.values().any(AnyTensor::is_hollow)
     }
 
+    pub fn fill_from(
+        &mut self,
+        from: &mut Run<'d, B>,
+        id: GlobalId<TensorSpec>,
+    ) -> Result<(), Error> {
+        rules::same_device(self.device, from.device, "tensor")?;
+        let to = self
+            .tensors
+            .get_mut(&id)
+            .ok_or(Error::NotInPlan { what: "tensor" })?;
+        let live = from
+            .tensors
+            .get_mut(&id)
+            .ok_or(Error::NotInPlan { what: "tensor" })?;
+        if !to.is_hollow() {
+            return Err(Error::NotHollow);
+        }
+        live.live()?;
+        rules::same_kind(to.kind(), live.kind())?;
+        rules::same_len(to.len(), live.len())?;
+        // The live tensor moves in; the hollow one, of its kind and length, takes its place.
+        std::mem::swap(to, live);
+        Ok(())
+    }
+
     /// Every call, with the id of the spec it was built from, in no order;
     /// [`Run::order`] gives the order they run in.
     pub fn calls(&self) -> impl Iterator<Item = (GlobalId<CallSpec>, &Call<'d, B>)> {

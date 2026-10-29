@@ -89,6 +89,8 @@ pub enum Error {
     NotInPlan { what: &'static str },
     /// A hollow tensor where a live one is needed.
     Hollow,
+    /// A live tensor where a hollow one is needed.
+    NotHollow,
     /// A [`Resolvable`](crate::tools::plan::deferred::Resolvable) read
     /// before its value was given.
     NotGivenYet,
@@ -209,6 +211,7 @@ impl fmt::Display for Error {
             ),
             Error::NotInPlan { what } => write!(f, "this {what} isn't in the plan"),
             Error::Hollow => write!(f, "this tensor is hollow: it lives in another run"),
+            Error::NotHollow => write!(f, "this tensor is live, not hollow"),
             Error::NotGivenYet => write!(f, "a value was read before it was given"),
             Error::ResolverTaken => write!(f, "the resolver of this value was already taken"),
             Error::Computed => write!(f, "this value is computed by a Relation"),
