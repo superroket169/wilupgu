@@ -200,8 +200,8 @@ fn scope_chains_runs_on_the_same_buffers() {
         .scope(|s| -> Result<HostData, Error> {
             let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
             let (add, double) = (s.bind_node(&mut add)?, s.bind_node(&mut double)?);
-            s.run(add, &[Arg::Write(y), Arg::Read(x)])?;
-            s.run(double, &[Arg::Write(y)])?;
+            s.execute(add, &[Arg::Write(y), Arg::Read(x)])?;
+            s.execute(double, &[Arg::Write(y)])?;
             Ok(s.download(y))
         })
         .unwrap();
@@ -226,9 +226,9 @@ fn scope_upload_and_update_meta_apply_to_the_next_run() {
         let x = s.bind(&mut x)?;
         let node = s.bind_node(&mut node)?;
         s.upload(x, &F32::wrap(vec![1.0, 2.0]))?;
-        s.run(node, &[Arg::Write(x)])?;
+        s.execute(node, &[Arg::Write(x)])?;
         s.update_meta(node, &[MetaValue::Uint(2), MetaValue::Float(10.0)])?;
-        s.run(node, &[Arg::Write(x)])
+        s.execute(node, &[Arg::Write(x)])
     })
     .unwrap();
 
@@ -253,16 +253,16 @@ fn run_rejects_wrong_args() {
         );
         let add = s.bind_node(&mut add).unwrap();
         // slot count
-        assert!(s.run(add, &[Arg::Write(y)]).is_err());
+        assert!(s.execute(add, &[Arg::Write(y)]).is_err());
         // Read on the Accumulate slot
-        assert!(s.run(add, &[Arg::Read(y), Arg::Read(x)]).is_err());
+        assert!(s.execute(add, &[Arg::Read(y), Arg::Read(x)]).is_err());
         // Write on the Input slot
-        assert!(s.run(add, &[Arg::Write(y), Arg::Write(x)]).is_err());
+        assert!(s.execute(add, &[Arg::Write(y), Arg::Write(x)]).is_err());
         // buffer kind
-        assert!(s.run(add, &[Arg::Write(bytes), Arg::Read(x)]).is_err());
+        assert!(s.execute(add, &[Arg::Write(bytes), Arg::Read(x)]).is_err());
         // a written buffer also in another slot
-        assert!(s.run(add, &[Arg::Write(y), Arg::Read(y)]).is_err());
-        assert!(s.run(add, &[Arg::Write(y), Arg::Read(x)]).is_ok());
+        assert!(s.execute(add, &[Arg::Write(y), Arg::Read(y)]).is_err());
+        assert!(s.execute(add, &[Arg::Write(y), Arg::Read(x)]).is_ok());
     });
 }
 
@@ -297,14 +297,14 @@ fn run_rejects_a_buffer_shorter_than_min_lens() {
         let x = s.bind(&mut x).unwrap();
         let node = s.bind_node(&mut node).unwrap();
         // n = len, n < len: fine
-        assert!(s.run(node, &[Arg::Write(x)]).is_ok());
+        assert!(s.execute(node, &[Arg::Write(x)]).is_ok());
         s.update_meta(node, &[MetaValue::Uint(2), MetaValue::Float(2.0)])
             .unwrap();
-        assert!(s.run(node, &[Arg::Write(x)]).is_ok());
+        assert!(s.execute(node, &[Arg::Write(x)]).is_ok());
         // n = len + 1: the buffer is one element short
         s.update_meta(node, &[MetaValue::Uint(4), MetaValue::Float(2.0)])
             .unwrap();
-        assert!(s.run(node, &[Arg::Write(x)]).is_err());
+        assert!(s.execute(node, &[Arg::Write(x)]).is_err());
     });
     // the first run doubled all three, the second the first two, the third didn't run
     assert_eq!(F32::unwrap(x.download()), Some(vec![4.0, 8.0, 6.0]));
@@ -325,7 +325,7 @@ fn area_bufs_work_like_alloced_ones() {
     dev.scope(|s| -> Result<(), Error> {
         let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
         let add = s.bind_node(&mut add)?;
-        s.run(add, &[Arg::Write(y), Arg::Read(x)])
+        s.execute(add, &[Arg::Write(y), Arg::Read(x)])
     })
     .unwrap();
 
@@ -376,8 +376,8 @@ fn capture_records_and_replay_runs_with_the_current_meta() {
             let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
             let (add, double) = (s.bind_node(&mut add)?, s.bind_node(&mut double)?);
             s.capture(|| {
-                s.run(double, &[Arg::Write(x)])?;
-                s.run(add, &[Arg::Write(y), Arg::Read(x)])
+                s.execute(double, &[Arg::Write(x)])?;
+                s.execute(add, &[Arg::Write(y), Arg::Read(x)])
             })
         })
         .unwrap();
@@ -414,7 +414,7 @@ fn replay_needs_every_recorded_buffer_and_node_bound() {
     let rec = dev
         .scope(|s| {
             let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
-            s.capture(|| s.run(n, &[Arg::Write(x)]))
+            s.capture(|| s.execute(n, &[Arg::Write(x)]))
         })
         .unwrap();
 
@@ -448,7 +448,7 @@ fn replay_checks_min_lens_again() {
     let rec = dev
         .scope(|s| {
             let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
-            s.capture(|| s.run(n, &[Arg::Write(x)]))
+            s.capture(|| s.execute(n, &[Arg::Write(x)]))
         })
         .unwrap();
 
@@ -472,7 +472,7 @@ fn a_failed_or_panicking_capture_leaves_the_device_able_to_capture() {
     let failed = dev.scope(|s| {
         let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
         s.capture(|| {
-            s.run(n, &[Arg::Write(x)])?;
+            s.execute(n, &[Arg::Write(x)])?;
             Err(Error::Backend("stop".to_string()))
         })
     });
@@ -485,7 +485,7 @@ fn a_failed_or_panicking_capture_leaves_the_device_able_to_capture() {
 
     let again = dev.scope(|s| {
         let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
-        s.capture(|| s.run(n, &[Arg::Write(x)]))
+        s.capture(|| s.execute(n, &[Arg::Write(x)]))
     });
     assert!(again.is_ok());
 }
@@ -499,7 +499,7 @@ fn capture_and_replay_reject_misuse() {
     let rec = dev
         .scope(|s| {
             let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
-            s.capture(|| s.run(n, &[Arg::Write(x)]))
+            s.capture(|| s.execute(n, &[Arg::Write(x)]))
         })
         .unwrap();
 
@@ -640,9 +640,9 @@ fn scope_copy_lands_between_runs() {
     dev.scope(|s| -> Result<(), Error> {
         let (xs, ys) = (s.bind(&mut x)?, s.bind(&mut y)?);
         let double = s.bind_node(&mut double)?;
-        s.run(double, &[Arg::Write(xs)])?;
+        s.execute(double, &[Arg::Write(xs)])?;
         s.copy(xs, 0, ys, 0, 2)?;
-        s.run(double, &[Arg::Write(xs)])?;
+        s.execute(double, &[Arg::Write(xs)])?;
         assert!(s.copy(xs, 0, xs, 1, 1).is_err(), "same tensor");
         Ok(())
     })

@@ -25,24 +25,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     p.call(scale, vec![len(), per_run_factor], scale_wg, &[x])?;
     p.call(add, vec![len()], add_wg, &[y, x])?;
 
-    let mut runnable = p.finish()?.build(&dev)?;
+    let mut run = p.finish()?.build(&dev)?;
     dev.scope(|s| {
-        let bound = runnable.bind(s)?; // bound once, run as often as needed
+        let bound = run.bind(s)?; // bound once, run as often as needed
         for f in [2.0, 3.0] {
             factor.set(f);
             bound.apply_dynamics()?;
-            bound.run()?;
+            bound.execute()?;
         }
         Ok::<_, Error>(())
     })?;
 
-    assert_eq!(
-        runnable.tensor(x)?.download_vec::<F32>()?,
-        vec![6.0, 12.0, 18.0]
-    );
-    assert_eq!(
-        runnable.tensor(y)?.download_vec::<F32>()?,
-        vec![8.0, 16.0, 24.0]
-    );
+    assert_eq!(run.tensor(x)?.download_vec::<F32>()?, vec![6.0, 12.0, 18.0]);
+    assert_eq!(run.tensor(y)?.download_vec::<F32>()?, vec![8.0, 16.0, 24.0]);
     Ok(())
 }

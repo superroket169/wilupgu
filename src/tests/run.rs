@@ -9,7 +9,7 @@ use crate::safe::{Arg, DeviceConfig, MetaValue};
 use crate::tools::plan::call::{CallDesc, CallSpec};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
-use crate::tools::plan::runnable::Runnable;
+use crate::tools::plan::runnable::Run;
 use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 fn scale(meta: &[u32], bindings: &mut [NativeBinding]) {
@@ -123,16 +123,16 @@ fn fixed(v: f32) -> MetaSource {
     MetaSource::Float(Resolvable::fixed(v))
 }
 
-fn plan(tensors: Vec<TensorSpec>, calls: Vec<CallSpec>) -> RunPlan {
-    RunPlan::new(PlanDesc { tensors, calls }).unwrap()
+fn plan(tensors: Vec<TensorSpec>, calls: Vec<CallSpec>) -> RunSpec {
+    RunSpec::new(RunDesc { tensors, calls }).unwrap()
 }
 
-fn values(r: &Runnable<'_, CpuBackend>, id: GlobalId<TensorSpec>) -> Vec<f32> {
+fn values(r: &Run<'_, CpuBackend>, id: GlobalId<TensorSpec>) -> Vec<f32> {
     r.tensor(id).unwrap().download_vec::<F32>().unwrap()
 }
 
 // x doubles, then y += x.
-fn double_then_add() -> (RunPlan, GlobalId<TensorSpec>, GlobalId<TensorSpec>) {
+fn double_then_add() -> (RunSpec, GlobalId<TensorSpec>, GlobalId<TensorSpec>) {
     let (x, y) = (f32_tensor(vec![1.0, 2.0]), f32_tensor(vec![10.0, 20.0]));
     let (x_id, y_id) = (x.id(), y.id());
     let double = scale_call(x_id, 2, fixed(2.0));
@@ -144,7 +144,7 @@ fn double_then_add() -> (RunPlan, GlobalId<TensorSpec>, GlobalId<TensorSpec>) {
 fn new_rejects_a_binding_outside_the_plan_or_of_another_kind() {
     let x = f32_tensor(vec![1.0]);
     let node = scale_call(x.id(), 1, fixed(2.0));
-    assert!(RunPlan::new(PlanDesc {
+    assert!(RunSpec::new(RunDesc {
         tensors: vec![],
         calls: vec![node],
     })
@@ -157,7 +157,7 @@ fn new_rejects_a_binding_outside_the_plan_or_of_another_kind() {
     })
     .unwrap();
     let node = scale_call(half.id(), 1, fixed(2.0));
-    assert!(RunPlan::new(PlanDesc {
+    assert!(RunSpec::new(RunDesc {
         tensors: vec![half],
         calls: vec![node],
     })
@@ -186,15 +186,15 @@ fn ready_waits_for_every_spec() {
 fn runs_in_one_scope_follow_the_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).unwrap();
     dev.scope(|s| {
-        let r = runnable.bind(s)?;
-        r.run()?;
-        r.run()
+        let r = run.bind(s)?;
+        r.execute()?;
+        r.execute()
     })
     .unwrap();
-    assert_eq!(values(&runnable, x), vec![4.0, 8.0]);
-    assert_eq!(values(&runnable, y), vec![16.0, 32.0]);
+    assert_eq!(values(&run, x), vec![4.0, 8.0]);
+    assert_eq!(values(&run, y), vec![16.0, 32.0]);
 }
 
 #[test]
@@ -206,9 +206,9 @@ fn calls_of_one_shader_run_in_order() {
         scale_call(x_id, 1, fixed(3.0)),
     ];
     let dev = device();
-    let mut runnable = plan(vec![x], calls).build(&dev).unwrap();
-    dev.scope(|s| runnable.bind(s)?.run()).unwrap();
-    assert_eq!(values(&runnable, x_id), vec![6.0]);
+    let mut run = plan(vec![x], calls).build(&dev).unwrap();
+    dev.scope(|s| run.bind(s)?.execute()).unwrap();
+    assert_eq!(values(&run, x_id), vec![6.0]);
 }
 
 #[test]
@@ -219,26 +219,26 @@ fn apply_dynamics_sets_every_node_using_a_dynamic() {
     let sx = scale_call(x_id, 1, MetaSource::FloatPerRun(factor.clone()));
     let sy = scale_call(y_id, 1, MetaSource::FloatPerRun(factor.clone()));
     let dev = device();
-    let mut runnable = plan(vec![x, y], vec![sx, sy]).build(&dev).unwrap();
+    let mut run = plan(vec![x, y], vec![sx, sy]).build(&dev).unwrap();
 
     dev.scope(|s| {
-        let r = runnable.bind(s)?;
+        let r = run.bind(s)?;
         assert!(r.apply_dynamics().is_err(), "never set");
         factor.set(3.0);
         r.apply_dynamics()?;
-        r.run()?;
-        r.run()?; // still 3: run doesn't read the Dynamic
+        r.execute()?;
+        r.execute()?; // still 3: run doesn't read the Dynamic
         r.apply_dynamics()?; // the same value again is fine
         factor.set(10.0);
         r.apply_dynamics()?;
-        r.run()
+        r.execute()
     })
     .unwrap();
-    assert_eq!(values(&runnable, x_id), vec![90.0]);
-    assert_eq!(values(&runnable, y_id), vec![180.0]);
-    let sx = runnable.order()[0];
+    assert_eq!(values(&run, x_id), vec![90.0]);
+    assert_eq!(values(&run, y_id), vec![180.0]);
+    let sx = run.order()[0];
     assert_eq!(
-        runnable.call(sx).unwrap().node().meta()[1],
+        run.call(sx).unwrap().node().meta()[1],
         MetaValue::Float(10.0),
         "a node's meta shows the last applied Dynamic"
     );
@@ -252,25 +252,25 @@ fn a_failed_apply_changes_no_meta() {
     let sa = scale_call(x_id, 1, MetaSource::FloatPerRun(a.clone()));
     let sb = scale_call(x_id, 1, MetaSource::FloatPerRun(b.clone()));
     let dev = device();
-    let mut runnable = plan(vec![x], vec![sa, sb]).build(&dev).unwrap();
+    let mut run = plan(vec![x], vec![sa, sb]).build(&dev).unwrap();
 
     a.set(2.0);
     dev.scope(|s| {
-        let r = runnable.bind(s)?;
+        let r = run.bind(s)?;
         assert!(r.apply_dynamics().is_err(), "b was never set");
         b.set(5.0);
         r.apply_dynamics()?;
-        r.run()
+        r.execute()
     })
     .unwrap();
-    assert_eq!(values(&runnable, x_id), vec![10.0]);
+    assert_eq!(values(&run, x_id), vec![10.0]);
 }
 
 #[test]
-fn the_scope_reaches_the_runnables_tensors_through_slots() {
+fn the_scope_reaches_the_runs_tensors_through_slots() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).unwrap();
     let mut z = dev.tensor_from(&F32::wrap(vec![0.0, 0.0])).unwrap();
     let mut add_z = dev
         .node(
@@ -281,12 +281,12 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
         .unwrap();
     let seen = dev
         .scope(|s| {
-            let r = runnable.bind(s)?;
+            let r = run.bind(s)?;
             let (z, add_z) = (s.bind(&mut z)?, s.bind_node(&mut add_z)?);
             s.upload(r.tensor(x)?, &F32::wrap(vec![3.0, 4.0]))?;
-            r.run()?;
-            // the scope's own node reads the runnable's output
-            s.run(add_z, &[Arg::Write(z), Arg::Read(r.tensor(y)?)])?;
+            r.execute()?;
+            // the scope's own node reads the run's output
+            s.execute(add_z, &[Arg::Write(z), Arg::Read(r.tensor(y)?)])?;
             Ok::<_, Error>(s.download(r.tensor(x)?))
         })
         .unwrap();
@@ -295,24 +295,24 @@ fn the_scope_reaches_the_runnables_tensors_through_slots() {
 }
 
 #[test]
-fn run_call_runs_calls_in_any_order() {
+fn execute_call_runs_calls_in_any_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
-    let [double, add] = runnable.order()[..] else {
+    let mut run = plan.build(&dev).unwrap();
+    let [double, add] = run.order()[..] else {
         panic!("two nodes")
     };
     dev.scope(|s| {
-        let r = runnable.bind(s)?;
-        r.run_call(add)?; // y += x, before x doubles
-        r.run_call(double)?;
-        r.run_call(double)?;
-        assert!(r.run_call(stranger_call()).is_err());
+        let r = run.bind(s)?;
+        r.execute_call(add)?; // y += x, before x doubles
+        r.execute_call(double)?;
+        r.execute_call(double)?;
+        assert!(r.execute_call(stranger_call()).is_err());
         Ok::<_, Error>(())
     })
     .unwrap();
-    assert_eq!(values(&runnable, y), vec![11.0, 22.0]);
-    assert_eq!(values(&runnable, x), vec![4.0, 8.0]);
+    assert_eq!(values(&run, y), vec![11.0, 22.0]);
+    assert_eq!(values(&run, x), vec![4.0, 8.0]);
 }
 
 fn stranger_call() -> GlobalId<CallSpec> {
@@ -323,10 +323,10 @@ fn stranger_call() -> GlobalId<CallSpec> {
 fn edit_lends_tensors_and_sets_meta() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
-    let double = runnable.order()[0];
+    let mut run = plan.build(&dev).unwrap();
+    let double = run.order()[0];
 
-    let old = runnable
+    let old = run
         .edit(|e| {
             e.tensor(x)?.upload(&F32::wrap(vec![1.0, 1.0]))?;
             e.node(double)?
@@ -337,22 +337,22 @@ fn edit_lends_tensors_and_sets_meta() {
         .unwrap();
     assert_eq!(old.download_vec::<F32>(), Ok(vec![10.0, 20.0]));
     assert_eq!(
-        runnable.call(double).unwrap().node().meta()[1],
+        run.call(double).unwrap().node().meta()[1],
         MetaValue::Float(5.0)
     );
 
-    dev.scope(|s| runnable.bind(s)?.run()).unwrap();
-    assert_eq!(values(&runnable, x), vec![5.0, 5.0]);
-    assert_eq!(values(&runnable, y), vec![5.0, 5.0]);
+    dev.scope(|s| run.bind(s)?.execute()).unwrap();
+    assert_eq!(values(&run, x), vec![5.0, 5.0]);
+    assert_eq!(values(&run, y), vec![5.0, 5.0]);
 }
 
 #[test]
 fn edit_fails_if_a_node_of_another_shader_is_left() {
     let (plan, _, _) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
-    let double = runnable.order()[0];
-    let result = runnable.edit(|e| {
+    let mut run = plan.build(&dev).unwrap();
+    let double = run.order()[0];
+    let result = run.edit(|e| {
         *e.node(double)? = dev.node(
             &add_like(),
             &[MetaValue::Uint(2)],
@@ -367,16 +367,16 @@ fn edit_fails_if_a_node_of_another_shader_is_left() {
 fn edit_fails_if_a_tensor_or_node_of_another_device_is_left() {
     let (plan, x, _) = double_then_add();
     let (dev, other) = (device(), device());
-    let mut runnable = plan.build(&dev).unwrap();
-    let result = runnable.edit(|e| {
+    let mut run = plan.build(&dev).unwrap();
+    let result = run.edit(|e| {
         *e.tensor(x)? = other.tensor_from(&F32::wrap(vec![0.0, 0.0]))?;
         Ok(())
     });
     assert!(result.is_err());
 
-    let mut runnable = double_then_add().0.build(&dev).unwrap();
-    let double = runnable.order()[0];
-    let result = runnable.edit(|e| {
+    let mut run = double_then_add().0.build(&dev).unwrap();
+    let double = run.order()[0];
+    let result = run.edit(|e| {
         *e.node(double)? = other.node(
             &scale_like(),
             &[MetaValue::Uint(2), MetaValue::Float(2.0)],
@@ -392,12 +392,12 @@ fn edit_fails_if_a_node_with_other_meta_is_left() {
     let x = f32_tensor(vec![1.0]);
     let x_id = x.id();
     let dev = device();
-    let mut runnable = plan(vec![x], vec![scale_call(x_id, 1, fixed(2.0))])
+    let mut run = plan(vec![x], vec![scale_call(x_id, 1, fixed(2.0))])
         .build(&dev)
         .unwrap();
-    let scale = runnable.order()[0];
+    let scale = run.order()[0];
     // the same slots, but meta [Uint, Uint] where the call's sources are [Uint, Float]
-    let result = runnable.edit(|e| {
+    let result = run.edit(|e| {
         *e.node(scale)? = dev.node(
             &scale_uint(),
             &[MetaValue::Uint(1), MetaValue::Uint(2)],
@@ -433,8 +433,8 @@ fn scale_uint() -> Shader {
 fn edit_fails_if_a_tensor_of_another_kind_is_left() {
     let (plan, _, y) = double_then_add();
     let dev = device();
-    let mut runnable = plan.build(&dev).unwrap();
-    let result = runnable.edit(|e| {
+    let mut run = plan.build(&dev).unwrap();
+    let result = run.edit(|e| {
         *e.tensor(y)? = dev.alloc(DataKind::F16, 2)?;
         Ok(())
     });
@@ -442,33 +442,32 @@ fn edit_fails_if_a_tensor_of_another_kind_is_left() {
 }
 
 #[test]
-fn reads_reach_everything_in_a_runnable() {
+fn reads_reach_everything_in_a_run() {
     let (plan, x, _) = double_then_add();
     let dev = device();
-    let runnable = plan.build(&dev).unwrap();
-    let double = runnable.order()[0];
+    let run = plan.build(&dev).unwrap();
+    let double = run.order()[0];
     assert_eq!(
-        runnable.call(double).unwrap().node().signature().name,
+        run.call(double).unwrap().node().signature().name,
         "scale_like"
     );
     assert_eq!(
-        runnable.call(double).unwrap().node().workgroups(),
+        run.call(double).unwrap().node().workgroups(),
         Workgroups { x: 1, y: 1, z: 1 }
     );
-    assert_eq!(runnable.tensor(x).unwrap().len(), 2);
-    assert!(runnable.tensor(f32_tensor(vec![0.0]).id()).is_err());
+    assert_eq!(run.tensor(x).unwrap().len(), 2);
+    assert!(run.tensor(f32_tensor(vec![0.0]).id()).is_err());
 }
 
 // Puts a 1-element tensor in place of `id`, shorter than its call needs.
-fn shorten(runnable: &mut Runnable<'_, CpuBackend>, id: GlobalId<TensorSpec>) {
-    let dev = runnable.device();
-    runnable
-        .edit(|edit| {
-            let short = dev.alloc(DataKind::F32, 1)?;
-            edit.tensor(id)?.replace(short).map_err(|(_, e)| e)?;
-            Ok(())
-        })
-        .unwrap();
+fn shorten(run: &mut Run<'_, CpuBackend>, id: GlobalId<TensorSpec>) {
+    let dev = run.device();
+    run.edit(|edit| {
+        let short = dev.alloc(DataKind::F32, 1)?;
+        edit.tensor(id)?.replace(short).map_err(|(_, e)| e)?;
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -476,11 +475,11 @@ fn run_fails_on_a_tensor_shortened_by_edit() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
     let dev = device();
-    let mut runnable = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
+    let mut run = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
         .build(&dev)
         .unwrap();
-    shorten(&mut runnable, x_id);
-    assert!(dev.scope(|s| runnable.bind(s)?.run()).is_err());
+    shorten(&mut run, x_id);
+    assert!(dev.scope(|s| run.bind(s)?.execute()).is_err());
 }
 
 #[test]
@@ -490,8 +489,8 @@ fn captured_replays_with_the_applied_dynamics() {
     let factor = Dynamic::new();
     let node = scale_call(x_id, 2, MetaSource::FloatPerRun(factor.clone()));
     let dev = device();
-    let runnable = plan(vec![x], vec![node]).build(&dev).unwrap();
-    let mut captured = runnable.capture().map_err(|(_, e)| e).unwrap();
+    let run = plan(vec![x], vec![node]).build(&dev).unwrap();
+    let mut captured = run.capture().map_err(|(_, e)| e).unwrap();
     assert_eq!(
         captured.tensor(x_id).unwrap().download_vec::<F32>(),
         Ok(vec![1.0, 2.0]),
@@ -529,7 +528,7 @@ fn captured_replays_with_the_applied_dynamics() {
 }
 
 #[test]
-fn release_gives_back_a_runnable_that_runs() {
+fn release_gives_back_a_run_that_runs() {
     let (plan, x, y) = double_then_add();
     let dev = device();
     let captured = plan
@@ -538,32 +537,32 @@ fn release_gives_back_a_runnable_that_runs() {
         .capture()
         .map_err(|(_, e)| e)
         .unwrap();
-    let mut runnable = captured.release();
-    dev.scope(|s| runnable.bind(s)?.run()).unwrap();
-    assert_eq!(values(&runnable, x), vec![2.0, 4.0]);
-    assert_eq!(values(&runnable, y), vec![12.0, 24.0]);
+    let mut run = captured.release();
+    dev.scope(|s| run.bind(s)?.execute()).unwrap();
+    assert_eq!(values(&run, x), vec![2.0, 4.0]);
+    assert_eq!(values(&run, y), vec![12.0, 24.0]);
 }
 
 #[test]
-fn a_failed_capture_gives_the_runnable_back() {
+fn a_failed_capture_gives_the_run_back() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
     let dev = device();
-    let mut runnable = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
+    let mut run = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
         .build(&dev)
         .unwrap();
-    shorten(&mut runnable, x_id);
-    let Err((runnable, _)) = runnable.capture() else {
+    shorten(&mut run, x_id);
+    let Err((run, _)) = run.capture() else {
         panic!("a node needs more than its tensor holds")
     };
-    assert_eq!(runnable.tensor(x_id).unwrap().len(), 1);
+    assert_eq!(run.tensor(x_id).unwrap().len(), 1);
 }
 
 #[test]
 fn new_rejects_a_written_tensor_in_two_slots() {
     let y = f32_tensor(vec![1.0]);
     let y_id = y.id();
-    let err = RunPlan::new(PlanDesc {
+    let err = RunSpec::new(RunDesc {
         tensors: vec![y],
         calls: vec![add_call(y_id, y_id, 1)],
     })
@@ -600,9 +599,9 @@ fn a_failed_run_names_the_call() {
     let (x_id, y_id) = (x.id(), y.id());
     let calls = vec![scale_call(x_id, 2, fixed(2.0)), add_call(y_id, x_id, 2)];
     let dev = device();
-    let mut runnable = plan(vec![x, y], calls).build(&dev).unwrap();
-    shorten(&mut runnable, y_id);
-    let err = dev.scope(|s| runnable.bind(s)?.run()).err();
+    let mut run = plan(vec![x, y], calls).build(&dev).unwrap();
+    shorten(&mut run, y_id);
+    let err = dev.scope(|s| run.bind(s)?.execute()).err();
     assert_eq!(
         err,
         Some(Error::InCall {
@@ -615,5 +614,5 @@ fn a_failed_run_names_the_call() {
             })
         })
     );
-    assert_eq!(values(&runnable, x_id), vec![2.0, 4.0]);
+    assert_eq!(values(&run, x_id), vec![2.0, 4.0]);
 }

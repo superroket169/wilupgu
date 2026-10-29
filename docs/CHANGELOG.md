@@ -10,6 +10,12 @@ were never published to crates.io.
   code), that CUDA builtins need `compile-nvrtc`, and the planned work.
 - `cuda` replaces `tensor` in the crates.io keywords.
 
+### Changed (breaking)
+- Renamed: `RunPlan` to `RunSpec`, `PlanDesc` to `RunDesc`, `Runnable` to
+  `Run`, `CapturedRunnable` to `CapturedRun`.
+- Renamed: `Scope::run` to `Scope::execute`; on a bound run, `run` to
+  `execute` and `run_call` to `execute_call`.
+
 ### Removed (breaking)
 - The `Spec` trait. `new`, `id`, `ready` and `build` are methods of each
   spec (`TensorSpec`, `NodeSpec`, `CallSpec`, `RunPlan`) on its own.

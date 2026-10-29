@@ -1,16 +1,16 @@
-//! [`RunPlan`]: tensors, and the calls that run on them, in order. Built, it
-//! is a [`Runnable`].
+//! [`RunSpec`]: tensors, and the calls that run on them, in order. Built, it
+//! is a [`Run`].
 
 use crate::backend::{Backend, Topology};
 use crate::error::Error;
 use crate::safe::{rules, ComputeDevice};
 use crate::tools::plan::call::CallSpec;
 use crate::tools::plan::id::GlobalId;
-use crate::tools::plan::runnable::Runnable;
+use crate::tools::plan::runnable::Run;
 use crate::tools::plan::tensor::TensorSpec;
 
-/// What a [`RunPlan`] is made from.
-pub struct PlanDesc {
+/// What a [`RunSpec`] is made from.
+pub struct RunDesc {
     /// Every tensor a call of the plan names.
     pub tensors: Vec<TensorSpec>,
     /// The calls, in the order they run.
@@ -18,12 +18,12 @@ pub struct PlanDesc {
 }
 
 /// Tensors to build on one device, and the calls that run on them, in order.
-pub struct RunPlan {
-    id: GlobalId<RunPlan>,
-    desc: PlanDesc,
+pub struct RunSpec {
+    id: GlobalId<RunSpec>,
+    desc: RunDesc,
 }
 
-impl RunPlan {
+impl RunSpec {
     /// The tensors to build.
     pub fn tensors(&self) -> &[TensorSpec] {
         &self.desc.tensors
@@ -36,7 +36,7 @@ impl RunPlan {
 
     /// Fails if a call names a tensor that isn't in the plan, one of another
     /// kind than its slot's, or a written slot's tensor in another slot too.
-    pub fn new(desc: PlanDesc) -> Result<Self, Error> {
+    pub fn new(desc: RunDesc) -> Result<Self, Error> {
         for call in &desc.calls {
             let kinds = call
                 .tensors()
@@ -55,7 +55,7 @@ impl RunPlan {
         })
     }
 
-    pub fn id(&self) -> GlobalId<RunPlan> {
+    pub fn id(&self) -> GlobalId<RunSpec> {
         self.id
     }
 
@@ -75,9 +75,9 @@ impl RunPlan {
     pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Runnable<'d, B>, Error> {
+    ) -> Result<Run<'d, B>, Error> {
         self.ready()?;
-        Runnable::build(self, device)
+        Run::build(self, device)
     }
 }
 

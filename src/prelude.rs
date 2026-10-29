@@ -13,6 +13,6 @@ pub use crate::tools::plan::{
     call::{CallDesc, CallSpec},
     deferred::{Dynamic, Relation, Resolvable},
     node::{MetaSource, NodeDesc, NodeSpec},
-    run::{PlanDesc, RunPlan},
+    run::{RunDesc, RunSpec},
     tensor::{TensorDesc, TensorInit, TensorSpec},
 };

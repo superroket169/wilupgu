@@ -311,7 +311,7 @@ fn min_lens_cover_what_native_code_touches() {
                         }
                     })
                     .collect();
-                sc.run(node, &args).unwrap();
+                sc.execute(node, &args).unwrap();
             });
             bufs.iter()
                 .map(|buf| F32::unwrap(buf.download()).unwrap())

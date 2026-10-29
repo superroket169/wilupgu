@@ -32,9 +32,9 @@ fn built_plan_runs_its_calls_in_order() {
     p.call(add, vec![n(2)], wg, &[y, x]).unwrap();
 
     let dev = device();
-    let mut runnable = p.finish().unwrap().build(&dev).unwrap();
-    dev.scope(|s| runnable.bind(s)?.run()).unwrap();
-    let values = |id| runnable.tensor(id).unwrap().download_vec::<F32>().unwrap();
+    let mut run = p.finish().unwrap().build(&dev).unwrap();
+    dev.scope(|s| run.bind(s)?.execute()).unwrap();
+    let values = |id| run.tensor(id).unwrap().download_vec::<F32>().unwrap();
     assert_eq!(values(x), vec![3.0, 6.0]);
     assert_eq!(values(y), vec![3.0, 6.0]);
 }

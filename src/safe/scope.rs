@@ -21,7 +21,7 @@ pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     /// so it stays valid and unaliased until the scope ends.
     bufs: RefCell<Vec<*mut Tensor<'d, B>>>,
     nodes: RefCell<Vec<*mut Node<'d, B>>>,
-    /// `Some` while `capture` runs: what each `run` queued, by address.
+    /// `Some` while `capture` runs: what each `execute` queued, by address.
     recording: RefCell<Option<Vec<RecordedCall>>>,
     _brand: Brand<'scope>,
     _env: PhantomData<&'env mut &'env ()>,
@@ -43,7 +43,7 @@ pub struct NodeSlot<'scope> {
     _brand: Brand<'scope>,
 }
 
-/// One tensor slot's buffer in [`Scope::run`].
+/// One tensor slot's buffer in [`Scope::execute`].
 #[derive(Clone, Copy)]
 pub enum Arg<'scope> {
     /// For an `Input` slot.
@@ -175,7 +175,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     /// [`Arg::Write`], a buffer's kind isn't its slot's, a buffer is shorter
     /// than the shader's `min_lens` for the node's meta, or a written buffer is
     /// in another slot too.
-    pub fn run(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), Error> {
+    pub fn execute(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), Error> {
         // SAFETY: see `nodes`.
         let node = unsafe { &*self.nodes.borrow()[node.index] };
         self.check(node, args)?;
@@ -224,7 +224,7 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         Ok(())
     }
 
-    // `run`'s checks, made again for every call a replay runs.
+    // `execute`'s checks, made again for every call a replay runs.
     fn check(&self, node: &Node<'d, B>, args: &[Arg<'scope>]) -> Result<(), Error> {
         let bufs = self.bufs.borrow();
         let shader = node.signature();
@@ -255,7 +255,7 @@ impl<B: Backend + Topology> Drop for SyncOnDrop<'_, B> {
     }
 }
 
-/// One `run` queued during `capture`: the node and each slot's buffer, by address.
+/// One `execute` queued during `capture`: the node and each slot's buffer, by address.
 struct RecordedCall {
     node: usize,
     args: Vec<RecordedArg>,
@@ -302,7 +302,7 @@ impl<B: Backend + Topology + Capturable> Drop for EndCaptureOnDrop<'_, B> {
 }
 
 impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, 'd, B> {
-    /// Records the [`Scope::run`]s that `f` makes instead of running them;
+    /// Records the [`Scope::execute`]s that `f` makes instead of running them;
     /// each one is checked as usual. Uploads and downloads inside `f` aren't
     /// recorded: they happen right away.
     ///

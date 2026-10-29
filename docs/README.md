@@ -51,7 +51,7 @@ fn main() -> Result<(), Error> {
     // device before it returns.
     dev.scope(|s| {
         let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-        s.run(add, &[Arg::Write(x), Arg::Read(y)])
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
     })?;
     assert_eq!(x.download_vec::<F32>()?, vec![11.0, 22.0, 33.0]);
     Ok(())
@@ -69,7 +69,7 @@ Reading `x` while the scope still holds it doesn't compile (a
 ```rust,ignore
 dev.scope(|s| {
     let (xs, ys, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-    s.run(add, &[Arg::Write(xs), Arg::Read(ys)])?;
+    s.execute(add, &[Arg::Write(xs), Arg::Read(ys)])?;
     x.download_vec::<F32>()?; // error[E0502]: cannot borrow `x` as immutable
                               // because it is also borrowed as mutable
     Ok(())
@@ -120,7 +120,7 @@ In it:
     another device. `Scope::copy` copies between bound tensors.
   - `Node`: one dispatch of a shader, its meta given as typed `MetaValue`s.
   - `Scope`: GPU work runs in a closure, like `std::thread::scope`, and the
-    scope waits for the device before it returns. `run` checks slot count,
+    scope waits for the device before it returns. `execute` checks slot count,
     roles, kinds, aliasing and buffer lengths before anything reaches the
     device.
   - `Recording`: `Scope::capture` records runs once, `Scope::replay` runs
@@ -131,9 +131,9 @@ In it:
 - **The plan tool** (`tool-plan` feature, `wilupgu::tools::plan`): tensors
   and calls described before a device exists, with sizes and meta that can
   be known later (`Resolvable`, `Relation`) or change between runs
-  (`Dynamic`). A `RunPlan` builds into a `Runnable`, bound into the caller's
+  (`Dynamic`). A `RunSpec` builds into a `Run`, bound into the caller's
   scope once and run as often as needed; on a backend with capture it can
-  become a `CapturedRunnable`, which replays one recording.
+  become a `CapturedRun`, which replays one recording.
 - **The parity tool** (`tool-parity` feature, `wilupgu::tools::parity`):
   `compare` runs one `Case` of a shader on two devices, of the same backend
   or not, from the same seeded data, and checks each slot by its `Check`.
@@ -198,8 +198,8 @@ Open work is in
 
 ## The plan tool
 
-In the plan tool, between runs, `Runnable::edit` lends every tensor and node
-as `&mut`; inside a scope, `run_call` runs one call and `tensor` gives a
+In the plan tool, between runs, `Run::edit` lends every tensor and node
+as `&mut`; inside a scope, `execute_call` runs one call and `tensor` gives a
 tensor's slot for the scope's own work.
 
 ## Capture and areas

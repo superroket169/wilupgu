@@ -25,7 +25,7 @@
 //! // device before it returns.
 //! dev.scope(|s| {
 //!     let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-//!     s.run(add, &[Arg::Write(x), Arg::Read(y)])
+//!     s.execute(add, &[Arg::Write(x), Arg::Read(y)])
 //! })?;
 //! assert_eq!(x.download_vec::<F32>()?, vec![11.0, 22.0, 33.0]);
 //! # Ok(())
@@ -46,7 +46,7 @@
 //! # let mut add = dev.node(&shader, &[MetaValue::Uint(1)], Workgroups::cover(1, &shader))?;
 //! dev.scope(|s| {
 //!     let (xs, ys, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-//!     s.run(add, &[Arg::Write(xs), Arg::Read(ys)])?;
+//!     s.execute(add, &[Arg::Write(xs), Arg::Read(ys)])?;
 //!     x.download_vec::<F32>()?; // error[E0502]: `x` is still borrowed
 //!     Ok(())
 //! })?;

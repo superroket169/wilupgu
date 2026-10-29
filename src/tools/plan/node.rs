@@ -16,10 +16,10 @@ pub enum MetaSource {
     Uint(Resolvable<u32>),
     /// Known once, when the node is built.
     Float(Resolvable<f32>),
-    /// Read from a [`Dynamic`] when the runnable's `apply_dynamics` is
+    /// Read from a [`Dynamic`] when the run's `apply_dynamics` is
     /// called, like an optimizer's step count.
     UintPerRun(Dynamic<u32>),
-    /// Read from a [`Dynamic`] when the runnable's `apply_dynamics` is
+    /// Read from a [`Dynamic`] when the run's `apply_dynamics` is
     /// called, like a scheduled learning rate.
     FloatPerRun(Dynamic<f32>),
 }
@@ -108,7 +108,7 @@ impl NodeSpec {
     }
 
     /// Builds the node with every value known once; a per-run value is 0
-    /// until the runnable's `apply_dynamics` sets it.
+    /// until the run's `apply_dynamics` sets it.
     pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,

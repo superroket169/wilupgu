@@ -107,7 +107,7 @@ fn build_uses_the_resolved_meta_and_workgroups() {
         .unwrap();
     dev.scope(|s| {
         let (node, x) = (s.bind_node(&mut node)?, s.bind(&mut x)?);
-        s.run(node, &[Arg::Write(x)])
+        s.execute(node, &[Arg::Write(x)])
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>(), Ok(vec![3.0, 6.0, 9.0, 12.0]));
@@ -128,7 +128,7 @@ fn build_writes_zero_for_a_per_run_value() {
     let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 2.0])).unwrap();
     dev.scope(|s| {
         let (node, x) = (s.bind_node(&mut node)?, s.bind(&mut x)?);
-        s.run(node, &[Arg::Write(x)])
+        s.execute(node, &[Arg::Write(x)])
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>(), Ok(vec![0.0, 0.0]));

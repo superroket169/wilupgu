@@ -1,4 +1,4 @@
-//! [`PlanBuilder`]: a [`RunPlan`] made a step at a time. Each step makes the
+//! [`PlanBuilder`]: a [`RunSpec`] made a step at a time. Each step makes the
 //! spec it stands for and keeps it; ids come back to name tensors in calls.
 
 use crate::backend::dtype::{DataKind, HostData};
@@ -8,10 +8,10 @@ use crate::tools::plan::call::{CallDesc, CallSpec};
 use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
-use crate::tools::plan::run::{PlanDesc, RunPlan};
+use crate::tools::plan::run::{RunDesc, RunSpec};
 use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
-/// The tensors and calls of a [`RunPlan`] to come, in the order they were
+/// The tensors and calls of a [`RunSpec`] to come, in the order they were
 /// added.
 pub struct PlanBuilder {
     tensors: Vec<TensorSpec>,
@@ -77,10 +77,10 @@ impl PlanBuilder {
         &self.calls
     }
 
-    /// The [`RunPlan`] of everything added. Fails where [`RunPlan::new`]
+    /// The [`RunSpec`] of everything added. Fails where [`RunSpec::new`]
     /// does, like for a call that names a tensor of another builder.
-    pub fn finish(self) -> Result<RunPlan, Error> {
-        RunPlan::new(PlanDesc {
+    pub fn finish(self) -> Result<RunSpec, Error> {
+        RunSpec::new(RunDesc {
             tensors: self.tensors,
             calls: self.calls,
         })

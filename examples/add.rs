@@ -18,7 +18,7 @@ fn add<B: Backend + Topology>() -> Result<Vec<f32>, Error> {
     // device before it returns.
     dev.scope(|s| {
         let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-        s.run(add, &[Arg::Write(x), Arg::Read(y)])
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
     })?;
     x.download_vec::<F32>()
 }

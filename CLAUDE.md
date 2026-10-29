@@ -15,7 +15,7 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   backends lives here.
   - `mod.rs`: `ComputeDevice`, `DeviceConfig`, `Tensor`, `DeviceArea`, `Node`,
     `MetaValue`.
-  - `scope.rs`: `Scope`, slots, `Arg`, `run`, and capture/replay
+  - `scope.rs`: `Scope`, slots, `Arg`, `execute`, and capture/replay
     (`Recording`).
   - `rules.rs`: every check made in more than one place, one function each,
     returning the `Error` it finds; the tools use them too.
@@ -35,8 +35,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `tensor`
     (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
-    (`RunPlan`), `builder` (`PlanBuilder`, `TensorBuilder`) and `runnable`
-    (`Runnable`, `CapturedRunnable`).
+    (`RunSpec`), `builder` (`PlanBuilder`, `TensorBuilder`) and `runnable`
+    (`Run`, `CapturedRun`).
   - `compile/` (`tool-compile`, always built for tests): the
     `ShaderCompiler` trait; each compiler goes in `compile/compilers/`, one
     file each, behind its own feature.

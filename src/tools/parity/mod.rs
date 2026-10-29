@@ -325,7 +325,7 @@ fn run<B: Backend + Topology>(
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        s.run(node, &args)
+        s.execute(node, &args)
     })?;
     tensors.iter().map(|t| t.download_vec::<F32>()).collect()
 }

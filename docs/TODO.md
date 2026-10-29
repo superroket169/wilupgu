@@ -48,9 +48,9 @@ In release order. 0.9 and 0.10 may swap.
      `Device<X>` enum below, ...) is open.
    - Two unordered writes to one buffer are no problem on one in-order queue;
      across devices or queues they may need a check again.
-   - A `RunPlan` owns all its tensors; runnables on one device that share
+   - A `RunSpec` owns all its tensors; runs on one device that share
      tensors are one plan. Spread moves parts in and out of per-device
-     runnables through `edit`, so the plan needs no outside tensors.
+     runs through `edit`, so the plan needs no outside tensors.
    - `SpreadTensor`: `CombineOp` returns a `Vec` (all-reduce copies) but
      `SpreadTensor::combine` keeps only the last one. `combine::sum` /
      `sum_to_all` are missing.

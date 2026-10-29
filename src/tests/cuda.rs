@@ -63,7 +63,7 @@ fn add_runs() {
         .unwrap();
     dev.scope(|s| {
         let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-        s.run(add, &[Arg::Write(x), Arg::Read(y)])
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![11.0, 22.0, 33.0]);
@@ -79,9 +79,9 @@ fn update_meta_reaches_only_the_runs_after_it() {
     // x * 2, then x * 3, queued back to back with no wait between.
     dev.scope(|s| {
         let (xs, n) = (s.bind(&mut x)?, s.bind_node(&mut scale)?);
-        s.run(n, &[Arg::Write(xs)])?;
+        s.execute(n, &[Arg::Write(xs)])?;
         s.update_meta(n, &scale_meta(2, 3.0))?;
-        s.run(n, &[Arg::Write(xs)])
+        s.execute(n, &[Arg::Write(xs)])
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![6.0, 12.0]);
@@ -96,7 +96,7 @@ fn replay_runs_with_the_current_meta() {
         .unwrap();
     let recorded = dev.scope(|s| {
         let (xs, n) = (s.bind(&mut x)?, s.bind_node(&mut scale)?);
-        s.capture(|| s.run(n, &[Arg::Write(xs)]))
+        s.capture(|| s.execute(n, &[Arg::Write(xs)]))
     });
     let recording = match recorded {
         Ok(recording) => recording,
@@ -152,7 +152,7 @@ fn area_buffers_run_like_allocated_ones() {
         .unwrap();
     dev.scope(|s| {
         let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
-        s.run(add, &[Arg::Write(x), Arg::Read(y)])
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![2.0, 3.0, 4.0]);
