@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     p.call(scale, vec![len(), per_run_factor], scale_wg, &[x])?;
     p.call(add, vec![len()], add_wg, &[y, x])?;
 
-    let mut run = p.finish()?.build(&dev)?;
+    let mut run = p.finish()?.build(&dev).map_err(|(_, e)| e)?;
     dev.scope(|s| {
         let bound = run.bind(s)?; // bound once, run as often as needed
         for f in [2.0, 3.0] {

@@ -177,16 +177,20 @@ fn ready_waits_for_every_spec() {
     let node = scale_call(x.id(), 2, fixed(2.0));
     let plan = plan(vec![x], vec![node]);
     assert!(plan.ready().is_err());
-    assert!(plan.build(&device()).is_err());
+    let dev = device();
+    let Err((plan, _)) = plan.build(&dev) else {
+        panic!("a plan with an unknown length built")
+    };
     resolver.resolve(2);
     assert!(plan.ready().is_ok());
+    assert!(plan.build(&dev).is_ok());
 }
 
 #[test]
 fn runs_in_one_scope_follow_the_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     dev.scope(|s| {
         let r = run.bind(s)?;
         r.execute()?;
@@ -206,7 +210,10 @@ fn calls_of_one_shader_run_in_order() {
         scale_call(x_id, 1, fixed(3.0)),
     ];
     let dev = device();
-    let mut run = plan(vec![x], calls).build(&dev).unwrap();
+    let mut run = plan(vec![x], calls)
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
     dev.scope(|s| run.bind(s)?.execute()).unwrap();
     assert_eq!(values(&run, x_id), vec![6.0]);
 }
@@ -219,7 +226,10 @@ fn apply_dynamics_sets_every_node_using_a_dynamic() {
     let sx = scale_call(x_id, 1, MetaSource::FloatPerRun(factor.clone()));
     let sy = scale_call(y_id, 1, MetaSource::FloatPerRun(factor.clone()));
     let dev = device();
-    let mut run = plan(vec![x, y], vec![sx, sy]).build(&dev).unwrap();
+    let mut run = plan(vec![x, y], vec![sx, sy])
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
 
     dev.scope(|s| {
         let r = run.bind(s)?;
@@ -252,7 +262,10 @@ fn a_failed_apply_changes_no_meta() {
     let sa = scale_call(x_id, 1, MetaSource::FloatPerRun(a.clone()));
     let sb = scale_call(x_id, 1, MetaSource::FloatPerRun(b.clone()));
     let dev = device();
-    let mut run = plan(vec![x], vec![sa, sb]).build(&dev).unwrap();
+    let mut run = plan(vec![x], vec![sa, sb])
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
 
     a.set(2.0);
     dev.scope(|s| {
@@ -270,7 +283,7 @@ fn a_failed_apply_changes_no_meta() {
 fn the_scope_reaches_the_runs_tensors_through_slots() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let mut z = dev.tensor_from(&F32::wrap(vec![0.0, 0.0])).unwrap();
     let mut add_z = dev
         .node(
@@ -298,7 +311,7 @@ fn the_scope_reaches_the_runs_tensors_through_slots() {
 fn execute_call_runs_calls_in_any_order() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let [double, add] = run.order()[..] else {
         panic!("two nodes")
     };
@@ -323,7 +336,7 @@ fn stranger_call() -> GlobalId<CallSpec> {
 fn edit_lends_tensors_and_sets_meta() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let double = run.order()[0];
 
     let old = run
@@ -350,7 +363,7 @@ fn edit_lends_tensors_and_sets_meta() {
 fn edit_fails_if_a_node_of_another_shader_is_left() {
     let (plan, _, _) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let double = run.order()[0];
     let result = run.edit(|e| {
         *e.node(double)? = dev.node(
@@ -367,14 +380,14 @@ fn edit_fails_if_a_node_of_another_shader_is_left() {
 fn edit_fails_if_a_tensor_or_node_of_another_device_is_left() {
     let (plan, x, _) = double_then_add();
     let (dev, other) = (device(), device());
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let result = run.edit(|e| {
         *e.tensor(x)? = other.tensor_from(&F32::wrap(vec![0.0, 0.0]))?;
         Ok(())
     });
     assert!(result.is_err());
 
-    let mut run = double_then_add().0.build(&dev).unwrap();
+    let mut run = double_then_add().0.build(&dev).map_err(|(_, e)| e).unwrap();
     let double = run.order()[0];
     let result = run.edit(|e| {
         *e.node(double)? = other.node(
@@ -394,6 +407,7 @@ fn edit_fails_if_a_node_with_other_meta_is_left() {
     let dev = device();
     let mut run = plan(vec![x], vec![scale_call(x_id, 1, fixed(2.0))])
         .build(&dev)
+        .map_err(|(_, e)| e)
         .unwrap();
     let scale = run.order()[0];
     // the same slots, but meta [Uint, Uint] where the call's sources are [Uint, Float]
@@ -433,7 +447,7 @@ fn scale_uint() -> Shader {
 fn edit_fails_if_a_tensor_of_another_kind_is_left() {
     let (plan, _, y) = double_then_add();
     let dev = device();
-    let mut run = plan.build(&dev).unwrap();
+    let mut run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let result = run.edit(|e| {
         *e.tensor(y)? = dev.alloc(DataKind::F16, 2)?;
         Ok(())
@@ -445,7 +459,7 @@ fn edit_fails_if_a_tensor_of_another_kind_is_left() {
 fn reads_reach_everything_in_a_run() {
     let (plan, x, _) = double_then_add();
     let dev = device();
-    let run = plan.build(&dev).unwrap();
+    let run = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     let double = run.order()[0];
     assert_eq!(
         run.call(double).unwrap().node().signature().name,
@@ -477,6 +491,7 @@ fn run_fails_on_a_tensor_shortened_by_edit() {
     let dev = device();
     let mut run = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
         .build(&dev)
+        .map_err(|(_, e)| e)
         .unwrap();
     shorten(&mut run, x_id);
     assert!(dev.scope(|s| run.bind(s)?.execute()).is_err());
@@ -489,7 +504,10 @@ fn captured_replays_with_the_applied_dynamics() {
     let factor = Dynamic::new();
     let node = scale_call(x_id, 2, MetaSource::FloatPerRun(factor.clone()));
     let dev = device();
-    let run = plan(vec![x], vec![node]).build(&dev).unwrap();
+    let run = plan(vec![x], vec![node])
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
     let mut captured = run.capture().map_err(|(_, e)| e).unwrap();
     assert_eq!(
         captured.tensor(x_id).unwrap().download_vec::<F32>(),
@@ -533,6 +551,7 @@ fn release_gives_back_a_run_that_runs() {
     let dev = device();
     let captured = plan
         .build(&dev)
+        .map_err(|(_, e)| e)
         .unwrap()
         .capture()
         .map_err(|(_, e)| e)
@@ -550,6 +569,7 @@ fn a_failed_capture_gives_the_run_back() {
     let dev = device();
     let mut run = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
         .build(&dev)
+        .map_err(|(_, e)| e)
         .unwrap();
     shorten(&mut run, x_id);
     let Err((run, _)) = run.capture() else {
@@ -581,7 +601,7 @@ fn build_rejects_a_tensor_shorter_than_its_slot_needs() {
     let x = f32_tensor(vec![1.0, 2.0]);
     let x_id = x.id();
     let p = plan(vec![x], vec![scale_call(x_id, 3, fixed(2.0))]);
-    let err = p.build(&device()).err();
+    let err = p.build(&device()).err().map(|(_, e)| e);
     assert_eq!(
         err,
         Some(Error::TooShort {
@@ -599,7 +619,10 @@ fn a_failed_run_names_the_call() {
     let (x_id, y_id) = (x.id(), y.id());
     let calls = vec![scale_call(x_id, 2, fixed(2.0)), add_call(y_id, x_id, 2)];
     let dev = device();
-    let mut run = plan(vec![x, y], calls).build(&dev).unwrap();
+    let mut run = plan(vec![x, y], calls)
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
     shorten(&mut run, y_id);
     let err = dev.scope(|s| run.bind(s)?.execute()).err();
     assert_eq!(
@@ -628,7 +651,11 @@ fn build_hollow_makes_every_tensor_hollow() {
     assert_eq!((x_hollow.kind(), x_hollow.len()), (DataKind::F32, 2));
     assert_eq!(run.tensor(y).err(), Some(Error::Hollow));
     assert_eq!(run.order().len(), 2);
-    assert!(!plan.build(&dev).unwrap().contains_hollow());
+    assert!(!plan
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap()
+        .contains_hollow());
 }
 
 #[test]
@@ -673,8 +700,8 @@ fn build_hollow_rejects_a_tensor_shorter_than_its_slot_needs() {
 fn fill_from_moves_a_live_tensor_into_a_hollow_place() {
     let (plan, x, y) = double_then_add();
     let dev = device();
-    let mut live = plan.build(&dev).unwrap();
     let mut hollow = plan.build_hollow(&dev).unwrap();
+    let mut live = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     hollow.fill_from(&mut live, x).unwrap();
     hollow.fill_from(&mut live, y).unwrap();
     assert!(!hollow.contains_hollow());
@@ -692,12 +719,11 @@ fn fill_from_moves_a_live_tensor_into_a_hollow_place() {
 fn fill_from_needs_a_hollow_place_and_a_live_tensor() {
     let (plan, x, _) = double_then_add();
     let dev = device();
-    let mut a = plan.build(&dev).unwrap();
-    let mut b = plan.build(&dev).unwrap();
-    assert_eq!(a.fill_from(&mut b, x), Err(Error::NotHollow));
     let mut c = plan.build_hollow(&dev).unwrap();
     let mut d = plan.build_hollow(&dev).unwrap();
     assert_eq!(c.fill_from(&mut d, x), Err(Error::Hollow));
+    let mut a = plan.build(&dev).map_err(|(_, e)| e).unwrap();
+    assert_eq!(a.fill_from(&mut c, x), Err(Error::NotHollow));
     let stranger = f32_tensor(vec![0.0]).id();
     assert!(matches!(
         c.fill_from(&mut a, stranger),
@@ -711,12 +737,12 @@ fn fill_from_rejects_another_device_or_length() {
     let (plan, x, _) = double_then_add();
     let (dev, other) = (device(), device());
     let mut hollow = plan.build_hollow(&dev).unwrap();
-    let mut elsewhere = plan.build(&other).unwrap();
+    let mut elsewhere = plan.build_hollow(&other).unwrap();
+    let mut short = plan.build(&dev).map_err(|(_, e)| e).unwrap();
     assert!(matches!(
-        hollow.fill_from(&mut elsewhere, x),
+        elsewhere.fill_from(&mut short, x),
         Err(Error::OtherDevice { .. })
     ));
-    let mut short = plan.build(&dev).unwrap();
     shorten(&mut short, x);
     assert!(matches!(
         hollow.fill_from(&mut short, x),

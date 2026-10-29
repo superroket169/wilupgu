@@ -85,11 +85,13 @@ impl RunSpec {
     /// Builds every tensor, then every call. Also fails if a tensor is
     /// shorter than its slot needs for its call's meta.
     pub fn build<'d, B: Backend + Topology>(
-        &self,
+        self,
         device: &'d ComputeDevice<B>,
-    ) -> Result<Run<'d, B>, Error> {
-        self.ready()?;
-        Run::build(self, device)
+    ) -> Result<Run<'d, B>, (Self, Error)> {
+        match self.ready().and_then(|()| Run::build(&self, device)) {
+            Ok(run) => Ok(run),
+            Err(e) => Err((self, e)),
+        }
     }
 
     pub fn build_hollow<'d, B: Backend + Topology>(
