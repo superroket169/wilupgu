@@ -16,56 +16,7 @@ land in. New tools are not on the list.
 4. The post names only what the release has: a naga compiler if it has
    landed, autograd and quantization as planned.
 
-## Next
-
-In release order. 0.9 and 0.10 may swap.
-
-1. **0.9: rayon, Vulkan, barriers.**
-   - **Vulkan backend** (ash, with `gpu-allocator`). It takes `Spirv`;
-     WGSL comes through `compile-naga`, which `shader_for` calls like it
-     calls NVRTC. `Capturable`: a command buffer is recorded once and
-     submitted again. `Areable`: Vulkan binds one buffer at several
-     offsets, read-only and writable in one dispatch (offsets aligned to
-     `minStorageBufferOffsetAlignment`). Needs the owner-value backend
-     tool and the barrier tool. First step: prove "WGSL → naga → SPIR-V →
-     ash, one dispatch" in a scratch crate.
-   - **Barrier tool**, a backend tool in `src/backend/` (not a `tool-*`):
-     from the ordered dispatches and copies and what each reads and
-     writes, where a barrier is needed (RAW, WAR, WAW; none for RAR).
-     Pure logic, tested on the CPU.
-   - **`compile-naga`** (`compile/compilers/naga.rs`): WGSL → SPIR-V.
-     Writing naga IR to a file and a `ShaderBinary::Naga` wait.
-   - **Rayon backend**: parallel native code for many-core machines;
-     `CpuBackend` stays single-threaded for deterministic tests. Open:
-     `Native` gets no workgroup id, so the backend can't split a dispatch.
-     Either (a) a native form per workgroup, where threads write one slot
-     together (needs `unsafe` in native code), or (b) rayon inside the
-     native code itself, with no backend of its own.
-2. **0.10: the spread tool**, reworked on plan, back in the build. Needs
-   `Device<X>`.
-   - Placement and `SpreadSpec` name devices with an id that no longer
-     exists; how a plan names a device (an index into a device list, the
-     `Device<X>` enum below, ...) is open.
-   - Two unordered writes to one buffer are no problem on one in-order queue;
-     across devices or queues they may need a check again.
-   - A `RunSpec` owns all its tensors; runs on one device that share
-     tensors are one plan. Spread moves parts in and out of per-device
-     runs through `edit`, so the plan needs no outside tensors.
-   - `SpreadTensor`: `CombineOp` returns a `Vec` (all-reduce copies) but
-     `SpreadTensor::combine` keeps only the last one. `combine::sum` /
-     `sum_to_all` are missing.
-   - `ComputeMesh` is still a skeleton (`todo!()` bodies, no constructor);
-     `Placement` is unused outside tests. Several design parts don't exist
-     yet.
-3. **0.11: SysTopology, and parity on it.** Parity runs every builtin on
-   every pair of devices SysTopology finds, with no `cfg` list of pairs
-   in the example. Needs `Device<X>`.
-4. **Quantization** (int8/int4), a release of its own: the dtype side and
-   a tool, quantized matmul/gemv builtins, and parity data for kinds other
-   than F32 (`Error::ParityKind` now). Decode is bandwidth-bound, so this
-   is a general iGPU lever.
-5. **Autograd tool** (`tools/autograd`); parts may come from sequexa-core.
-6. **1.0**: stabilization; the API is frozen.
+## Design
 
 Each tool gets its own feature once it builds (`tool-plan`,
 `tool-spread = ["tool-plan"]`). Tools import each other as a DAG; a check
@@ -76,8 +27,6 @@ for that is still to write.
 - `cargo doc` without `tool-plan` warns: `error.rs` links to plan types.
 - Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
   over a run (rolling) is still open.
-
-## Design
 
 - **Owner-value backend tool** for raw backends (Vulkan through ash): the
   value a buffer carries so `execute_raw` can reject another device's

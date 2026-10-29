@@ -94,6 +94,9 @@ impl TensorSpec {
         Ok(tensor)
     }
 
+    /// A [`HollowTensor`] of its kind and length, as many times as needed.
+    /// Fails only while the length isn't known; the data to upload isn't
+    /// looked at.
     pub fn build_hollow(&self) -> Result<HollowTensor, Error> {
         Ok(HollowTensor {
             kind: self.desc.kind,
@@ -102,6 +105,8 @@ impl TensorSpec {
     }
 }
 
+/// A tensor that lives in another run: its kind and length, with no
+/// memory and no device.
 #[derive(Debug)]
 pub struct HollowTensor {
     kind: DataKind,
@@ -109,25 +114,32 @@ pub struct HollowTensor {
 }
 
 impl HollowTensor {
+    /// The kind of its elements.
     pub fn kind(&self) -> DataKind {
         self.kind
     }
 
+    /// Its length in elements.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Whether its length is 0.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
 
+/// A tensor of a run: live here, or hollow, living in another run.
 pub enum AnyTensor<'d, B: Backend + Topology> {
+    /// The tensor itself.
     Live(Tensor<'d, B>),
+    /// The place of a tensor that lives in another run.
     Hollow(HollowTensor),
 }
 
 impl<'d, B: Backend + Topology> AnyTensor<'d, B> {
+    /// The kind of its elements.
     pub fn kind(&self) -> DataKind {
         match self {
             AnyTensor::Live(t) => t.kind(),
@@ -135,6 +147,7 @@ impl<'d, B: Backend + Topology> AnyTensor<'d, B> {
         }
     }
 
+    /// Its length in elements.
     pub fn len(&self) -> usize {
         match self {
             AnyTensor::Live(t) => t.len(),
@@ -142,14 +155,17 @@ impl<'d, B: Backend + Topology> AnyTensor<'d, B> {
         }
     }
 
+    /// Whether its length is 0.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Whether it lives in another run.
     pub fn is_hollow(&self) -> bool {
         matches!(self, AnyTensor::Hollow(_))
     }
 
+    /// The tensor, if it lives here; [`Error::Hollow`] if not.
     pub fn live(&self) -> Result<&Tensor<'d, B>, Error> {
         match self {
             AnyTensor::Live(t) => Ok(t),
@@ -157,6 +173,7 @@ impl<'d, B: Backend + Topology> AnyTensor<'d, B> {
         }
     }
 
+    /// [`AnyTensor::live`], as `&mut`.
     pub fn live_mut(&mut self) -> Result<&mut Tensor<'d, B>, Error> {
         match self {
             AnyTensor::Live(t) => Ok(t),

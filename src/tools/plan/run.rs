@@ -83,7 +83,9 @@ impl RunSpec {
     }
 
     /// Builds every tensor, then every call. Also fails if a tensor is
-    /// shorter than its slot needs for its call's meta.
+    /// shorter than its slot needs for its call's meta. It takes the spec,
+    /// so a spec makes one live run; on a fail the spec comes back with the
+    /// error.
     pub fn build<'d, B: Backend + Topology>(
         self,
         device: &'d ComputeDevice<B>,
@@ -94,6 +96,10 @@ impl RunSpec {
         }
     }
 
+    /// A run with every call built and every tensor hollow, as many times
+    /// as needed; [`Run::fill_from`] moves live tensors in. Fails where
+    /// [`CallSpec::ready`] or [`TensorSpec::build_hollow`] does, or if a
+    /// tensor is shorter than its slot needs for its call's meta.
     pub fn build_hollow<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
@@ -170,26 +176,35 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
         self.device
     }
 
-    /// Every tensor, with the id of the spec it was built from, in no order.
+    /// Every tensor, live or hollow, with the id of the spec it was built
+    /// from, in no order.
     pub fn tensors(&self) -> impl Iterator<Item = (GlobalId<TensorSpec>, &AnyTensor<'d, B>)> {
         self.tensors.iter().map(|(&id, tensor)| (id, tensor))
     }
 
-    /// The tensor built from the spec with `id`.
+    /// The tensor built from the spec with `id`; [`Error::Hollow`] if it
+    /// is hollow.
     pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<&Tensor<'d, B>, Error> {
         self.any_tensor(id)?.live()
     }
 
+    /// The tensor built from the spec with `id`, live or hollow.
     pub fn any_tensor(&self, id: GlobalId<TensorSpec>) -> Result<&AnyTensor<'d, B>, Error> {
         self.tensors
             .get(&id)
             .ok_or(Error::NotInPlan { what: "tensor" })
     }
 
+    /// Whether a tensor of it is hollow; such a run doesn't bind.
     pub fn contains_hollow(&self) -> bool {
         self.tensors.values().any(AnyTensor::is_hollow)
     }
 
+    /// Moves the live tensor built from the spec with `id` out of `from`
+    /// into its hollow place here, with no copy; it is hollow in `from`
+    /// after. Fails, changing nothing, if `from` is of another device, if
+    /// either run lacks `id`, if it isn't hollow here or live in `from`, or
+    /// if the two differ in kind or length.
     pub fn fill_from(
         &mut self,
         from: &mut Run<'d, B>,
@@ -266,7 +281,7 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
 
     /// Binds every tensor and node into `s` until it ends. The handle runs
     /// them, as many times as needed. Fails if a tensor or node belongs to
-    /// another device than the scope's.
+    /// another device than the scope's, or if a tensor is hollow.
     pub fn bind<'scope, 'env, 's>(
         &'scope mut self,
         s: &'scope Scope<'scope, 'env, 's, B>,
@@ -319,8 +334,9 @@ pub struct Edit<'a, 'd, B: Backend + Topology> {
 }
 
 impl<'d, B: Backend + Topology> Edit<'_, 'd, B> {
-    /// The tensor built from the spec with `id`. A tensor put in its place
-    /// must be of its kind and device; one too short fails the next run.
+    /// The tensor built from the spec with `id`; [`Error::Hollow`] if it is
+    /// hollow. A tensor put in its place must be of its kind and device; one
+    /// too short fails the next run.
     pub fn tensor(&mut self, id: GlobalId<TensorSpec>) -> Result<&mut Tensor<'d, B>, Error> {
         self.run
             .tensors

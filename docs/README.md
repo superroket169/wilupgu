@@ -202,6 +202,11 @@ In the plan tool, between runs, `Run::edit` lends every tensor and node
 as `&mut`; inside a scope, `execute_call` runs one call and `tensor` gives a
 tensor's slot for the scope's own work.
 
+`RunSpec::build` takes the spec, so a spec makes one live run.
+`RunSpec::build_hollow` makes as many runs as needed whose tensors are
+hollow: they live in another run. `Run::fill_from` moves a live tensor into
+a hollow place, with no copy. A run with a hollow tensor doesn't bind.
+
 ## Capture and areas
 
 On a backend that has them (CPU and CUDA; not wgpu):
