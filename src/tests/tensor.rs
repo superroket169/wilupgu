@@ -110,3 +110,26 @@ fn specs_sharing_a_length_see_one_value() {
     assert_eq!(a.len().value(), Ok(&256));
     assert_eq!(b.len().value(), Ok(&256));
 }
+
+#[test]
+fn build_hollow_waits_for_the_length() {
+    let len = Resolvable::new();
+    let resolver = len.resolver().unwrap();
+    let s = spec(DataKind::F16, len, TensorInit::Zero).unwrap();
+    assert!(s.build_hollow().is_err());
+    resolver.resolve(6);
+    let hollow = s.build_hollow().unwrap();
+    assert_eq!((hollow.kind(), hollow.len()), (DataKind::F16, 6));
+}
+
+#[test]
+fn build_hollow_skips_the_upload_length() {
+    let s = spec(
+        DataKind::F32,
+        Resolvable::fixed(3),
+        TensorInit::Upload(F32::wrap(vec![1.0, 2.0])),
+    )
+    .unwrap();
+    let hollow = s.build_hollow().unwrap();
+    assert_eq!((hollow.kind(), hollow.len()), (DataKind::F32, 3));
+}

@@ -93,6 +93,33 @@ impl TensorSpec {
         }
         Ok(tensor)
     }
+
+    pub fn build_hollow(&self) -> Result<HollowTensor, Error> {
+        Ok(HollowTensor {
+            kind: self.desc.kind,
+            len: *self.desc.len.value()?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct HollowTensor {
+    kind: DataKind,
+    len: usize,
+}
+
+impl HollowTensor {
+    pub fn kind(&self) -> DataKind {
+        self.kind
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 #[cfg(test)]
