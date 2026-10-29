@@ -14,6 +14,5 @@ pub use crate::tools::plan::{
     deferred::{Dynamic, Relation, Resolvable},
     node::{MetaSource, NodeDesc, NodeSpec},
     run::{PlanDesc, RunPlan},
-    spec::Spec,
     tensor::{TensorDesc, TensorInit, TensorSpec},
 };

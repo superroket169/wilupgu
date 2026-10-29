@@ -8,7 +8,6 @@ use crate::error::Error;
 use crate::safe::{rules, ComputeDevice, MetaValue, Node};
 use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::id::GlobalId;
-use crate::tools::plan::spec::Spec;
 
 /// Where one meta field's value comes from.
 #[derive(Debug, Clone)]
@@ -82,14 +81,9 @@ impl NodeSpec {
     pub fn workgroups(&self) -> &Resolvable<Workgroups> {
         &self.desc.workgroups
     }
-}
-
-impl Spec for NodeSpec {
-    type Description = NodeDesc;
-    type Outcome<'d, B: Backend + Topology + 'd> = Node<'d, B>;
 
     /// Fails if the meta doesn't match the shader's fields in count and type.
-    fn new(desc: NodeDesc) -> Result<Self, Error> {
+    pub fn new(desc: NodeDesc) -> Result<Self, Error> {
         rules::meta_types(
             desc.shader.signature(),
             desc.meta.iter().map(MetaSource::ty),
@@ -100,12 +94,12 @@ impl Spec for NodeSpec {
         })
     }
 
-    fn id(&self) -> GlobalId<NodeSpec> {
+    pub fn id(&self) -> GlobalId<NodeSpec> {
         self.id
     }
 
     /// Fails while the workgroup count or a value known once isn't known.
-    fn ready(&self) -> Result<(), Error> {
+    pub fn ready(&self) -> Result<(), Error> {
         self.desc.workgroups.value()?;
         for source in &self.desc.meta {
             source.build_value()?;
@@ -115,7 +109,7 @@ impl Spec for NodeSpec {
 
     /// Builds the node with every value known once; a per-run value is 0
     /// until the runnable's `apply_dynamics` sets it.
-    fn build<'d, B: Backend + Topology>(
+    pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
     ) -> Result<Node<'d, B>, Error> {

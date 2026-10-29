@@ -7,7 +7,6 @@ use crate::safe::{rules, ComputeDevice};
 use crate::tools::plan::call::CallSpec;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::runnable::Runnable;
-use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorSpec;
 
 /// What a [`RunPlan`] is made from.
@@ -34,15 +33,10 @@ impl RunPlan {
     pub fn calls(&self) -> &[CallSpec] {
         &self.desc.calls
     }
-}
-
-impl Spec for RunPlan {
-    type Description = PlanDesc;
-    type Outcome<'d, B: Backend + Topology + 'd> = Runnable<'d, B>;
 
     /// Fails if a call names a tensor that isn't in the plan, one of another
     /// kind than its slot's, or a written slot's tensor in another slot too.
-    fn new(desc: PlanDesc) -> Result<Self, Error> {
+    pub fn new(desc: PlanDesc) -> Result<Self, Error> {
         for call in &desc.calls {
             let kinds = call
                 .tensors()
@@ -61,12 +55,12 @@ impl Spec for RunPlan {
         })
     }
 
-    fn id(&self) -> GlobalId<RunPlan> {
+    pub fn id(&self) -> GlobalId<RunPlan> {
         self.id
     }
 
-    /// Fails where a tensor's or call's [`Spec::ready`] does.
-    fn ready(&self) -> Result<(), Error> {
+    /// Fails where [`TensorSpec::ready`] or [`CallSpec::ready`] does.
+    pub fn ready(&self) -> Result<(), Error> {
         for tensor in &self.desc.tensors {
             tensor.ready()?;
         }
@@ -78,7 +72,7 @@ impl Spec for RunPlan {
 
     /// Builds every tensor, then every call. Also fails if a tensor is
     /// shorter than its slot needs for its call's meta.
-    fn build<'d, B: Backend + Topology>(
+    pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
     ) -> Result<Runnable<'d, B>, Error> {

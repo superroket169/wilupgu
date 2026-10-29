@@ -6,7 +6,6 @@ use crate::error::Error;
 use crate::safe::{rules, ComputeDevice, Node};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::{MetaSource, NodeSpec};
-use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorSpec;
 
 /// What a [`CallSpec`] is made from.
@@ -34,14 +33,9 @@ impl CallSpec {
     pub fn tensors(&self) -> &[GlobalId<TensorSpec>] {
         &self.desc.tensors
     }
-}
-
-impl Spec for CallSpec {
-    type Description = CallDesc;
-    type Outcome<'d, B: Backend + Topology + 'd> = Call<'d, B>;
 
     /// Fails if there isn't one tensor per slot of the node's shader.
-    fn new(desc: CallDesc) -> Result<Self, Error> {
+    pub fn new(desc: CallDesc) -> Result<Self, Error> {
         rules::slot_count(desc.node.shader().signature(), desc.tensors.len())?;
         Ok(Self {
             id: GlobalId::new(),
@@ -49,17 +43,17 @@ impl Spec for CallSpec {
         })
     }
 
-    fn id(&self) -> GlobalId<CallSpec> {
+    pub fn id(&self) -> GlobalId<CallSpec> {
         self.id
     }
 
-    /// [`NodeSpec`]'s [`Spec::ready`].
-    fn ready(&self) -> Result<(), Error> {
+    /// [`NodeSpec::ready`].
+    pub fn ready(&self) -> Result<(), Error> {
         self.desc.node.ready()
     }
 
     /// Builds the node; the tensors are the plan's to build.
-    fn build<'d, B: Backend + Topology>(
+    pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
     ) -> Result<Call<'d, B>, Error> {

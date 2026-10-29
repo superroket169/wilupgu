@@ -9,7 +9,6 @@ use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
 use crate::tools::plan::run::{PlanDesc, RunPlan};
-use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::{TensorDesc, TensorInit, TensorSpec};
 
 /// The tensors and calls of a [`RunPlan`] to come, in the order they were

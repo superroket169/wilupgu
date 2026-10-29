@@ -33,7 +33,7 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     `codes/{wgsl,native,cuda}/` has one file per shader per format.
     Directory names mirror `Builtin` fields.
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
-    `Relation`, `Dynamic`), `id`, `spec` (the `Spec` trait), `tensor`
+    `Relation`, `Dynamic`), `id`, `tensor`
     (`TensorSpec`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
     (`RunPlan`), `builder` (`PlanBuilder`, `TensorBuilder`) and `runnable`
     (`Runnable`, `CapturedRunnable`).

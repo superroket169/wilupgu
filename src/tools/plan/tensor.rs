@@ -6,7 +6,6 @@ use crate::error::Error;
 use crate::safe::{rules, ComputeDevice, Tensor};
 use crate::tools::plan::deferred::Resolvable;
 use crate::tools::plan::id::GlobalId;
-use crate::tools::plan::spec::Spec;
 
 /// What a tensor holds right after it's built.
 #[derive(Debug, Clone)]
@@ -54,14 +53,9 @@ impl TensorSpec {
     pub fn init(&self) -> &TensorInit {
         &self.desc.init
     }
-}
-
-impl Spec for TensorSpec {
-    type Description = TensorDesc;
-    type Outcome<'d, B: Backend + Topology + 'd> = Tensor<'d, B>;
 
     /// Fails if the data to upload is of another kind.
-    fn new(desc: TensorDesc) -> Result<Self, Error> {
+    pub fn new(desc: TensorDesc) -> Result<Self, Error> {
         if let TensorInit::Upload(data) = &desc.init {
             rules::same_kind(desc.kind, data.kind())?;
         }
@@ -71,13 +65,13 @@ impl Spec for TensorSpec {
         })
     }
 
-    fn id(&self) -> GlobalId<TensorSpec> {
+    pub fn id(&self) -> GlobalId<TensorSpec> {
         self.id
     }
 
     /// Fails while the length isn't known, or if the data to upload isn't
     /// of that length, rounded up to whole host words for a packed kind.
-    fn ready(&self) -> Result<(), Error> {
+    pub fn ready(&self) -> Result<(), Error> {
         let len = *self.desc.len.value()?;
         if let TensorInit::Upload(data) = &self.desc.init {
             let elems = len.next_multiple_of(self.desc.kind.elems_per_host_word());
@@ -86,7 +80,7 @@ impl Spec for TensorSpec {
         Ok(())
     }
 
-    fn build<'d, B: Backend + Topology>(
+    pub fn build<'d, B: Backend + Topology>(
         &self,
         device: &'d ComputeDevice<B>,
     ) -> Result<Tensor<'d, B>, Error> {

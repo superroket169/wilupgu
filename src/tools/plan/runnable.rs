@@ -19,7 +19,6 @@ use crate::tools::plan::call::{Call, CallSpec};
 use crate::tools::plan::id::GlobalId;
 use crate::tools::plan::node::MetaSource;
 use crate::tools::plan::run::RunPlan;
-use crate::tools::plan::spec::Spec;
 use crate::tools::plan::tensor::TensorSpec;
 
 /// A built [`RunPlan`]: its tensors and calls on one device, and the order
