@@ -6,6 +6,12 @@ cd /d "%~dp0.."
 
 set PATH=%PATH%;%USERPROFILE%\.cargo\bin;%CUDA_PATH%\bin;%CUDA_PATH%\bin\x64
 
+where cargo >nul 2>&1 || (
+    echo cargo not found: install Rust from https://rustup.rs, then run this again.
+    pause
+    exit /b 1
+)
+
 set LOGFILE=test_results.log
 set STEPLOG=%TEMP%\wilupgu_step.log
 
@@ -21,9 +27,20 @@ set ANY_FAILED=0
 set ANY_SKIPPED=0
 
 call :step S1 "cpu tests " "cargo test --features cpu -- --test-threads=1"
-call :step S2 "cuda tests" "cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture"
+rem cudarc reads the CUDA version from nvcc; without it the CUDA build fails.
+where nvcc >nul 2>&1
+if !errorlevel!==0 (
+    call :step S2 "cuda tests" "cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture"
+    set PARITY_FEATURES=cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system
+) else (
+    echo === cuda tests: SKIPPED ^(no nvcc^) ===
+    echo === cuda tests: SKIPPED ^(no nvcc^) === >> "%LOGFILE%"
+    set "S2=SKIPPED (no nvcc)"
+    set ANY_SKIPPED=1
+    set PARITY_FEATURES=cpu,wgpu,tool-parity
+)
 call :step S3 "wgpu tests" "cargo test --features cpu,wgpu -- --test-threads=1 --nocapture"
-call :step S4 "parity    " "cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system"
+call :step S4 "parity    " "cargo run --example parity --features !PARITY_FEATURES!"
 
 del "%STEPLOG%" 2>nul
 

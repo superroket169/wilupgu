@@ -5,6 +5,11 @@ cd "$(dirname "$0")/.." || exit 1
 
 export PATH="$PATH:$HOME/.cargo/bin:/usr/local/cuda/bin"
 
+if ! command -v cargo > /dev/null; then
+    echo "cargo not found: install Rust from https://rustup.rs, then run this again."
+    exit 1
+fi
+
 LOGFILE=test_results.log
 STEPLOG=$(mktemp)
 trap 'rm -f "$STEPLOG"' EXIT
@@ -44,10 +49,24 @@ step() {
     RESULTS+=("$result")
 }
 
+skip() {
+    echo "=== $1: SKIPPED ($2) ===" | tee -a "$LOGFILE"
+    NAMES+=("$1")
+    RESULTS+=("SKIPPED ($2)")
+    ANY_SKIPPED=1
+}
+
 step "cpu tests " cargo test --features cpu -- --test-threads=1
-step "cuda tests" cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture
+# cudarc reads the CUDA version from nvcc; without it the CUDA build fails.
+if command -v nvcc > /dev/null; then
+    step "cuda tests" cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture
+    PARITY_FEATURES=cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system
+else
+    skip "cuda tests" "no nvcc"
+    PARITY_FEATURES=cpu,wgpu,tool-parity
+fi
 step "wgpu tests" cargo test --features cpu,wgpu -- --test-threads=1 --nocapture
-step "parity    " cargo run --example parity --features cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system
+step "parity    " cargo run --example parity --features "$PARITY_FEATURES"
 
 echo
 echo "============================================"
