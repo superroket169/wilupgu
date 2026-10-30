@@ -112,9 +112,9 @@ More in [`examples/`](https://github.com/superroket169/wilupgu/tree/v0.9.1/examp
   `cargo run --example parity --features cpu,wgpu,tool-parity`
 - `custom_shader.rs`: a shader of your own, `y = a * x + y`: its
   `Signature` (meta, slots, `min_lens`), WGSL code for wgpu, native code for
-  the CPU backend, and a run on tensors too short for its meta, which fails
-  before it reaches the device.
-  `cargo run --example custom_shader --features cpu`
+  the CPU backend, a run on tensors too short for its meta, which fails
+  before it reaches the device, and a parity check of it against the CPU.
+  `cargo run --example custom_shader --features cpu,tool-parity`
 
 ## Status
 

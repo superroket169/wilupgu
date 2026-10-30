@@ -6,6 +6,7 @@ use wilupgu::backend::shader::{
 use wilupgu::backend::Dispatch;
 use wilupgu::backends::CpuBackend;
 use wilupgu::prelude::*;
+use wilupgu::tools::parity::{compare, Case, Check};
 
 // y[i] = a * x[i] + y[i] for i < n. The signature is what the safe layer
 // checks every run against: the meta's fields, each slot's role and kind,
@@ -97,6 +98,24 @@ fn run<B: Backend + Topology>(x: &[f32], y: &[f32], n: u32, a: f32) -> Result<Ve
     y.download_vec::<F32>()
 }
 
+// The same case on `A` and on the CPU, from the same seeded data; 300
+// elements cross a workgroup's edge.
+fn parity<A: Backend + Topology>() -> Result<(), Error> {
+    let a = ComputeDevice::<A>::first()?;
+    let cpu = ComputeDevice::<CpuBackend>::first()?;
+    let (sa, scpu) = (saxpy::<A>()?, saxpy::<CpuBackend>()?);
+    let close = Check::Close {
+        atol: 1e-6,
+        rtol: 1e-6,
+    };
+    let meta = [MetaValue::Uint(300), MetaValue::Float(2.0)];
+    let case = Case::new(&meta, Workgroups::cover(300, &sa), &[close, close]);
+    let report = compare((&a, &sa), (&cpu, &scpu), &case)?;
+    assert!(report.passed(), "{report}");
+    println!("parity {} vs cpu: ok", A::NAME);
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     let (x, y) = ([1.0, 2.0, 3.0], [10.0, 20.0, 30.0]);
     assert_eq!(run::<CpuBackend>(&x, &y, 3, 2.0)?, vec![12.0, 24.0, 36.0]);
@@ -106,10 +125,13 @@ fn main() -> Result<(), Error> {
     let err = run::<CpuBackend>(&x, &y, 4, 2.0).unwrap_err();
     println!("n = 4 on 3 elements: {err}");
 
+    parity::<CpuBackend>()?;
+
     #[cfg(feature = "wgpu")]
-    println!(
-        "wgpu: {:?}",
-        run::<wilupgu::backends::WgpuBackend>(&x, &y, 3, 2.0)?
-    );
+    {
+        use wilupgu::backends::WgpuBackend;
+        println!("wgpu: {:?}", run::<WgpuBackend>(&x, &y, 3, 2.0)?);
+        parity::<WgpuBackend>()?;
+    }
     Ok(())
 }

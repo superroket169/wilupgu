@@ -11,6 +11,8 @@ were never published to crates.io.
 - `examples/capture.rs`: a run recorded once and replayed.
 
 ### Changed
+- `examples/custom_shader.rs` checks its shader with the parity tool
+  against the CPU, so it needs `tool-parity`.
 - `scripts/tester_script`: stops without cargo; without nvcc, skips the
   CUDA tests and runs parity without CUDA.
 

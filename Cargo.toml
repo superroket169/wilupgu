@@ -58,4 +58,4 @@ required-features = ["cpu", "tool-parity"]
 
 [[example]]
 name = "custom_shader"
-required-features = ["cpu"]
+required-features = ["cpu", "tool-parity"]
