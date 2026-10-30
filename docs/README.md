@@ -105,6 +105,8 @@ More in [`examples/`](https://github.com/superroket169/wilupgu/tree/v0.9.1/examp
 - `hollow.rs`: two runs of one plan sharing a tensor: `x *= 2` runs in one,
   then `x` moves to the other, not copied, and runs there.
   `cargo run --example hollow --features cpu,tool-plan`
+- `capture.rs`: a run recorded once and replayed, `x *= 2` three times,
+  then again on new contents. `cargo run --example capture --features cpu,tool-plan`
 - `parity.rs`: every builtin on every pair of backends that are on and
   have a device here, one line per case.
   `cargo run --example parity --features cpu,wgpu,tool-parity`

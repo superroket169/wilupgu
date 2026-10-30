@@ -49,6 +49,10 @@ name = "hollow"
 required-features = ["cpu", "tool-plan"]
 
 [[example]]
+name = "capture"
+required-features = ["cpu", "tool-plan"]
+
+[[example]]
 name = "parity"
 required-features = ["cpu", "tool-parity"]
 
