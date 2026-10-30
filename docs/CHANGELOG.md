@@ -3,6 +3,12 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
+## (unreleased)
+
+### Added
+- `examples/hollow.rs`: two runs of one plan sharing a tensor, moved with
+  `Run::fill_from`.
+
 ## 0.9.1 (2026-10-29)
 
 ### Added

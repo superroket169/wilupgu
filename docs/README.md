@@ -102,6 +102,9 @@ More in [`examples/`](https://github.com/superroket169/wilupgu/tree/v0.9.1/examp
 - `plan.rs`: the same work described up front with the plan tool:
   `x *= factor`, then `y += x`, run twice with a factor set from the host
   each time. `cargo run --example plan --features cpu,tool-plan`
+- `hollow.rs`: two runs of one plan sharing a tensor: `x *= 2` runs in one,
+  then `x` moves to the other, not copied, and runs there.
+  `cargo run --example hollow --features cpu,tool-plan`
 - `parity.rs`: every builtin on every pair of backends that are on and
   have a device here, one line per case.
   `cargo run --example parity --features cpu,wgpu,tool-parity`
