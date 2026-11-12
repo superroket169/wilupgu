@@ -87,6 +87,8 @@ pub enum Error {
     NotBound { what: &'static str },
     /// An id of a tensor or call that isn't in the plan.
     NotInPlan { what: &'static str },
+    /// Two of one kind of thing given the same id.
+    DuplicateId { what: &'static str },
     /// A hollow tensor where a live one is needed.
     Hollow,
     /// A live tensor where a hollow one is needed.
@@ -210,6 +212,7 @@ impl fmt::Display for Error {
                 "a recorded {what} isn't bound in this scope, or has moved"
             ),
             Error::NotInPlan { what } => write!(f, "this {what} isn't in the plan"),
+            Error::DuplicateId { what } => write!(f, "two of the {what}s share one id"),
             Error::Hollow => write!(f, "this tensor is hollow: it lives in another run"),
             Error::NotHollow => write!(f, "this tensor is live, not hollow"),
             Error::NotGivenYet => write!(f, "a value was read before it was given"),

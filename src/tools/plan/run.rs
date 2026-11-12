@@ -49,18 +49,7 @@ impl RunSpec {
     /// Fails if a call names a tensor that isn't in the plan, one of another
     /// kind than its slot's, or a written slot's tensor in another slot too.
     pub fn new(desc: RunDesc) -> Result<Self, Error> {
-        for call in &desc.calls {
-            let kinds = call
-                .tensors()
-                .iter()
-                .map(|id| {
-                    let tensor = desc.tensors.iter().find(|t| t.id() == *id);
-                    Ok(tensor.ok_or(Error::NotInPlan { what: "tensor" })?.kind())
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-            rules::slot_kinds(call.node().shader().signature(), kinds.into_iter())?;
-            rules::not_aliased(call.node().shader().signature(), call.tensors())?;
-        }
+        check_calls(&desc.tensors, &desc.calls)?;
         Ok(Self {
             id: GlobalId::new(),
             desc,
@@ -417,6 +406,24 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
         }
         Ok(())
     }
+}
+
+// Fails if a call names a tensor that isn't in `tensors`, one of another kind
+// than its slot's, or a written slot's tensor in another slot too.
+pub(super) fn check_calls(tensors: &[TensorSpec], calls: &[CallSpec]) -> Result<(), Error> {
+    for call in calls {
+        let kinds = call
+            .tensors()
+            .iter()
+            .map(|id| {
+                let tensor = tensors.iter().find(|t| t.id() == *id);
+                Ok(tensor.ok_or(Error::NotInPlan { what: "tensor" })?.kind())
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        rules::slot_kinds(call.node().shader().signature(), kinds.into_iter())?;
+        rules::not_aliased(call.node().shader().signature(), call.tensors())?;
+    }
+    Ok(())
 }
 
 // The meta for each node with a per-run field: its meta when bound, with the
