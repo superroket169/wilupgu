@@ -3,7 +3,7 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
-## (unreleased)
+## 0.10.0 (2026-11-12)
 
 ### Added
 - Mesh, in the plan tool: tensors, and routines of calls on them, each run
