@@ -144,7 +144,8 @@ In it:
   be known later (`Resolvable`, `Relation`) or change between runs
   (`Dynamic`). A `RunSpec` builds into a `Run`, bound into the caller's
   scope once and run as often as needed; on a backend with capture it can
-  become a `CapturedRun`, which replays one recording.
+  become a `CapturedRun`, which replays one recording. A `MeshSpec` holds
+  tensors and several routines of calls on them, each run by its key.
 - **The parity tool** (`tool-parity` feature, `wilupgu::tools::parity`):
   `compare` runs one `Case` of a shader on two devices, of the same backend
   or not, from the same seeded data, and checks each slot by its `Check`.
@@ -217,6 +218,13 @@ tensor's slot for the scope's own work.
 `RunSpec::build_hollow` makes as many runs as needed whose tensors are
 hollow: they live in another run. `Run::fill_from` moves a live tensor into
 a hollow place, with no copy. A run with a hollow tensor doesn't bind.
+
+A `MeshSpec` keeps the tensors in one place and names routines by key
+(`Routine::key()`), such as a forward pass and an optimizer step on the
+same weights. `MeshSpec::build` builds every tensor once; `Mesh::bind`
+binds everything into the caller's scope once, and
+`MeshBound::execute(key)` runs one routine. Which routine runs when is up
+to the host; a routine doesn't call another.
 
 ## Capture and areas
 

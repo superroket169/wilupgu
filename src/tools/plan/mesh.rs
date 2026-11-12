@@ -14,6 +14,7 @@ use crate::tools::plan::tensor::TensorSpec;
 pub enum Routine {}
 
 impl Routine {
+    /// A new key, unlike any other.
     pub fn key() -> GlobalId<Routine> {
         GlobalId::new()
     }
@@ -25,6 +26,8 @@ pub struct MeshDesc {
     pub routines: Vec<(GlobalId<Routine>, Vec<CallSpec>)>,
 }
 
+/// Tensors, and routines of calls on them. Every call names tensors of the
+/// mesh; routines don't call each other.
 pub struct MeshSpec {
     desc: MeshDesc,
 }
@@ -38,6 +41,7 @@ impl MeshSpec {
         &self.desc.routines
     }
 
+    /// Fails with [`Error::NotInPlan`] if no routine has `key`.
     pub fn routine(&self, key: GlobalId<Routine>) -> Result<&[CallSpec], Error> {
         self.desc
             .routines
@@ -52,6 +56,8 @@ impl MeshSpec {
         self.desc
     }
 
+    /// Fails if two routines share a key, or a call names a tensor outside
+    /// the mesh.
     pub fn new(desc: MeshDesc) -> Result<Self, Error> {
         let mut keys = HashSet::new();
         for (key, calls) in &desc.routines {
@@ -74,6 +80,9 @@ impl MeshSpec {
         Ok(())
     }
 
+    /// Builds every tensor once, live, and every routine's calls, then
+    /// checks each tensor is long enough for its slots. On a fail, gives the
+    /// spec back with the error.
     pub fn build<'d, B: Backend + Topology>(
         self,
         device: &'d ComputeDevice<B>,
@@ -85,6 +94,7 @@ impl MeshSpec {
     }
 }
 
+/// A built [`MeshSpec`]: its live tensors and each routine's calls.
 pub struct Mesh<'d, B: Backend + Topology> {
     device: &'d ComputeDevice<B>,
     tensors: HashMap<GlobalId<TensorSpec>, Tensor<'d, B>>,
@@ -194,6 +204,7 @@ pub struct MeshBound<'scope, 'env, 's, B: Backend + Topology> {
 }
 
 impl<'scope, B: Backend + Topology> MeshBound<'scope, '_, '_, B> {
+    /// The slot of tensor `id`, for the scope's own work.
     pub fn tensor(&self, id: GlobalId<TensorSpec>) -> Result<TensorSlot<'scope>, Error> {
         Ok(*self
             .tensors

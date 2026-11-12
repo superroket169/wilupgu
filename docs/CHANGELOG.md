@@ -14,6 +14,9 @@ were never published to crates.io.
   `apply_dynamics` sets the `Dynamic` meta of every routine.
 - `Error::DuplicateId`: two routines given one key.
 
+### Changed
+- README: the mesh, in the status and the plan tool section.
+
 ## 0.9.2 (2026-10-30)
 
 ### Added
