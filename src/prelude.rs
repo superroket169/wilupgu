@@ -12,7 +12,7 @@ pub use crate::tools::plan::{
     builder::{PlanBuilder, TensorBuilder},
     call::{CallDesc, CallSpec},
     deferred::{Dynamic, Relation, Resolvable},
-    mesh::{Mesh, MeshDesc, MeshSpec, Routine},
+    mesh::{Mesh, MeshBound, MeshDesc, MeshSpec, Routine},
     node::{MetaSource, NodeDesc, NodeSpec},
     run::{RunDesc, RunSpec},
     tensor::{AnyTensor, HollowTensor, TensorDesc, TensorInit, TensorSpec},

@@ -5,7 +5,7 @@ use crate::backends::{CpuBackend, CpuInfo};
 use crate::safe::DeviceConfig;
 use crate::tools::builtins::{ADD, SCALE};
 use crate::tools::plan::call::CallDesc;
-use crate::tools::plan::deferred::Resolvable;
+use crate::tools::plan::deferred::{Dynamic, Resolvable};
 use crate::tools::plan::node::{MetaSource, NodeDesc, NodeSpec};
 use crate::tools::plan::tensor::{TensorDesc, TensorInit};
 
@@ -169,4 +169,76 @@ fn build_waits_until_the_spec_is_ready() {
     };
     resolver.resolve(1);
     assert!(spec.build(&dev).is_ok());
+}
+
+fn values(mesh: &Mesh<'_, CpuBackend>, id: GlobalId<TensorSpec>) -> Vec<f32> {
+    mesh.tensor(id).unwrap().download_vec::<F32>().unwrap()
+}
+
+#[test]
+fn routines_run_by_key_on_the_shared_tensors() {
+    let (x, y) = (f32_tensor(vec![1.0]), f32_tensor(vec![0.0]));
+    let (xi, yi) = (x.id(), y.id());
+    let (grow, sum) = (Routine::key(), Routine::key());
+    let spec = MeshSpec::new(MeshDesc {
+        tensors: vec![x, y],
+        routines: vec![(grow, vec![double(xi)]), (sum, vec![add(yi, xi)])],
+    })
+    .unwrap();
+    let dev = device();
+    let mut mesh = spec.build(&dev).map_err(|(_, e)| e).unwrap();
+    dev.scope(|s| {
+        let m = mesh.bind(s)?;
+        m.execute(grow)?; // x = 2
+        m.execute(sum)?; // y = 2
+        m.execute(grow)?; // x = 4
+        m.execute(sum) // y = 6
+    })
+    .unwrap();
+    assert_eq!(values(&mesh, xi), vec![4.0]);
+    assert_eq!(values(&mesh, yi), vec![6.0]);
+}
+
+#[test]
+fn apply_dynamics_sets_the_nodes_of_every_routine() {
+    let (x, y) = (f32_tensor(vec![1.0]), f32_tensor(vec![1.0]));
+    let (xi, yi) = (x.id(), y.id());
+    let factor = Dynamic::new();
+    let scale = |id| {
+        let meta = vec![n(1), MetaSource::FloatPerRun(factor.clone())];
+        call(SCALE.shader_for::<CpuBackend>().unwrap(), meta, vec![id])
+    };
+    let (a, b) = (Routine::key(), Routine::key());
+    let spec = MeshSpec::new(MeshDesc {
+        tensors: vec![x, y],
+        routines: vec![(a, vec![scale(xi)]), (b, vec![scale(yi)])],
+    })
+    .unwrap();
+    let dev = device();
+    let mut mesh = spec.build(&dev).map_err(|(_, e)| e).unwrap();
+    dev.scope(|s| {
+        let m = mesh.bind(s)?;
+        factor.set(3.0);
+        m.apply_dynamics()?;
+        m.execute(a)?;
+        m.execute(b)
+    })
+    .unwrap();
+    assert_eq!(values(&mesh, xi), vec![3.0]);
+    assert_eq!(values(&mesh, yi), vec![3.0]);
+}
+
+#[test]
+fn execute_rejects_a_key_of_another_mesh() {
+    let x = f32_tensor(vec![1.0]);
+    let xi = x.id();
+    let spec = MeshSpec::new(MeshDesc {
+        tensors: vec![x],
+        routines: vec![(Routine::key(), vec![double(xi)])],
+    })
+    .unwrap();
+    let dev = device();
+    let mut mesh = spec.build(&dev).map_err(|(_, e)| e).unwrap();
+    let err = dev.scope(|s| mesh.bind(s)?.execute(Routine::key())).err();
+    assert_eq!(err, Some(Error::NotInPlan { what: "routine" }));
 }

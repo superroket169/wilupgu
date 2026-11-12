@@ -283,29 +283,7 @@ impl<'d, B: Backend + Topology> Run<'d, B> {
         let mut calls = HashMap::with_capacity(self.calls.len());
         let mut per_run = Vec::new();
         for (&id, call) in self.calls.iter_mut() {
-            let Call {
-                node,
-                tensors: ids,
-                sources,
-            } = call;
-            let args = ids
-                .iter()
-                .zip(node.signature().layout)
-                .map(|(id, role)| {
-                    let slot = *tensors.get(id).ok_or(Error::NotInPlan { what: "tensor" })?;
-                    Ok(match role {
-                        BindingRole::Input(_) => Arg::Read(slot),
-                        _ => Arg::Write(slot),
-                    })
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-            let meta = node.meta().to_vec();
-            let slot = s.bind_node(node)?;
-            let sources: &'scope [MetaSource] = sources;
-            if sources.iter().any(MetaSource::is_per_run) {
-                per_run.push((slot, meta, sources));
-            }
-            calls.insert(id, (slot, args));
+            calls.insert(id, bind_call(s, call, &tensors, &mut per_run)?);
         }
         Ok(Bound {
             scope: s,
@@ -355,10 +333,7 @@ pub struct Bound<'scope, 'env, 's, B: Backend + Topology> {
     tensors: HashMap<GlobalId<TensorSpec>, TensorSlot<'scope>>,
     // Each call's node and its args.
     calls: HashMap<GlobalId<CallSpec>, (NodeSlot<'scope>, Vec<Arg<'scope>>)>,
-    // The calls with a per-run meta field: the node, its meta when bound, and
-    // where each field comes from. Only this handle changes a bound node's
-    // meta, and only its per-run fields, so the rest stays as here.
-    per_run: Vec<(NodeSlot<'scope>, Vec<MetaValue>, &'scope [MetaSource])>,
+    per_run: PerRun<'scope>,
     order: &'scope [GlobalId<CallSpec>],
 }
 
@@ -408,6 +383,44 @@ impl<'scope, 'env, 's, B: Backend + Topology> Bound<'scope, 'env, 's, B> {
     }
 }
 
+// The calls with a per-run meta field: the node, its meta when bound, and
+// where each field comes from. Only the bound handle changes a bound node's
+// meta, and only its per-run fields, so the rest stays as here.
+pub(super) type PerRun<'scope> = Vec<(NodeSlot<'scope>, Vec<MetaValue>, &'scope [MetaSource])>;
+
+// Binds `call`'s node into `s`, with each slot's arg from `tensors`; notes the
+// node in `per_run` if a field of its meta is per-run.
+pub(super) fn bind_call<'scope, 'env, 's, 'd, B: Backend + Topology>(
+    s: &'scope Scope<'scope, 'env, 's, B>,
+    call: &'scope mut Call<'d, B>,
+    tensors: &HashMap<GlobalId<TensorSpec>, TensorSlot<'scope>>,
+    per_run: &mut PerRun<'scope>,
+) -> Result<(NodeSlot<'scope>, Vec<Arg<'scope>>), Error> {
+    let Call {
+        node,
+        tensors: ids,
+        sources,
+    } = call;
+    let args = ids
+        .iter()
+        .zip(node.signature().layout)
+        .map(|(id, role)| {
+            let slot = *tensors.get(id).ok_or(Error::NotInPlan { what: "tensor" })?;
+            Ok(match role {
+                BindingRole::Input(_) => Arg::Read(slot),
+                _ => Arg::Write(slot),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let meta = node.meta().to_vec();
+    let slot = s.bind_node(node)?;
+    let sources: &'scope [MetaSource] = sources;
+    if sources.iter().any(MetaSource::is_per_run) {
+        per_run.push((slot, meta, sources));
+    }
+    Ok((slot, args))
+}
+
 // Fails if a call names a tensor that isn't in `tensors`, one of another kind
 // than its slot's, or a written slot's tensor in another slot too.
 pub(super) fn check_calls(tensors: &[TensorSpec], calls: &[CallSpec]) -> Result<(), Error> {
@@ -429,7 +442,7 @@ pub(super) fn check_calls(tensors: &[TensorSpec], calls: &[CallSpec]) -> Result<
 // The meta for each node with a per-run field: its meta when bound, with the
 // per-run fields set to their `Dynamic`'s value now. Every value is read
 // before any meta is set, so a failure sets none.
-fn read_dynamics<'scope>(
+pub(super) fn read_dynamics<'scope>(
     per_run: &[(NodeSlot<'scope>, Vec<MetaValue>, &[MetaSource])],
 ) -> Result<Vec<(NodeSlot<'scope>, Vec<MetaValue>)>, Error> {
     per_run
