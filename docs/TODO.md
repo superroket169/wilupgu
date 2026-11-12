@@ -25,6 +25,11 @@ for that is still to write.
 - `cargo doc` without `tool-plan` warns: `error.rs` links to plan types.
 - Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
   over a run (rolling) is still open.
+- **`HollowSpec`**: a tensor's place in a `RunDesc` that another spec owns
+  (id, kind, len), built as a hollow tensor. `TensorSpec::build_hollow`
+  can't stand in: it needs the len known and carries no id. Wanted once a
+  mesh routine is captured on its own (a captured run owns its tensors),
+  or by spread.
 
 - **Owner-value backend tool** for raw backends (Vulkan through ash): the
   value a buffer carries so `execute_raw` can reject another device's

@@ -3,6 +3,17 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
+## (unreleased)
+
+### Added
+- Mesh, in the plan tool: tensors, and routines of calls on them, each run
+  by its key. `MeshSpec` (with `MeshDesc` and `Routine::key()`) is checked
+  like a `RunSpec`; `MeshSpec::build` builds every tensor once, live, and
+  every routine's calls. `Mesh::bind` binds them all into the caller's
+  scope once; `MeshBound::execute(key)` queues a routine's calls, and
+  `apply_dynamics` sets the `Dynamic` meta of every routine.
+- `Error::DuplicateId`: two routines given one key.
+
 ## 0.9.2 (2026-10-30)
 
 ### Added

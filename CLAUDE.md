@@ -3,7 +3,8 @@
 General-purpose GPU compute: a backend contract, a safe layer over it, and
 optional tools on top. No shape system and no NN-training-specific ops:
 optimizers, schedules and model ops belong to sequexa-core, which uses
-wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
+wilupgu. Autograd comes only as an optional pass (`tools/passes/autograd`,
+planned).
 
 ## Layout
 
@@ -35,8 +36,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `tensor` (`TensorSpec`, `HollowTensor`,
     `AnyTensor`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
-    (`RunSpec`, `Run`, `CapturedRun`) and `builder` (`PlanBuilder`,
-    `TensorBuilder`).
+    (`RunSpec`, `Run`, `CapturedRun`), `mesh` (`MeshSpec`, `Mesh`, `Routine`)
+    and `builder` (`PlanBuilder`, `TensorBuilder`).
   - `compile/` (`tool-compile`, always built for tests): the
     `ShaderCompiler` trait; each compiler goes in `compile/compilers/`, one
     file each, behind its own feature.
@@ -45,6 +46,8 @@ wilupgu. Autograd comes only as an optional tool (`tools/autograd`, planned).
     slot by its `Check`; the `Report` also flags `Output` slots left NaN
     and writes past `min_lens`. `builtins` holds the edge cases of every
     builtin and `compare_builtins`.
+  - `passes/` (`tool-passes`, planned): functions that take a `MeshSpec`
+    and give back a new one, one file each (`autograd`, ...).
   - `spread/`: out of the build until it is rewritten on the safe layer.
   One file = one subject.
 - `src/tests/`: one file per topic, included with `#[path]` from the module
