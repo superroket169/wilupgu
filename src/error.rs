@@ -93,14 +93,14 @@ pub enum Error {
     Hollow,
     /// A live tensor where a hollow one is needed.
     NotHollow,
-    /// A [`Resolvable`](crate::tools::plan::deferred::Resolvable) read
+    /// A `Resolvable` read
     /// before its value was given.
     NotGivenYet,
     /// A resolver asked for twice.
     ResolverTaken,
     /// A resolver asked for a value a `Relation` computes.
     Computed,
-    /// A [`Dynamic`](crate::tools::plan::deferred::Dynamic) read before it
+    /// A `Dynamic` read before it
     /// was ever set.
     DynamicUnset,
     /// A compiler failed; `log` is its report.

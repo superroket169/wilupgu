@@ -20,9 +20,6 @@ Each tool gets its own feature once it builds (`tool-plan`,
 `tool-spread = ["tool-plan"]`). Tools import each other as a DAG; a check
 for that is still to write.
 
-- `compare_builtins` picks `with_native` from the shaders' binaries; it
-  could be a parameter.
-- `cargo doc` without `tool-plan` warns: `error.rs` links to plan types.
 - Pool size: how `DeviceConfig::pool_bytes` should be picked or adjusted
   over a run (rolling) is still open.
 - **`HollowSpec`**: a tensor's place in a `RunDesc` that another spec owns
