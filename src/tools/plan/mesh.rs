@@ -47,6 +47,11 @@ impl MeshSpec {
             .ok_or(Error::NotInPlan { what: "routine" })
     }
 
+    /// Gives the desc back, to change and check again with [`MeshSpec::new`].
+    pub fn into_desc(self) -> MeshDesc {
+        self.desc
+    }
+
     pub fn new(desc: MeshDesc) -> Result<Self, Error> {
         let mut keys = HashSet::new();
         for (key, calls) in &desc.routines {

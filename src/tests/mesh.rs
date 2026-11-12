@@ -242,3 +242,19 @@ fn execute_rejects_a_key_of_another_mesh() {
     let err = dev.scope(|s| mesh.bind(s)?.execute(Routine::key())).err();
     assert_eq!(err, Some(Error::NotInPlan { what: "routine" }));
 }
+
+#[test]
+fn into_desc_gives_back_what_new_took() {
+    let x = f32_tensor(vec![1.0]);
+    let xi = x.id();
+    let key = Routine::key();
+    let spec = MeshSpec::new(MeshDesc {
+        tensors: vec![x],
+        routines: vec![(key, vec![double(xi)])],
+    })
+    .unwrap();
+    let mut desc = spec.into_desc();
+    desc.routines[0].1.push(double(xi));
+    let spec = MeshSpec::new(desc).unwrap();
+    assert_eq!(spec.routine(key).unwrap().len(), 2);
+}
