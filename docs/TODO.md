@@ -126,7 +126,7 @@ for that is still to write.
     runtime caps the tasks per submit. Lavapipe in CI doesn't show TDR: a
     rented cloud GPU, or volunteers running `scripts/tester_script`.
   - `submit_every` is a `pub` field (`AtomicU8`); it wants a setter or a
-    `DeviceConfig` entry once the knob above is settled.
+    `DeviceConfig` entry once the knob above is settled (#12).
   - A wgpu app can't open wilupgu on its own `wgpu::Device`:
     `WgpuBackend::from_device(device, queue)`.
   - A bind group is made per dispatch; cache it by node and buffers.
@@ -161,9 +161,7 @@ for that is still to write.
   - an empty tensor asks `alloc_raw` for 0 bytes, which CUDA may refuse;
     and empty buffers share an address, so `replay` can't tell them apart;
   - `Areable::reserve` returns no `Result`, so a backend out of memory can
-    only panic;
-  - a shader's `min_lens`, and `workgroups × workgroup_size`, can overflow,
-    unchecked.
+    only panic.
 
 ## Checks
 
