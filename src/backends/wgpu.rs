@@ -121,6 +121,14 @@ pub struct WgpuBackend {
 }
 
 impl WgpuBackend {
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
     fn check_owner(&self, owner: u64, what: &str) -> Result<(), String> {
         if owner == self.owner {
             Ok(())
