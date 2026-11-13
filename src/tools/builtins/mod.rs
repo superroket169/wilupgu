@@ -115,6 +115,8 @@ const fn float(name: &'static str) -> MetaField {
 }
 
 // `min_lens` of the builtins, in elements; meta words are in table order.
+// Products saturate: a length past `usize::MAX` is one no buffer holds, so
+// the safe layer's check fails instead of passing a short buffer after a wrap.
 
 // Every slot holds `n` elements.
 fn each_n(m: &[u32], _: Workgroups, l: &mut [usize]) {
@@ -124,23 +126,30 @@ fn each_n(m: &[u32], _: Workgroups, l: &mut [usize]) {
 // A: MxK, B: KxN (or NxK for matmul_trp), C: MxN.
 fn matmul_lens(m: &[u32], _: Workgroups, l: &mut [usize]) {
     let (rows, cols, inner) = (m[0] as usize, m[1] as usize, m[2] as usize);
-    l.copy_from_slice(&[rows * inner, inner * cols, rows * cols]);
+    l.copy_from_slice(&[
+        rows.saturating_mul(inner),
+        inner.saturating_mul(cols),
+        rows.saturating_mul(cols),
+    ]);
 }
 
 // One row: A: 1xK, B: KxN, C: 1xN; M is ignored.
 fn gemv_lens(m: &[u32], _: Workgroups, l: &mut [usize]) {
     let (cols, inner) = (m[1] as usize, m[2] as usize);
-    l.copy_from_slice(&[inner, inner * cols, cols]);
+    l.copy_from_slice(&[inner, inner.saturating_mul(cols), cols]);
 }
 
 fn transpose_lens(m: &[u32], _: Workgroups, l: &mut [usize]) {
-    l.fill(m[0] as usize * m[1] as usize);
+    l.fill((m[0] as usize).saturating_mul(m[1] as usize));
 }
 
 // Inputs hold `n`; the last slot holds one partial per workgroup. Native code
 // runs as one workgroup and always writes `partial[0]`, hence at least 1.
 fn reduce_lens(m: &[u32], wg: Workgroups, l: &mut [usize]) {
-    let partials = (wg.x as usize * wg.y as usize * wg.z as usize).max(1);
+    let partials = (wg.x as usize)
+        .saturating_mul(wg.y as usize)
+        .saturating_mul(wg.z as usize)
+        .max(1);
     l.fill(m[0] as usize);
     *l.last_mut().expect("a reduction has an output slot") = partials;
 }

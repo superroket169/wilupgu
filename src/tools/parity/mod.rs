@@ -263,7 +263,11 @@ pub fn compare<A: Backend + Topology, B: Backend + Topology>(
 // One workgroup's threads: a shader that skips its bounds check writes at
 // most that far past the end.
 fn pad_len(signature: &Signature) -> usize {
-    signature.workgroup_size.iter().product::<u32>().max(1) as usize
+    signature
+        .workgroup_size
+        .iter()
+        .fold(1usize, |n, &d| n.saturating_mul(d as usize))
+        .max(1)
 }
 
 fn start_data(signature: &Signature, case: &Case, lens: &[usize]) -> Vec<Vec<f32>> {

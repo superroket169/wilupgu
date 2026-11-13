@@ -92,6 +92,19 @@ fn wgsl_never_uses_array_length() {
     }
 }
 
+// standard 10: a length past `usize::MAX` saturates, so no buffer passes the check
+#[test]
+fn min_lens_saturate_instead_of_wrapping() {
+    let huge = Workgroups {
+        x: u32::MAX,
+        y: u32::MAX,
+        z: u32::MAX,
+    };
+    let mut lens = [0; 2];
+    (SUM.signature.min_lens)(&[1], huge, &mut lens);
+    assert_eq!(lens, [1, usize::MAX]);
+}
+
 // standard 11, for the global indices; products of loop counters aren't checked
 #[test]
 fn cuda_global_indices_are_64_bit() {

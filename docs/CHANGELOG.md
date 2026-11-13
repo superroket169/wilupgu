@@ -21,6 +21,9 @@ were never published to crates.io.
 - CUDA builtins compute global indices and index products in 64 bits; in
   32 bits they wrapped past 2^32 elements or threads and read or wrote the
   wrong element. SHADERS.md standard 11.
+- The builtins' `min_lens` saturate instead of wrapping, so a length too
+  big for `usize` (three workgroup counts, or any product on a 32-bit
+  target) fails the check instead of passing a short buffer.
 
 ### Changed
 - README: a warning on the capture/replay soundness holes, a "Known

@@ -39,6 +39,8 @@ pub struct Signature {
     /// The elements each tensor slot needs, from the meta words and the workgroup count:
     /// writes one entry per layout slot into `lens`.
     /// No code of the shader reads or writes a slot past it.
+    /// Products saturate instead of wrapping: a wrapped length is short, and
+    /// the check against it would pass a buffer the code runs past.
     pub min_lens: fn(meta: &[u32], workgroups: Workgroups, lens: &mut [usize]),
     /// Threads per workgroup. WGSL's `@workgroup_size` must match; CUDA
     /// launches with it as `blockDim`.
