@@ -26,6 +26,22 @@ jobs:
       - run: cargo run --example plan --features cpu,tool-plan
       - run: cargo run --example parity --features cpu,tool-parity
 
+  # Undefined behavior in the unsafe code the CPU tests reach: the CPU
+  # backend and the safe layer (capture, areas, scope pointers). Isolation is
+  # off because some tests read and write files.
+  miri:
+    runs-on: ubuntu-latest
+    env:
+      MIRIFLAGS: -Zmiri-disable-isolation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo miri setup
+      - run: cargo miri test --features cpu
+
   # No GPU on the runner: Mesa's lavapipe is a Vulkan device on the CPU.
   wgpu:
     runs-on: ubuntu-latest
