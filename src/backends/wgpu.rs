@@ -121,10 +121,14 @@ pub struct WgpuBackend {
 }
 
 impl WgpuBackend {
+    /// The `wgpu::Device` this backend runs on.
     pub fn device(&self) -> &wgpu::Device {
         &self.device
     }
 
+    /// The `wgpu::Queue` this backend submits to. Work submitted on it
+    /// directly isn't ordered against wilupgu's commands not yet submitted;
+    /// call `synchronize` first.
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
     }
