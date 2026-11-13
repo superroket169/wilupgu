@@ -514,6 +514,109 @@ fn capture_and_replay_reject_misuse() {
     assert!(other.scope(|s| s.replay(&rec)).is_err());
 }
 
+// A run made during `capture` from another scope, nested or on another
+// thread, would reach the backend's recording without the safe one's checks.
+#[test]
+fn capture_rejects_runs_from_another_scope() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+
+    let mut nested = Ok(());
+    dev.scope(|s| {
+        s.capture(|| {
+            nested = dev.scope(|s2| {
+                let (x, n) = (s2.bind(&mut x)?, s2.bind_node(&mut node)?);
+                s2.execute(n, &[Arg::Write(x)])
+            });
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert!(nested.is_err(), "a nested scope's run was recorded");
+
+    let mut threaded = Ok(());
+    dev.scope(|s| {
+        s.capture(|| {
+            std::thread::scope(|t| {
+                threaded = t
+                    .spawn(|| {
+                        dev.scope(|s2| {
+                            let (x, n) = (s2.bind(&mut x)?, s2.bind_node(&mut node)?);
+                            s2.execute(n, &[Arg::Write(x)])
+                        })
+                    })
+                    .join()
+                    .unwrap();
+            });
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert!(threaded.is_err(), "another thread's run was recorded");
+}
+
+// A buffer freed after the recording can come back at the same address as
+// another tensor, possibly shorter than the recorded one.
+#[test]
+fn replay_rejects_another_tensor_at_a_recorded_address() {
+    let dev = device(1024);
+    let mut node = scale_node(&dev, 1, 2.0);
+    let (rec, address) = {
+        let mut x = f32s(&dev, &[1.0]);
+        let address = x.raw().address();
+        let rec = dev
+            .scope(|s| {
+                let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+                s.capture(|| s.execute(n, &[Arg::Write(x)]))
+            })
+            .unwrap();
+        (rec, address)
+    };
+
+    // the pool gives the freed buffer to the next tensor of its kind and length
+    let mut y = f32s(&dev, &[1.0]);
+    assert_eq!(
+        y.raw().address(),
+        address,
+        "the pool didn't reuse the buffer"
+    );
+    let replayed = dev.scope(|s| {
+        s.bind(&mut y)?;
+        s.bind_node(&mut node)?;
+        s.replay(&rec)
+    });
+    assert!(replayed.is_err());
+    assert_eq!(F32::unwrap(y.download()), Some(vec![1.0]), "no replay ran");
+}
+
+// A replaced node stays at the same address, but a backend's recording may
+// still hold the old one (a CUDA graph keeps its kernel and meta buffer).
+#[test]
+fn replay_rejects_a_node_replaced_in_place() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+    let rec = dev
+        .scope(|s| {
+            let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+            s.capture(|| s.execute(n, &[Arg::Write(x)]))
+        })
+        .unwrap();
+
+    let _old = node
+        .replace(scale_node(&dev, 1, 3.0))
+        .map_err(|(_, e)| e)
+        .unwrap();
+    let replayed = dev.scope(|s| {
+        s.bind(&mut x)?;
+        s.bind_node(&mut node)?;
+        s.replay(&rec)
+    });
+    assert!(replayed.is_err());
+    assert_eq!(F32::unwrap(x.download()), Some(vec![1.0]), "no replay ran");
+}
+
 #[test]
 fn odd_byte_lengths_round_trip() {
     use crate::backend::dtype::F16;
