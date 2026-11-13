@@ -26,13 +26,25 @@ jobs:
       - run: cargo run --example plan --features cpu,tool-plan
       - run: cargo run --example parity --features cpu,tool-parity
 
+  # The oldest Rust `rust-version` in Cargo.toml promises, every feature on.
+  msrv:
+    runs-on: ubuntu-latest
+    env:
+      CUDARC_CUDA_VERSION: "13030"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --features cpu,wgpu,cuda,compile-nvrtc,tool-plan,tool-parity
+
   # Undefined behavior in the unsafe code the CPU tests reach: the CPU
   # backend and the safe layer (capture, areas, scope pointers). Isolation is
-  # off because some tests read and write files.
+  # off because some tests read and write files. Every freed address is
+  # reused when it can be, so address-reuse cases are hit.
   miri:
     runs-on: ubuntu-latest
     env:
-      MIRIFLAGS: -Zmiri-disable-isolation
+      MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-address-reuse-rate=1.0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
