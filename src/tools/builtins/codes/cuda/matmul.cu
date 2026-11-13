@@ -8,8 +8,8 @@ extern "C" __global__ void entry(const unsigned int* shader_meta, const float* A
     unsigned int N = shader_meta[1];
     unsigned int K = shader_meta[2];
 
-    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
-    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long row = (unsigned long long)blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned long long col = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int local_row = threadIdx.y;
     unsigned int local_col = threadIdx.x;
 
@@ -23,7 +23,7 @@ extern "C" __global__ void entry(const unsigned int* shader_meta, const float* A
 
         unsigned int b_k = t * TILE + local_row;
         tile_B[local_row * TILE + local_col] =
-            (b_k < K && col < N) ? B[b_k * N + col] : 0.0f;
+            (b_k < K && col < N) ? B[(unsigned long long)b_k * N + col] : 0.0f;
 
         __syncthreads();
 

@@ -27,6 +27,7 @@ with `--features wgpu`.
 | 8 | Comments are in English. | ASCII test |
 | 9 | Every file starts with the same one-line formula comment in every format. | formula test |
 | 10 | `min_lens` gives, from the meta and the workgroup count, the elements each tensor slot needs. No format's code reads or writes a slot past it. The safe layer's `execute` rejects a buffer shorter than that. | native: min_lens test (exact-size vs padded buffers) |
+| 11 | CUDA computes global thread indices, and every index that multiplies, in `unsigned long long`: in 32 bits they wrap past 2^32 and land on the wrong element. WGSL stays in `u32`, since a storage binding holds less than 2^32 bytes. | text test (global indices only) |
 
 ## Catalog
 

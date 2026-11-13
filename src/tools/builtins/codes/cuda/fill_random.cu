@@ -14,6 +14,6 @@ __device__ unsigned int hash(unsigned int v) {
 extern "C" __global__ void entry(const unsigned int* shader_meta, float* x) {
     unsigned int n = shader_meta[0];
     unsigned int seed = shader_meta[1];
-    unsigned int idx = (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x + threadIdx.x;
-    if (idx < n) { x[idx] = (float)hash(idx ^ seed) / 4294967295.0f; }
+    unsigned long long idx = ((unsigned long long)blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx < n) { x[idx] = (float)hash((unsigned int)idx ^ seed) / 4294967295.0f; }
 }

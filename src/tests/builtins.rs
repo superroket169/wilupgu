@@ -92,6 +92,20 @@ fn wgsl_never_uses_array_length() {
     }
 }
 
+// standard 11, for the global indices; products of loop counters aren't checked
+#[test]
+fn cuda_global_indices_are_64_bit() {
+    for b in ALL {
+        for name in ["idx", "row", "col", "wg"] {
+            assert!(
+                !b.cuda.0.contains(&format!("unsigned int {name} =")),
+                "`{}` computes `{name}` in 32 bits",
+                b.signature.name
+            );
+        }
+    }
+}
+
 // standard 1 for native: the builtins table calls `native::<name>::entry`, so
 // the compiler checks it.
 

@@ -4,8 +4,8 @@
 extern "C" __global__ void entry(const unsigned int* shader_meta, const float* a, const float* b, float* partial) {
     __shared__ float scratch[256];
     unsigned int n = shader_meta[0];
-    unsigned int wg = blockIdx.y * gridDim.x + blockIdx.x;
-    unsigned int idx = wg * blockDim.x + threadIdx.x;
+    unsigned long long wg = (unsigned long long)blockIdx.y * gridDim.x + blockIdx.x;
+    unsigned long long idx = wg * blockDim.x + threadIdx.x;
     scratch[threadIdx.x] = idx < n ? a[idx] * b[idx] : 0.0f;
     __syncthreads();
 
