@@ -3,6 +3,17 @@
 What each release changed. Versions before 0.4.3 were git tags only and
 were never published to crates.io.
 
+## (unreleased)
+
+### Added
+- CI runs the CPU tests under Miri.
+- Regression tests for three soundness holes in capture and replay; they
+  fail until the holes are closed.
+
+### Changed
+- README: a warning on the capture/replay soundness holes, a "Known
+  limits" section, and candle, burn and cudarc in "Compared to".
+
 ## 0.10.0 (2026-11-12)
 
 ### Added
