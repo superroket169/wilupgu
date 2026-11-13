@@ -17,8 +17,8 @@ land in. New tools are not on the list.
    the Miri job passes in CI.
 5. Shader code only its author can vouch for (CUDA, PTX, Cubin) is built
    through an `unsafe` constructor.
-6. README has a "known limits" section: wgpu's device lost, each GPU
-   backend tested on one machine, the CUDA trust model.
+6. README's soundness warning is gone, and its "Known limits" section
+   matches the code.
 7. A soundness review is asked on users.rust-lang.org first, and the post
    invites people to break the safe API and open issues.
 
@@ -153,8 +153,6 @@ for that is still to write.
 - **CPU builtins** copy the whole slot into a `Vec` and back on every call
   (`codes/native/common.rs`), single-threaded. Fine for a reference
   backend; slow.
-- **README's comparison** names wgpu, CubeCL and krnl, not candle, burn or
-  cudarc.
 - **Export the `builtins!` macro** so sequexa-core defines its shaders the
   same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
@@ -176,9 +174,6 @@ for that is still to write.
 
 ## Checks
 
-- Run Miri over the CPU backend and the safe layer (their `unsafe` code:
-  capture, areas, scope pointers). Nightly is installed; the `miri`
-  component isn't.
 - Keep the scope's compile-time guarantees as `compile_fail` doctests: a
   buffer allocated inside the closure can't be bound, a bound buffer can't
   be touched by the host, a slot can't leave its scope or enter another,
