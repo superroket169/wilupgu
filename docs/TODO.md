@@ -60,8 +60,6 @@ land in. New tools are not on the list.
   - re-entrance: the same API called from inside its own closure;
   - `mem::swap`, `mem::replace`, `mem::forget`;
   - drop order on panic.
-- **Miri**: `-Zmiri-address-reuse-rate` makes Miri reuse addresses more
-  often, so the address cases are hit without the pool.
 - CUDA kernels index with `unsigned int` (`codes/cuda/matmul.cu`:
   `row * K + a_col`) while `min_lens` is `usize`: past 2^32 elements the
   result is silently wrong.
@@ -131,9 +129,8 @@ for that is still to write.
     rented cloud GPU, or volunteers running `scripts/tester_script`.
   - `submit_every` is a `pub` field (`AtomicU8`); it wants a setter or a
     `DeviceConfig` entry once the knob above is settled.
-  - No escape hatch: a wgpu app can't share its `wgpu::Device` and buffers
-    with wilupgu. `WgpuBackend::from_device(device, queue)` and
-    `device()`/`queue()` getters.
+  - A wgpu app can't open wilupgu on its own `wgpu::Device`:
+    `WgpuBackend::from_device(device, queue)`.
   - A bind group is made per dispatch; cache it by node and buffers.
   - Fixed binding model: every slot is a whole storage buffer at offset 0;
     no uniforms, textures, push constants or indirect dispatch, and the API
@@ -147,8 +144,6 @@ for that is still to write.
   - `supports_kind` is true for every kind, but F16 needs the adapter's
     `SHADER_F16`; without it an F16 node fails to build instead of
     returning `UnsupportedKind`.
-- **`rust-version`** is missing from `Cargo.toml`, and the code uses
-  recent APIs (`AtomicUsize::try_update`).
 - **Builtins are F32 only**, though `DataKind` has F16, BF16, Int8, Int4.
 - **CPU builtins** copy the whole slot into a `Vec` and back on every call
   (`codes/native/common.rs`), single-threaded. Fine for a reference

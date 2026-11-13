@@ -6,9 +6,13 @@ were never published to crates.io.
 ## (unreleased)
 
 ### Added
-- CI runs the CPU tests under Miri.
+- CI runs the CPU tests under Miri, with every freed address reused when
+  it can be.
 - Regression tests for three soundness holes in capture and replay; they
   fail until the holes are closed.
+- `rust-version = "1.95"` in `Cargo.toml`, checked in CI with every
+  feature on.
+- `WgpuBackend::device` and `WgpuBackend::queue`.
 
 ### Changed
 - README: a warning on the capture/replay soundness holes, a "Known
