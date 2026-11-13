@@ -30,6 +30,15 @@ hardware, iGPUs included.
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
 
+**Known soundness holes.** `Scope::capture` and `Scope::replay` can reach
+undefined behavior from safe code: a run made from another scope during a
+capture enters the recording unchecked, and a freed buffer or a replaced
+node at a recorded address passes as the recorded one. Until they are
+closed, don't replay a recording after its tensors or nodes have been
+dropped or replaced, and don't run other scopes on the device during a
+capture. Tracked under Soundness in
+[TODO.md](https://github.com/superroket169/wilupgu/blob/main/docs/TODO.md).
+
 ## Example
 
 ```rust
@@ -89,6 +98,13 @@ dev.scope(|s| {
   API, not in a kernel language.
 - **krnl**: Rust kernels compiled to SPIR-V, run on Vulkan or the host.
   wilupgu runs CUDA directly as well, and takes existing kernel code.
+- **cudarc**: the layer below wilupgu's CUDA backend. For CUDA alone,
+  cudarc is more direct; wilupgu adds the borrow-checked scope, the per-run
+  checks, and the same API on wgpu and the CPU.
+- **candle, burn**: tensor and neural-network frameworks, with shapes,
+  autograd and op libraries. wilupgu is a layer below them: flat buffers
+  and dispatch, no shapes. A framework can be built on it, as sequexa-core
+  is.
 
 ```toml
 [dependencies]
@@ -174,6 +190,20 @@ Not in it yet:
 
 Open work is in
 [TODO.md](https://github.com/superroket169/wilupgu/blob/main/docs/TODO.md).
+
+## Known limits
+
+- **Capture and replay** have the soundness holes described at the top.
+- **Shader trust**: building a node is safe, so wilupgu trusts a shader's
+  code to stay within its `min_lens`. On CUDA, code that goes past it is
+  undefined behavior.
+- **wgpu** is tested on one Intel iGPU (Mesa, Vulkan). Long training runs
+  have died there with `Parent device is lost`; the cause is still open.
+  CI runs its tests on lavapipe, a CPU Vulkan device.
+- **CUDA** is tested on one NVIDIA GPU, CUDA 13.0. CI builds it but has no
+  device to run its tests.
+- **Builtins** are F32 only, though `DataKind` has F16, BF16, Int8 and
+  Int4.
 
 ## Philosophy
 
