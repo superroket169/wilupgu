@@ -60,9 +60,6 @@ land in. New tools are not on the list.
   - re-entrance: the same API called from inside its own closure;
   - `mem::swap`, `mem::replace`, `mem::forget`;
   - drop order on panic.
-- CUDA kernels index with `unsigned int` (`codes/cuda/matmul.cu`:
-  `row * K + a_col`) while `min_lens` is `usize`: past 2^32 elements the
-  result is silently wrong.
 
 ## Design
 
@@ -113,7 +110,8 @@ for that is still to write.
 - **CUDA backend**: tested on CUDA 13.0 only. Its tests
   (`CUDARC_CUDA_VERSION=13000 cargo test --features cpu,cuda,compile-nvrtc cuda`)
   skip without a device and NVRTC. A module is loaded per node, with no
-  cache by shader.
+  cache by shader. The builtins' 64-bit indices (SHADERS.md standard 11)
+  haven't run on a device yet.
 - **wgpu backend**: tested on an Intel iGPU (Mesa, Vulkan) only.
   - `Parent device is lost`: many nodes in one compute pass and one submit
     died with it in training runs, not in inference. A missing barrier, or

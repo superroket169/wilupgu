@@ -14,6 +14,11 @@ were never published to crates.io.
   feature on.
 - `WgpuBackend::device` and `WgpuBackend::queue`.
 
+### Fixed
+- CUDA builtins compute global indices and index products in 64 bits; in
+  32 bits they wrapped past 2^32 elements or threads and read or wrote the
+  wrong element. SHADERS.md standard 11.
+
 ### Changed
 - README: a warning on the capture/replay soundness holes, a "Known
   limits" section, and candle, burn and cudarc in "Compared to".
