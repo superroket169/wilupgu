@@ -107,11 +107,11 @@ for that is still to write.
   `Resolvable` handed to SysTopology is resolved to the largest value these
   devices can hold. Which backends are usable at runtime is decided here,
   not by `cfg`s on shader code.
-- **CUDA backend**: tested on CUDA 13.0 only. Its tests
+- **CUDA backend**: tested on CUDA 13.0 only, on two NVIDIA GPUs, one a
+  Tesla T4 on Colab (`scripts/setup.sh`). Its tests
   (`CUDARC_CUDA_VERSION=13000 cargo test --features cpu,cuda,compile-nvrtc cuda`)
   skip without a device and NVRTC. A module is loaded per node, with no
-  cache by shader. The builtins' 64-bit indices (SHADERS.md standard 11)
-  haven't run on a device yet.
+  cache by shader.
 - **wgpu backend**: tested on an Intel iGPU (Mesa, Vulkan) only.
   - `Parent device is lost`: many nodes in one compute pass and one submit
     died with it in training runs, not in inference. A missing barrier, or

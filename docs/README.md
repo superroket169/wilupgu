@@ -24,8 +24,8 @@ declares; code that goes past it is a bug in the shader, and on CUDA it is
 undefined behavior. The builtins follow the standards in
 [SHADERS.md](https://github.com/superroket169/wilupgu/blob/v0.10.0/docs/SHADERS.md).
 
-**Status: early.** Tested on CPU, an Intel iGPU (wgpu, Vulkan) and an
-NVIDIA GPU (CUDA 13.0). Aimed at low-end
+**Status: early.** Tested on CPU, an Intel iGPU (wgpu, Vulkan) and two
+NVIDIA GPUs (CUDA 13.0). Aimed at low-end
 hardware, iGPUs included.
 [sequexa-core](https://github.com/superroket169/sequexa-core), a sequential
 model engine, is built on wilupgu.
@@ -200,8 +200,8 @@ Open work is in
 - **wgpu** is tested on one Intel iGPU (Mesa, Vulkan). Long training runs
   have died there with `Parent device is lost`; the cause is still open.
   CI runs its tests on lavapipe, a CPU Vulkan device.
-- **CUDA** is tested on one NVIDIA GPU, CUDA 13.0. CI builds it but has no
-  device to run its tests.
+- **CUDA** is tested on two NVIDIA GPUs, one a Tesla T4 on Colab, CUDA
+  13.0 only. CI builds it but has no device to run its tests.
 - **Builtins** are F32 only, though `DataKind` has F16, BF16, Int8 and
   Int4.
 
