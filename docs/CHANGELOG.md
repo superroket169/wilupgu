@@ -19,6 +19,8 @@ were never published to crates.io.
 - `compile_fail` doctests on `Scope` for what the borrow checker rejects:
   binding a buffer made inside the scope, a slot leaving its scope or
   entering another, a recording outliving its device.
+- `Storage::alloc_raw` says 0 bytes is allowed and gives a valid buffer;
+  empty-tensor tests for the CPU and CUDA backends.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.

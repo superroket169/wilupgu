@@ -46,7 +46,8 @@ land in. New tools are not on the list.
     while a CUDA graph keeps the old kernel, grid and freed meta buffer.
   - Proposed: each `Tensor` and `Node` gets a unique `u64` id from a device
     counter, and the recording holds ids. `replace` gives a new id;
-    `update_meta` keeps it. Tests:
+    `update_meta` keeps it. Empty CPU buffers share an address (an empty
+    `Vec` allocates nothing), which ids make moot too. Tests:
     `replay_rejects_another_tensor_at_a_recorded_address`,
     `replay_rejects_a_node_replaced_in_place`.
 - **Shader trust.** `Shader::new` is safe, but CUDA code that goes past
@@ -151,11 +152,8 @@ for that is still to write.
   not expected to be needed. `upload_raw`, `download_raw`, `update_meta`,
   `synchronize` and `reserve` return nothing: a driver error there means the
   device is gone, and the backend panics with the driver's message.
-- **Backend and shader checks**, to look at when a GPU backend is written:
-  - an empty tensor asks `alloc_raw` for 0 bytes, which CUDA may refuse;
-    and empty buffers share an address, so `replay` can't tell them apart;
-  - `Areable::reserve` returns no `Result`, so a backend out of memory can
-    only panic.
+- **`Areable::reserve`** returns no `Result`, so a backend out of memory
+  can only panic.
 
 ## Checks
 
