@@ -27,7 +27,7 @@ with `--features wgpu`.
 | 7 | Native code takes lengths from the meta, writes only the elements it owns, and uses `native/common.rs`. | min_lens test (lengths come from the meta, nothing is written past `min_lens`); `common.rs`: not checked; results against WGSL and CUDA: the backend parity tool (not yet written) |
 | 8 | Comments are in English. | ASCII test |
 | 9 | Every file starts with the same one-line formula comment in every format. | formula test |
-| 10 | `min_lens` gives, from the meta and the workgroup count, the elements each tensor slot needs. No format's code reads or writes a slot past it. The safe layer's `execute` rejects a buffer shorter than that. Products in it saturate instead of wrapping. | native: min_lens test (exact-size vs padded buffers); saturation: one test on `sum` |
+| 10 | `min_lens` gives, from the meta and the workgroup count, the elements each tensor slot needs. No format's code reads or writes a slot past it. The safe layer's `execute` rejects a buffer shorter than that. Products in it saturate instead of wrapping. | min_lens test (exact-size vs padded buffers): native always, WGSL with `--features wgpu` and CUDA with `--features cuda,compile-nvrtc` on a device; saturation: one test on `sum` |
 | 11 | CUDA computes global thread indices, and every index that multiplies, in `unsigned long long`: in 32 bits they wrap past 2^32 and land on the wrong element. WGSL stays in `u32`, since a storage binding holds less than 2^32 bytes. | text test (global indices only) |
 
 ## Catalog

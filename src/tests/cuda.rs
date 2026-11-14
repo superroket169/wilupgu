@@ -176,3 +176,10 @@ fn area_buffers_run_like_allocated_ones() {
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![2.0, 3.0, 4.0]);
 }
+
+// SHADERS.md standard 10 for the CUDA code of every builtin.
+#[test]
+fn min_lens_cover_what_cuda_code_touches() {
+    let Some(dev) = device() else { return };
+    crate::tools::builtins::tests::min_lens_cover_what_code_touches(&dev, shader);
+}

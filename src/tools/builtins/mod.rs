@@ -221,4 +221,4 @@ shader_table! {
 
 #[cfg(test)]
 #[path = "../../tests/builtins.rs"]
-mod tests;
+pub(crate) mod tests;

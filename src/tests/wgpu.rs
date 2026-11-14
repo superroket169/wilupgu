@@ -215,3 +215,10 @@ fn an_empty_tensor_round_trips() {
     let t = dev.alloc(DataKind::F32, 0).unwrap();
     assert_eq!(t.download_vec::<F32>().unwrap(), Vec::<f32>::new());
 }
+
+// SHADERS.md standard 10 for the WGSL code of every builtin.
+#[test]
+fn min_lens_cover_what_wgsl_code_touches() {
+    let Some(dev) = device(1) else { return };
+    crate::tools::builtins::tests::min_lens_cover_what_code_touches(&dev, shader);
+}

@@ -269,21 +269,41 @@ fn add_runs_on_the_cpu_backend() {
 // touches panics, changes the result or writes into the padding.
 #[test]
 fn min_lens_cover_what_native_code_touches() {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-
-    use crate::backend::dtype::{DataKind, DataType, F32};
-    use crate::backend::shader::{MetaType, Workgroups};
     use crate::backend::Topology;
     use crate::backends::{CpuBackend, CpuInfo};
-    use crate::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
+    use crate::safe::{ComputeDevice, DeviceConfig};
 
     let dev = ComputeDevice::new(
         CpuBackend::attach(CpuInfo).unwrap(),
         DeviceConfig::default(),
     );
+    min_lens_cover_what_code_touches(&dev, |b| {
+        Shader::new(&b.signature, ShaderBinary::Native(b.native))
+    });
+}
+
+/// Standard 10 for every builtin on `dev`, with the shader `shader_of`
+/// gives: each runs on buffers exactly `min_lens` long, then on buffers with
+/// padding after them. The results inside `min_lens` must match (no read
+/// past it) and the padding must stay as it was (no write past it). A GPU
+/// read past an exact-size buffer gives what lies there, or 0 under robust
+/// access, so it shows as a mismatch only when it changes the result.
+pub(crate) fn min_lens_cover_what_code_touches<
+    B: crate::backend::Backend + crate::backend::Topology,
+>(
+    dev: &crate::safe::ComputeDevice<B>,
+    shader_of: impl Fn(&'static PortableShader) -> Shader,
+) {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use crate::backend::dtype::{DataKind, DataType, F32};
+    use crate::backend::shader::{MetaType, Workgroups};
+    use crate::safe::{Arg, MetaValue};
+
     let wg = Workgroups::linear(2);
     for b in ALL {
         let s = &b.signature;
+        let shader = shader_of(b);
         // A different value per field, so a mixed-up M/N/K shows.
         let meta: Vec<MetaValue> = (2..)
             .zip(s.meta)
@@ -323,7 +343,6 @@ fn min_lens_cover_what_native_code_touches() {
                     buf
                 })
                 .collect();
-            let shader = Shader::new(s, ShaderBinary::Native(b.native));
             let mut node = dev.node(&shader, &meta, wg).unwrap();
             dev.scope(|sc| {
                 let node = sc.bind_node(&mut node).unwrap();
@@ -346,20 +365,20 @@ fn min_lens_cover_what_native_code_touches() {
         };
 
         let exact = catch_unwind(AssertUnwindSafe(|| run(0)))
-            .unwrap_or_else(|_| panic!("`{}`: native code goes past min_lens", s.name));
+            .unwrap_or_else(|_| panic!("`{}`: code goes past min_lens", s.name));
         let padded = run(5);
         for (slot, &len) in lens.iter().enumerate() {
             let (inside, padding) = padded[slot].split_at(len);
             assert_eq!(
                 inside,
                 exact[slot],
-                "`{}` slot {}: native code reads past min_lens",
+                "`{}` slot {}: code reads past min_lens",
                 s.name,
                 slot + 1
             );
             assert!(
                 padding.iter().all(|&v| v == PAD),
-                "`{}` slot {}: native code writes past min_lens",
+                "`{}` slot {}: code writes past min_lens",
                 s.name,
                 slot + 1
             );
