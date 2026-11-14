@@ -137,9 +137,6 @@ for that is still to write.
     `Capturable`: wgpu can't record compute work for replay.
   - A pipeline is made per node, with no cache by shader.
   - `total_memory_bytes` is 0: wgpu doesn't tell it.
-  - `supports_kind` is true for every kind, but F16 needs the adapter's
-    `SHADER_F16`; without it an F16 node fails to build instead of
-    returning `UnsupportedKind`.
 - **Builtins are F32 only**, though `DataKind` has F16, BF16, Int8, Int4.
 - **CPU builtins** copy the whole slot into a `Vec` and back on every call
   (`codes/native/common.rs`), single-threaded. Fine for a reference

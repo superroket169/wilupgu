@@ -29,6 +29,8 @@ were never published to crates.io.
   target) fails the check instead of passing a short buffer.
 
 ### Changed
+- wgpu: a WGSL shader that enables `f16` fails to build on a device
+  without `SHADER_F16` with an error that names the feature.
 - README: a warning on the capture/replay soundness holes, a "Known
   limits" section, and candle, burn and cudarc in "Compared to".
 
