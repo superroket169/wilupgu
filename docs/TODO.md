@@ -118,8 +118,7 @@ for that is still to write.
 - **CUDA backend**: tested on CUDA 13.0 only, on two NVIDIA GPUs, one a
   Tesla T4 on Colab (`scripts/setup.sh`). Its tests
   (`CUDARC_CUDA_VERSION=13000 cargo test --features cpu,cuda,compile-nvrtc cuda`)
-  skip without a device and NVRTC. A module is loaded per node, with no
-  cache by shader.
+  skip without a device and NVRTC.
 - **wgpu backend**: tested on an Intel iGPU (Mesa, Vulkan) only.
   - `Parent device is lost`: many nodes in one compute pass and one submit
     died with it in training runs, not in inference. A missing barrier, or
@@ -143,7 +142,6 @@ for that is still to write.
     writable in one dispatch, for the whole buffer, so tensors cut out of
     one buffer can't be an `Input` and an `Output` of the same run. No
     `Capturable`: wgpu can't record compute work for replay.
-  - A pipeline is made per node, with no cache by shader.
   - `total_memory_bytes` is 0: wgpu doesn't tell it.
 - **Builtins are F32 only**, though `DataKind` has F16, BF16, Int8, Int4.
 - **CPU builtins** copy the whole slot into a `Vec` and back on every call
