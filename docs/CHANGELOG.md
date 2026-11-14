@@ -16,6 +16,9 @@ were never published to crates.io.
   `WgpuBackend::from_device`: wilupgu on a device a wgpu app already has.
 - `shader_table!`, exported: the macro the builtins are defined with, so
   another crate defines its own shaders the same way.
+- `compile_fail` doctests on `Scope` for what the borrow checker rejects:
+  binding a buffer made inside the scope, a slot leaving its scope or
+  entering another, a recording outliving its device.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.

@@ -28,8 +28,9 @@ land in. New tools are not on the list.
   `*const CpuNode` and slot pointers made from references at capture time.
   A `&mut` to the node or a buffer between capture and replay
   (`Node::update_meta`, an upload) invalidates them under Stacked Borrows,
-  and `replay` reads through them. Miri reports it in
-  `capture_records_and_replay_runs_with_the_current_meta`. Proposed:
+  and `replay` reads through them. Miri, one test at a time, reports UB
+  in six tests, all at `cpu.rs:319` (the node) or `cpu.rs:325` (a slot);
+  the other 172 pass. Proposed:
   `Capturable::replay` gets the current node and buffers from the safe
   layer instead of following recorded pointers; it goes with the id fix
   below. CUDA keeps device pointers, which Rust's aliasing rules don't
@@ -158,10 +159,8 @@ for that is still to write.
 
 ## Checks
 
-- Keep the scope's compile-time guarantees as `compile_fail` doctests: a
-  buffer allocated inside the closure can't be bound, a bound buffer can't
-  be touched by the host, a slot can't leave its scope or enter another,
-  a `Recording` can't outlive its device. They live in doc comments.
+- Run Miri per test in CI (`cargo miri nextest run`), so one UB doesn't
+  stop the run and hide the rest.
 - `min_lens` is tested for native code only; WGSL and CUDA need a GPU backend
   for the same exact-size vs padded test (SHADERS.md standard 10).
 - Prove the GPU really runs independently of the CPU: no hidden host sync or
