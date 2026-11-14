@@ -61,8 +61,18 @@ step "cpu tests " cargo test --features cpu -- --test-threads=1
 if command -v nvcc > /dev/null; then
     step "cuda tests" cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 --nocapture
     PARITY_FEATURES=cpu,cuda,compile-nvrtc,wgpu,tool-parity,cudarc/cuda-version-from-build-system
+    # The CUDA tests again under compute-sanitizer (it comes with the
+    # toolkit): it reports every out-of-bounds read or write a kernel makes,
+    # where the tests see one only when it changes a result.
+    if command -v compute-sanitizer > /dev/null; then
+        step "sanitizer " compute-sanitizer --tool memcheck --target-processes all --error-exitcode 1 \
+            cargo test --features cpu,cuda,compile-nvrtc,cudarc/cuda-version-from-build-system -- --test-threads=1 cuda
+    else
+        skip "sanitizer " "no compute-sanitizer"
+    fi
 else
     skip "cuda tests" "no nvcc"
+    skip "sanitizer " "no nvcc"
     PARITY_FEATURES=cpu,wgpu,tool-parity
 fi
 step "wgpu tests" cargo test --features cpu,wgpu -- --test-threads=1 --nocapture
