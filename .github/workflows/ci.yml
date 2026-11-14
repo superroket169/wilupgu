@@ -40,7 +40,9 @@ jobs:
   # Undefined behavior in the unsafe code the CPU tests reach: the CPU
   # backend and the safe layer (capture, areas, scope pointers). Isolation is
   # off because some tests read and write files. Every freed address is
-  # reused when it can be, so address-reuse cases are hit.
+  # reused when it can be, so address-reuse cases are hit. nextest runs each
+  # test in its own process, so one UB doesn't stop the rest; the doctests
+  # run after. Same flags as scripts/miri.sh.
   miri:
     runs-on: ubuntu-latest
     env:
@@ -50,9 +52,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - run: cargo miri setup
-      - run: cargo miri test --features cpu
+      - run: cargo miri nextest run --features cpu --no-fail-fast
+      - run: cargo miri test --features cpu --doc
 
   # No GPU on the runner: Mesa's lavapipe is a Vulkan device on the CPU.
   wgpu:
