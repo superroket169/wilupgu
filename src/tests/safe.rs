@@ -85,7 +85,10 @@ fn no_code() -> Shader {
 fn device(pool_bytes: u64) -> ComputeDevice<CpuBackend> {
     ComputeDevice::new(
         CpuBackend::attach(CpuInfo).unwrap(),
-        DeviceConfig { pool_bytes },
+        DeviceConfig {
+            pool_bytes,
+            ..DeviceConfig::default()
+        },
     )
 }
 

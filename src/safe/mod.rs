@@ -6,16 +6,17 @@
 //! work runs inside one, and the scope waits for the device before it returns.
 
 use crate::backend::dtype::{DataKind, DataType, HostData};
-use crate::backend::io_log;
 use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Signature, Workgroups};
 use crate::backend::{Area as _, Areable, Backend, Carved, Node as _, Topology, COPY_ALIGN};
 use crate::error::Error;
-use std::sync::RwLock;
+use std::sync::{Mutex, PoisonError, RwLock};
 
 pub(crate) mod rules;
 mod scope;
+pub(crate) mod trace;
 pub use scope::{Arg, NodeSlot, Recording, Scope, TensorSlot};
+pub use trace::{Counts, Event, Events, Trace};
 
 /// How a [`ComputeDevice`] is set up.
 #[derive(Debug, Clone, Default)]
@@ -23,6 +24,8 @@ pub struct DeviceConfig {
     /// The most bytes the pool keeps in freed buffers for reuse; 0 turns the
     /// pool off.
     pub pool_bytes: u64,
+    /// What the device keeps of the work asked of it; off by default.
+    pub trace: Trace,
 }
 
 /// One meta field's value. [`ComputeDevice::node`] and [`Node::update_meta`]
@@ -56,6 +59,10 @@ pub struct ComputeDevice<B: Backend + Topology> {
     /// holds this read-locked across its check and its `execute_raw`: a run
     /// of another scope is rejected, never recorded unchecked.
     capturing: RwLock<Option<u64>>,
+    /// What `DeviceConfig::trace` chose; `tracing` is false for `Off`, so
+    /// the lock is never taken then.
+    trace: Mutex<Trace>,
+    tracing: bool,
 }
 
 impl<B: Backend + Topology> ComputeDevice<B> {
@@ -65,6 +72,34 @@ impl<B: Backend + Topology> ComputeDevice<B> {
             pool: BufferPool::new(config.pool_bytes),
             raw,
             capturing: RwLock::new(None),
+            tracing: !config.trace.is_off(),
+            trace: Mutex::new(config.trace),
+        }
+    }
+
+    /// A copy of the device's trace so far.
+    pub fn trace(&self) -> Trace {
+        self.trace
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The device's trace so far, leaving it empty: counts at 0, no events.
+    pub fn take_trace(&self) -> Trace {
+        self.trace
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    // Adds `events`, which happened together, to the trace.
+    fn note(&self, events: &[Event]) {
+        if self.tracing {
+            self.trace
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .note(events);
         }
     }
 
@@ -269,7 +304,9 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
         rules::same_kind(self.kind, data.kind())?;
         let range = byte_range(self.kind, self.len, offset, data.len(), true)?;
         let bytes = data.as_bytes();
-        io_log::log("htod", bytes.len() as u64);
+        self.dev.note(&[Event::Upload {
+            bytes: bytes.len() as u64,
+        }]);
 
         // Zero-padded to `COPY_ALIGN`; `byte_range` let it only into the
         // tensor's padding.
@@ -291,7 +328,8 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
     /// of [`COPY_ALIGN`] bytes.
     pub fn download_range(&self, offset: usize, len: usize) -> Result<HostData, Error> {
         let range = byte_range(self.kind, self.len, offset, len, false)?;
-        io_log::log("dtoh", range.exact);
+        self.dev
+            .note(&[Event::Download { bytes: range.exact }, Event::Sync]);
 
         // SAFETY: `byte_range` checked that the range is aligned and inside the
         // `buffer_bytes(kind, len)` that `alloc` asked for.
@@ -350,6 +388,8 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
         }
         .map_err(Error::Backend)?;
         self.dev.raw.synchronize();
+        self.dev
+            .note(&[Event::Copy { bytes: to.bytes }, Event::Sync]);
         Ok(())
     }
 
@@ -359,6 +399,12 @@ impl<'d, B: Backend + Topology> Tensor<'d, B> {
         // SAFETY: the tensor is borrowed until `synchronize` returns.
         unsafe { dev.raw.clear_raw(self.raw_mut()) }.map_err(Error::Backend)?;
         dev.raw.synchronize();
+        dev.note(&[
+            Event::Clear {
+                bytes: buffer_bytes(self.kind, self.len),
+            },
+            Event::Sync,
+        ]);
         Ok(())
     }
 }
@@ -557,6 +603,9 @@ impl<'d, B: Backend + Topology> Node<'d, B> {
         let words = meta_words(shader, meta)?;
         self.lens = min_lens(shader, &words, self.raw.workgroups());
         self.dev.raw.update_meta(&mut self.raw, &words);
+        self.dev.note(&[Event::Meta {
+            bytes: 4 * words.len() as u64,
+        }]);
         self.meta = meta.to_vec();
         Ok(())
     }

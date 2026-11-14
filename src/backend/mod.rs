@@ -1,9 +1,8 @@
 //! Everything a `backends/*` implementation must provide, and the backend
-//! tools (`pool`, `io_log`). The [`safe`](crate::safe) layer is the only
+//! tool `pool`. The [`safe`](crate::safe) layer is the only
 //! caller of its `unsafe fn`s.
 
 pub mod dtype;
-pub mod io_log;
 /// Backend tool: keeps freed buffers for reuse.
 pub mod pool;
 /// What a shader is: its meta, tensor layout, `min_lens`, workgroup size and

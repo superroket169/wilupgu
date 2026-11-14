@@ -208,3 +208,22 @@ fn a_module_loads_once_per_shader() {
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![21.0, 11.0]);
 }
+
+// Item 7 of the checks: the safe layer adds no transfer or wait to a loop
+// of runs on CUDA.
+#[test]
+fn a_steady_loop_moves_nothing_on_cuda() {
+    let Some(info) = CudaBackend::choosable_devices().into_iter().next() else {
+        eprintln!("no CUDA device; skipped");
+        return;
+    };
+    // SAFETY: it only tries to open the library.
+    if !unsafe { cudarc::nvrtc::sys::is_culib_present() } {
+        eprintln!("NVRTC isn't installed; skipped");
+        return;
+    }
+    crate::safe::trace::tests::a_steady_loop_moves_nothing(
+        CudaBackend::attach(info).unwrap(),
+        &shader(&ADD),
+    );
+}

@@ -7,7 +7,7 @@ use crate::backend::dtype::HostData;
 use crate::backend::{Access, Backend, Buffer as _, Capturable, Topology};
 use crate::error::Error;
 
-use super::{copy_ranges, rules, ComputeDevice, MetaValue, Node, Tensor};
+use super::{copy_ranges, rules, ComputeDevice, Event, MetaValue, Node, Tensor};
 
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
@@ -252,7 +252,9 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
                 to.bytes,
             )
         }
-        .map_err(Error::Backend)
+        .map_err(Error::Backend)?;
+        self.dev.note(&[Event::Copy { bytes: to.bytes }]);
+        Ok(())
     }
 
     /// [`Node::update_meta`] on a bound node; the runs queued after it use it.
@@ -323,8 +325,16 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
         //   synchronizes before that, so they live and the host can't touch them.
         unsafe { self.dev.raw.execute_raw(&node.raw, &mut access) }.map_err(Error::Backend)?;
 
-        if let (Some(calls), Some(call)) = (self.recording.borrow_mut().as_mut(), recorded) {
-            calls.push(call);
+        // `recorded` is `Some` while capturing: then nothing ran.
+        match recorded {
+            Some(call) => {
+                if let Some(calls) = self.recording.borrow_mut().as_mut() {
+                    calls.push(call);
+                }
+            }
+            None => self.dev.note(&[Event::Run {
+                shader: node.signature().name,
+            }]),
         }
         Ok(())
     }
@@ -357,6 +367,7 @@ impl<B: Backend + Topology> Drop for SyncOnDrop<'_, B> {
     // Runs on panic too, so borrowed buffers are never released while the device uses them.
     fn drop(&mut self) {
         self.0.raw.synchronize();
+        self.0.note(&[Event::Sync]);
     }
 }
 
@@ -539,6 +550,8 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
                 .raw
                 .replay(recording.raw.as_ref().expect("only taken in drop"))
         }
-        .map_err(Error::Backend)
+        .map_err(Error::Backend)?;
+        self.dev.note(&[Event::Replay]);
+        Ok(())
     }
 }

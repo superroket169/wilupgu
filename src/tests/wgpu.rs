@@ -247,3 +247,16 @@ fn a_pipeline_is_made_once_per_shader() {
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![21.0, 11.0]);
 }
+
+// The safe layer adds no transfer or wait to a loop of runs on wgpu.
+#[test]
+fn a_steady_loop_moves_nothing_on_wgpu() {
+    let Some(info) = WgpuBackend::choosable_devices().into_iter().next() else {
+        eprintln!("no wgpu adapter; skipped");
+        return;
+    };
+    crate::safe::trace::tests::a_steady_loop_moves_nothing(
+        WgpuBackend::attach(info).unwrap(),
+        &shader(&ADD),
+    );
+}

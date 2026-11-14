@@ -85,6 +85,7 @@ fn build_follows_the_init() {
         CpuBackend::attach(CpuInfo).unwrap(),
         DeviceConfig {
             pool_bytes: 1 << 20,
+            ..DeviceConfig::default()
         },
     );
     drop(dev.tensor_from(&F32::wrap(vec![5.0; 4])).unwrap());
