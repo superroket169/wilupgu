@@ -102,6 +102,33 @@ fn from_device_runs_on_the_callers_device() {
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![11.0, 22.0]);
 }
 
+#[test]
+fn an_f16_shader_names_the_missing_feature() {
+    let Some(info) = WgpuBackend::choosable_devices().into_iter().next() else {
+        eprintln!("no wgpu adapter; skipped");
+        return;
+    };
+    let adapter = info.adapter.clone();
+    // no features requested, so no `SHADER_F16`
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let dev = ComputeDevice::new(
+        WgpuBackend::from_device(adapter, device, queue),
+        DeviceConfig::default(),
+    );
+    let f16 = Shader::new(
+        &ADD.signature,
+        ShaderBinary::Wgsl(crate::backend::shader::Wgsl(
+            format!("enable f16;\n{}", ADD.wgsl.0).into(),
+        )),
+    );
+    let err = dev
+        .node(&f16, &[MetaValue::Uint(3)], Workgroups::linear(1))
+        .err()
+        .expect("an f16 shader builds without SHADER_F16");
+    assert!(err.to_string().contains("SHADER_F16"), "{err}");
+}
+
 // Submitting after every command, after four, and only at the end.
 #[test]
 fn update_meta_reaches_only_the_runs_after_it() {

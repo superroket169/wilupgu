@@ -105,9 +105,10 @@ impl DeviceInfo for WgpuInfo {
         0
     }
 
-    // Buffers are plain bytes; which kinds a shader reads is its own matter.
-    // A shader that uses WGSL's `f16` fails to build where the adapter lacks
-    // `SHADER_F16`.
+    // Buffers are plain bytes; which kinds a shader reads is its own matter,
+    // and one can read F16 data as `u32` without `SHADER_F16`. A shader that
+    // enables WGSL's `f16` fails to build where the device lacks it, with an
+    // error that names it.
     fn supports_kind(&self, _kind: DataKind) -> bool {
         true
     }
@@ -377,6 +378,20 @@ impl Dispatch for WgpuBackend {
                 ))
             }
         };
+
+        // WGSL uses `f16` only after `enable f16;`, which needs the device's
+        // `SHADER_F16`; this names the missing feature before wgpu fails on it.
+        if let ShaderBinary::Wgsl(wgsl) = shader.binary() {
+            let wants_f16 = wgsl.0.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with("enable") && line.contains("f16")
+            });
+            if wants_f16 && !self.device.features().contains(wgpu::Features::SHADER_F16) {
+                return Err(format!(
+                    "wgpu: shader `{name}` enables WGSL's `f16`, but this device was opened without `SHADER_F16`"
+                ));
+            }
+        }
 
         // Slot 0 is the meta; the layout's roles give the rest, so a shader
         // whose bindings disagree with its signature fails here.
