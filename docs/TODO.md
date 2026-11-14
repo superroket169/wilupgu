@@ -146,8 +146,6 @@ for that is still to write.
 - **CPU builtins** copy the whole slot into a `Vec` and back on every call
   (`codes/native/common.rs`), single-threaded. Fine for a reference
   backend; slow.
-- **Export the `builtins!` macro** so sequexa-core defines its shaders the
-  same way (`include_str!` resolves relative to the calling file, so this works).
 - **Pipeline-overridable constants** (WGSL `override`): the `Shader` /
   pipeline API has no such concept.
 - **Backend errors.** The contract's methods return `String`, which the

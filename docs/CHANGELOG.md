@@ -13,6 +13,8 @@ were never published to crates.io.
 - `rust-version = "1.95"` in `Cargo.toml`, checked in CI with every
   feature on.
 - `WgpuBackend::device` and `WgpuBackend::queue`.
+- `shader_table!`, exported: the macro the builtins are defined with, so
+  another crate defines its own shaders the same way.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.
@@ -28,6 +30,9 @@ were never published to crates.io.
 ### Changed
 - README: a warning on the capture/replay soundness holes, a "Known
   limits" section, and candle, burn and cudarc in "Compared to".
+
+### Changed (breaking)
+- `Builtin` is `PortableShader`: other crates' shaders are made with it too.
 
 ## 0.10.0 (2026-11-12)
 
