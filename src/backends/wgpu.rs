@@ -76,14 +76,28 @@ impl Node for WgpuNode {
 #[derive(Clone, Debug)]
 pub struct WgpuInfo {
     adapter: wgpu::Adapter,
-    index: usize,
+    // Its place in `choosable_devices`; `None` for one given to `from_device`.
+    index: Option<usize>,
     name: String,
     backend: wgpu::Backend,
 }
 
+impl WgpuInfo {
+    fn new(adapter: wgpu::Adapter, index: Option<usize>) -> Self {
+        let info = adapter.get_info();
+        Self {
+            adapter,
+            index,
+            name: info.name,
+            backend: info.backend,
+        }
+    }
+}
+
 impl DeviceInfo for WgpuInfo {
     fn label(&self) -> String {
-        format!("{} (wgpu:{}, {:?})", self.name, self.index, self.backend)
+        let at = self.index.map_or("given".to_string(), |i| i.to_string());
+        format!("{} (wgpu:{at}, {:?})", self.name, self.backend)
     }
 
     fn total_memory_bytes(&self) -> u64 {
@@ -121,6 +135,31 @@ pub struct WgpuBackend {
 }
 
 impl WgpuBackend {
+    /// Opens wilupgu on a device the caller already has, so a wgpu app and
+    /// wilupgu share one device. `device` and `queue` must come from
+    /// `adapter`. The device's own limits and features are used: a shader
+    /// with WGSL's `f16` builds only if the device was requested with
+    /// `SHADER_F16`.
+    ///
+    /// The caller can keep using its clones of `device` and `queue`; work it
+    /// submits isn't ordered against wilupgu's commands not yet submitted,
+    /// so call `synchronize` first.
+    pub fn from_device(adapter: wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self::open(WgpuInfo::new(adapter, None), device, queue)
+    }
+
+    fn open(info: WgpuInfo, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self {
+            submit_every: AtomicU8::new(1),
+            info,
+            owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
+            limits: device.limits(),
+            device,
+            queue,
+            pending: Mutex::new(Pending::default()),
+        }
+    }
+
     /// The `wgpu::Device` this backend runs on.
     pub fn device(&self) -> &wgpu::Device {
         &self.device
@@ -184,36 +223,19 @@ impl Topology for WgpuBackend {
         adapters
             .into_iter()
             .enumerate()
-            .map(|(index, adapter)| {
-                let info = adapter.get_info();
-                WgpuInfo {
-                    adapter,
-                    index,
-                    name: info.name,
-                    backend: info.backend,
-                }
-            })
+            .map(|(index, adapter)| WgpuInfo::new(adapter, Some(index)))
             .collect()
     }
 
     fn attach(info: WgpuInfo) -> Result<Self, String> {
-        let limits = info.adapter.limits();
         let (device, queue) =
             pollster::block_on(info.adapter.request_device(&wgpu::DeviceDescriptor {
                 required_features: info.adapter.features() & wgpu::Features::SHADER_F16,
-                required_limits: limits.clone(),
+                required_limits: info.adapter.limits(),
                 ..Default::default()
             }))
             .map_err(|e| format!("wgpu: open the device: {e}"))?;
-        Ok(Self {
-            submit_every: AtomicU8::new(1),
-            info,
-            owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
-            device,
-            queue,
-            limits,
-            pending: Mutex::new(Pending::default()),
-        })
+        Ok(Self::open(info, device, queue))
     }
 
     fn info(&self) -> &WgpuInfo {

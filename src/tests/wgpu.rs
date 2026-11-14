@@ -76,6 +76,32 @@ fn add_runs() {
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![11.0, 22.0, 33.0]);
 }
 
+#[test]
+fn from_device_runs_on_the_callers_device() {
+    let Some(info) = WgpuBackend::choosable_devices().into_iter().next() else {
+        eprintln!("no wgpu adapter; skipped");
+        return;
+    };
+    let adapter = info.adapter.clone();
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let wgpu = WgpuBackend::from_device(adapter, device, queue);
+    assert!(wgpu.info().label().contains("wgpu:given"));
+
+    let dev = ComputeDevice::new(wgpu, DeviceConfig::default());
+    let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 2.0])).unwrap();
+    let mut y = dev.tensor_from(&F32::wrap(vec![10.0, 20.0])).unwrap();
+    let mut add = dev
+        .node(&shader(&ADD), &[MetaValue::Uint(2)], Workgroups::linear(1))
+        .unwrap();
+    dev.scope(|s| {
+        let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
+    })
+    .unwrap();
+    assert_eq!(x.download_vec::<F32>().unwrap(), vec![11.0, 22.0]);
+}
+
 // Submitting after every command, after four, and only at the end.
 #[test]
 fn update_meta_reaches_only_the_runs_after_it() {
