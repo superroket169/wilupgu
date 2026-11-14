@@ -134,7 +134,11 @@ for that is still to write.
     rented cloud GPU, or volunteers running `scripts/tester_script`.
   - `submit_every` is a `pub` field (`AtomicU8`); it wants a setter or a
     `DeviceConfig` entry once the knob above is settled (#12).
-  - A bind group is made per dispatch; cache it by node and buffers.
+  - A bind group is made per dispatch. Cheap next to the pipeline, which
+    is made once per shader. A cache waits for a measurement that shows
+    it matters: a bind group keeps its buffers alive, so a cached one would
+    hold a dropped tensor's memory until its node drops or runs on other
+    buffers.
   - Fixed binding model: every slot is a whole storage buffer at offset 0;
     no uniforms, textures, push constants or indirect dispatch, and the API
     blocks through `pollster`. Fine for compute kernels, listed for later.
