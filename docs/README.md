@@ -31,12 +31,11 @@ hardware, iGPUs included.
 model engine, is built on wilupgu.
 
 **Known soundness holes.** `Scope::capture` and `Scope::replay` can reach
-undefined behavior from safe code: a run made from another scope during a
-capture enters the recording unchecked, and a freed buffer or a replaced
-node at a recorded address passes as the recorded one. Until they are
-closed, don't replay a recording after its tensors or nodes have been
-dropped or replaced, and don't run other scopes on the device during a
-capture. Tracked under Soundness in
+undefined behavior from safe code: a freed buffer or a replaced node at a
+recorded address passes as the recorded one, and on the CPU backend a
+replay after `Node::update_meta` follows a pointer that the `&mut` has
+invalidated. Until they are closed, don't replay a recording after its
+tensors or nodes have been dropped or replaced. Tracked under Soundness in
 [TODO.md](https://github.com/superroket169/wilupgu/blob/main/docs/TODO.md).
 
 ## Example

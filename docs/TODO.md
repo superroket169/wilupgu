@@ -24,16 +24,16 @@ land in. New tools are not on the list.
 
 ## Soundness
 
-- **Capture records other scopes' runs.** While a capture is open the
-  backend records every `execute_raw` on the device (`CpuBackend::recording`),
-  the safe `Scope` checks only its own calls, and `replay` then replays the
-  backend's whole recording. A scope nested in `capture`, or one on another
-  thread, gets a run recorded unchecked; replaying it follows dangling node
-  and buffer pointers. Proposed: the safe layer rejects `execute` from any
-  other scope while one is capturing; the contract stays as it is. Test:
-  `capture_rejects_runs_from_another_scope`.
-  - `CapturedRun::capture` (plan) goes through `Scope::capture`; test that
-    the fix covers it.
+- **CPU replay follows invalidated pointers.** `CpuCapture` keeps a
+  `*const CpuNode` and slot pointers made from references at capture time.
+  A `&mut` to the node or a buffer between capture and replay
+  (`Node::update_meta`, an upload) invalidates them under Stacked Borrows,
+  and `replay` reads through them. Miri reports it in
+  `capture_records_and_replay_runs_with_the_current_meta`. Proposed:
+  `Capturable::replay` gets the current node and buffers from the safe
+  layer instead of following recorded pointers; it goes with the id fix
+  below. CUDA keeps device pointers, which Rust's aliasing rules don't
+  cover.
 - **Identity by address.** `replay` finds recorded buffers and nodes by
   address.
   - A buffer freed after the recording and reallocated at the same address

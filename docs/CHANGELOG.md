@@ -21,6 +21,10 @@ were never published to crates.io.
   `scripts/tester_script.sh`.
 
 ### Fixed
+- A run from another scope, nested or on another thread, no longer enters
+  a capture unchecked: while a scope captures, other scopes' runs and
+  captures fail with `Error::CapturedElsewhere`. Two scopes starting a
+  capture at once no longer panic in the backend. (#8)
 - CUDA builtins compute global indices and index products in 64 bits; in
   32 bits they wrapped past 2^32 elements or threads and read or wrote the
   wrong element. SHADERS.md standard 11.
