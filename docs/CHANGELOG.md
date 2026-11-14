@@ -28,6 +28,8 @@ were never published to crates.io.
   schedules (`SEEDS=N`).
 - CI's Miri job runs each test in its own process (cargo-nextest), then
   the doctests.
+- `scripts/tester_script.sh` runs the CUDA tests again under
+  `compute-sanitizer` when the toolkit has it.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.

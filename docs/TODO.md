@@ -165,10 +165,6 @@ for that is still to write.
 
 ## Checks
 
-- Run the CUDA tests under `compute-sanitizer` (it comes with the toolkit,
-  so Colab has it): it reports every out-of-bounds read and write, where
-  the exact-size vs padded `min_lens` test sees a read only when it changes
-  a result.
 - Prove the GPU really runs independently of the CPU: no hidden host sync or
   copy in a steady-state loop beyond deliberate traffic.
 
