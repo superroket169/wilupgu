@@ -183,3 +183,28 @@ fn min_lens_cover_what_cuda_code_touches() {
     let Some(dev) = device() else { return };
     crate::tools::builtins::tests::min_lens_cover_what_code_touches(&dev, shader);
 }
+
+// Nodes of one shader share its loaded module, each with its own meta;
+// another shader loads its own.
+#[test]
+fn a_module_loads_once_per_shader() {
+    let Some(dev) = device() else { return };
+    let (add, scale) = (shader(&ADD), shader(&SCALE));
+    let wg = Workgroups::linear(1);
+    let mut first = dev.node(&add, &[MetaValue::Uint(1)], wg).unwrap();
+    let mut both = dev.node(&add, &[MetaValue::Uint(2)], wg).unwrap();
+    assert_eq!(dev.raw().functions.lock().unwrap().len(), 1);
+    let _scale = dev.node(&scale, &scale_meta(1, 2.0), wg).unwrap();
+    assert_eq!(dev.raw().functions.lock().unwrap().len(), 2);
+
+    let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 1.0])).unwrap();
+    let mut y = dev.tensor_from(&F32::wrap(vec![10.0, 10.0])).unwrap();
+    dev.scope(|s| {
+        let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
+        let (first, both) = (s.bind_node(&mut first)?, s.bind_node(&mut both)?);
+        s.execute(first, &[Arg::Write(x), Arg::Read(y)])?;
+        s.execute(both, &[Arg::Write(x), Arg::Read(y)])
+    })
+    .unwrap();
+    assert_eq!(x.download_vec::<F32>().unwrap(), vec![21.0, 11.0]);
+}

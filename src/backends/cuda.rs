@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -138,6 +139,10 @@ pub struct CudaBackend {
     capturing: AtomicBool,
     // Some drivers and GPUs can't capture; found once, in `attach`.
     capture_works: bool,
+    // Each module image loaded once, by its bytes (a tag, then the PTX text
+    // or the cubin): nodes of one shader share its `entry`. Kept until the
+    // backend drops; there are as many as distinct shaders.
+    functions: Mutex<HashMap<Vec<u8>, CudaFunction>>,
 }
 
 impl CudaBackend {
@@ -228,6 +233,7 @@ impl Topology for CudaBackend {
             capture_stream,
             capturing: AtomicBool::new(false),
             capture_works,
+            functions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -323,21 +329,36 @@ impl Dispatch for CudaBackend {
         workgroups: Workgroups,
     ) -> Result<CudaNode, String> {
         let name = shader.signature().name;
-        let image = match shader.binary() {
+        let key: Vec<u8> = match shader.binary() {
             ShaderBinary::Ptx(ptx) if ptx.0.contains('\0') => {
                 return Err(format!("cuda: shader `{name}`: the PTX holds a NUL"));
             }
-            ShaderBinary::Ptx(ptx) => cudarc::nvrtc::Ptx::from_src(ptx.0.to_string()),
-            ShaderBinary::Cubin(cubin) => cudarc::nvrtc::Ptx::from_binary(cubin.0.to_vec()),
+            ShaderBinary::Ptx(ptx) => [&[0u8][..], ptx.0.as_bytes()].concat(),
+            ShaderBinary::Cubin(cubin) => [&[1u8][..], &cubin.0[..]].concat(),
             _ => return Err(format!("cuda: shader `{name}`: neither PTX nor cubin")),
         };
-        let module = self
-            .ctx
-            .load_module(image)
-            .map_err(|e| driver_err(&format!("shader `{name}`: load"), e))?;
-        let function = module
-            .load_function("entry")
-            .map_err(|e| driver_err(&format!("shader `{name}`: find `entry`"), e))?;
+        // Held while loading, so two threads don't load one image twice.
+        let mut functions = self.functions.lock().unwrap();
+        let function = match functions.get(&key) {
+            Some(function) => function.clone(),
+            None => {
+                let image = match shader.binary() {
+                    ShaderBinary::Ptx(ptx) => cudarc::nvrtc::Ptx::from_src(ptx.0.to_string()),
+                    ShaderBinary::Cubin(cubin) => cudarc::nvrtc::Ptx::from_binary(cubin.0.to_vec()),
+                    _ => unreachable!("matched above"),
+                };
+                let module = self
+                    .ctx
+                    .load_module(image)
+                    .map_err(|e| driver_err(&format!("shader `{name}`: load"), e))?;
+                let function = module
+                    .load_function("entry")
+                    .map_err(|e| driver_err(&format!("shader `{name}`: find `entry`"), e))?;
+                functions.insert(key, function.clone());
+                function
+            }
+        };
+        drop(functions);
 
         // SAFETY: every word the kernel reads is written below; with no meta,
         // the kernel reads none.
