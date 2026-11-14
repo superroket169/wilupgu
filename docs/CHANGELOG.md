@@ -21,6 +21,8 @@ were never published to crates.io.
   entering another, a recording outliving its device.
 - `Storage::alloc_raw` says 0 bytes is allowed and gives a valid buffer;
   empty-tensor tests for the CPU and CUDA backends.
+- The `min_lens` test (exact-size vs padded buffers) runs on the WGSL and
+  CUDA code of every builtin too, not only the native code.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.
