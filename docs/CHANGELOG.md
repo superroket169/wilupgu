@@ -30,6 +30,12 @@ were never published to crates.io.
   the doctests.
 - `scripts/tester_script.sh` runs the CUDA tests again under
   `compute-sanitizer` when the toolkit has it.
+- `Trace`, kept per device and chosen in `DeviceConfig`: off (the
+  default), `Counts` (totals) or `Events` (each upload, download, meta
+  write, wait, run, copy, clear and replay, up to a cap). Read with
+  `ComputeDevice::trace`, emptied with `take_trace`. A test on each backend
+  checks that a loop of runs moves no data and waits only at the scope's
+  end.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.
@@ -56,6 +62,10 @@ were never published to crates.io.
 
 ### Changed (breaking)
 - `Builtin` is `PortableShader`: other crates' shaders are made with it too.
+- `backend::io_log` and `WILUPGU_LOG_IO` are gone; each device keeps its
+  own trace instead (`DeviceConfig::trace`, see Added). `DeviceConfig` has
+  a `trace` field, so building it field by field needs
+  `..DeviceConfig::default()`.
 
 ## 0.10.0 (2026-11-12)
 

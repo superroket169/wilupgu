@@ -10,7 +10,7 @@ planned).
 
 - `src/backend/` is the contract: everything a backend implements or uses.
   `mod.rs` holds the traits; next to it: dtype, shader, and the backend
-  tools pool and io_log.
+  tool pool.
 - `src/safe/` is the safe layer, the API users call and the only caller of
   the contract's `unsafe fn`s. Every check that can be written once for all
   backends lives here.
@@ -18,6 +18,8 @@ planned).
     `MetaValue`.
   - `scope.rs`: `Scope`, slots, `Arg`, `execute`, and capture/replay
     (`Recording`).
+  - `trace.rs`: `Trace`, `Event`, `Counts`, `Events`: what a device did,
+    kept as `DeviceConfig::trace` chose.
   - `rules.rs`: every check made in more than one place, one function each,
     returning the `Error` it finds; the tools use them too.
 - `src/error.rs`: `Error`, the one error enum of the safe layer and the

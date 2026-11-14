@@ -29,8 +29,8 @@ land in. New tools are not on the list.
   A `&mut` to the node or a buffer between capture and replay
   (`Node::update_meta`, an upload) invalidates them under Stacked Borrows,
   and `replay` reads through them. Miri, one test at a time, reports UB
-  in six tests, all at `cpu.rs:319` (the node) or `cpu.rs:325` (a slot);
-  the other 172 pass. Proposed:
+  in every test that replays on the CPU, all at `cpu.rs:319` (the node) or
+  `cpu.rs:325` (a slot), and nowhere else. Proposed:
   `Capturable::replay` gets the current node and buffers from the safe
   layer instead of following recorded pointers; it goes with the id fix
   below. CUDA keeps device pointers, which Rust's aliasing rules don't
@@ -165,8 +165,11 @@ for that is still to write.
 
 ## Checks
 
-- Prove the GPU really runs independently of the CPU: no hidden host sync or
-  copy in a steady-state loop beyond deliberate traffic.
+- A wait hidden inside a backend's `execute_raw` doesn't show in the trace
+  (`a_steady_loop_moves_nothing_on_*` sees what the safe layer asks). Run
+  that loop once under `nsys profile` on Colab: the timeline shows any
+  `cuStreamSynchronize` or `cuMemcpy` between the launches. Reading the
+  code finds none today.
 
 ## Parked
 

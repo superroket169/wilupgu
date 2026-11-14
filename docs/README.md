@@ -151,6 +151,9 @@ In it:
     device.
   - `Recording`: `Scope::capture` records runs once, `Scope::replay` runs
     them again in a later scope.
+  - `Trace`: what a device did, chosen in `DeviceConfig`: off, totals
+    (`Counts`) or the events themselves (`Events`, up to a cap). Read with
+    `ComputeDevice::trace`, emptied with `take_trace`.
 - **The raw backend contract** (`wilupgu::backend`). A buffer has one owner;
   reading takes `&`, writing `&mut`. The few methods that can cause undefined
   behavior are `unsafe fn`, with their rules in `# Safety`.
@@ -215,7 +218,7 @@ Open work is in
   for plain values, and exactly as optional as those are. A user can pick a
   backend and use no tool at all.
 - **Backend authors are users too.** Next to the contract, `backend` holds a
-  few backend tools (`pool`, `io_log`) for them. User tools are built on top
+  backend tool (`pool`) for them. User tools are built on top
   of those, so they stay minimal.
 - **Ownership over bookkeeping.** A buffer has one owner and the device
   borrows what it reads and writes. A check that can be written once for
