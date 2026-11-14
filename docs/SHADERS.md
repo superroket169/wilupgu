@@ -3,8 +3,9 @@
 Builtin shaders are general-purpose GPU math. Each one has a source file per
 format under `src/tools/builtins/codes/{wgsl,native,cuda}/`, named after the shader.
 
-The table in `src/tools/builtins/mod.rs` is the single source for every builtin:
-each one is a `Builtin`, its `Signature` (name, meta fields, tensor layout,
+The table in `src/tools/builtins/mod.rs`, written with the `shader_table!`
+macro, is the single source for every builtin: each one is a
+`PortableShader`, its `Signature` (name, meta fields, tensor layout,
 workgroup size, `min_lens`) and its code in each format.
 File paths, file names and native function names are all derived from the
 shader's name, so a missing or misnamed file is a compile error.

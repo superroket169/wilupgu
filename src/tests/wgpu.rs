@@ -2,7 +2,7 @@ use super::*;
 use crate::backend::dtype::{DataKind, DataType, F32};
 use crate::backend::shader::{MetaType, Shader, ShaderBinary};
 use crate::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
-use crate::tools::builtins::{Builtin, ADD, ALL, SCALE};
+use crate::tools::builtins::{PortableShader, ADD, ALL, SCALE};
 
 // The first adapter, or `None`, with a note, without one.
 fn device(submit_every: u8) -> Option<ComputeDevice<WgpuBackend>> {
@@ -15,7 +15,7 @@ fn device(submit_every: u8) -> Option<ComputeDevice<WgpuBackend>> {
     Some(ComputeDevice::new(wgpu, DeviceConfig::default()))
 }
 
-fn shader(builtin: &'static Builtin) -> Shader {
+fn shader(builtin: &'static PortableShader) -> Shader {
     let shader = builtin.shader_for::<WgpuBackend>().unwrap();
     assert!(matches!(shader.binary(), ShaderBinary::Wgsl(_)));
     shader

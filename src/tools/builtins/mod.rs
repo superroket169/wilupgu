@@ -5,7 +5,6 @@
 
 use crate::backend::dtype::DataKind::F32;
 use crate::backend::shader::BindingRole::{Accumulate, InOut, Input, Output};
-use std::borrow::Cow;
 
 use crate::backend::shader::{
     Cuda, MetaField, MetaType, Native, Shader, ShaderBinary, Signature, Wgsl, Workgroups,
@@ -36,9 +35,11 @@ mod native {
     pub(super) mod zero_tensor;
 }
 
-/// One builtin: how it is called, and its code in each format. WGSL and
-/// CUDA are sources; native code runs on the CPU backend as it is.
-pub struct Builtin {
+/// A shader with code in every format: how it is called, then WGSL, CUDA and
+/// native code. [`PortableShader::shader_for`] picks the format a backend
+/// runs. The builtins are made with [`shader_table!`](crate::shader_table), which other crates can
+/// use for their own shaders.
+pub struct PortableShader {
     /// How it is called.
     pub signature: Signature,
     /// WGSL source.
@@ -49,9 +50,10 @@ pub struct Builtin {
     pub native: Native,
 }
 
-impl Builtin {
-    // Native or WGSL as they are; CUDA compiled to PTX with NVRTC, when
-    // `compile-nvrtc` is on.
+impl PortableShader {
+    /// The [`Shader`] for backend `B`: native or WGSL code as it is, or the
+    /// CUDA code compiled to PTX with NVRTC when `compile-nvrtc` is on. Fails
+    /// with [`Error::UnsupportedBinary`] if `B` runs none of these.
     pub fn shader_for<B: Dispatch>(&'static self) -> Result<Shader, Error> {
         let ready = [
             ShaderBinary::Native(self.native),
@@ -64,6 +66,7 @@ impl Builtin {
         {
             use crate::backend::shader::Ptx;
             use crate::tools::compile::{compilers::nvrtc::Nvrtc, ShaderCompiler};
+            use std::borrow::Cow;
             if B::accepts(&ShaderBinary::Ptx(Ptx(Cow::Borrowed("")))) {
                 let ptx = Nvrtc::default().compile(&self.cuda)?;
                 return Ok(Shader::new(&self.signature, ShaderBinary::Ptx(ptx)));
@@ -75,28 +78,61 @@ impl Builtin {
     }
 }
 
-// File names and the native fn name all come from `$name`, so they can't
-// drift apart.
-macro_rules! builtins {
+/// Defines a table of [`PortableShader`]s: a `pub static` for each row, and
+/// `pub static ALL` listing them in row order.
+///
+/// A row is `STATIC / name [meta] [layout] [x, y, z] min_lens`: the static's
+/// name, the shader's name, its [`MetaField`]s, its
+/// [`BindingRole`](crate::backend::shader::BindingRole)s, its workgroup size
+/// and its `min_lens` function, by name.
+///
+/// The code is found from `name`, so file names, the native function and the
+/// shader's name can't drift apart. Paths are relative to the file that calls
+/// the macro:
+/// - `codes/wgsl/<name>.wgsl`
+/// - `codes/cuda/<name>.cu`
+/// - the native function `native::<name>::entry`, so a `native` module with
+///   one submodule per shader must be in scope there.
+///
+/// ```ignore
+/// use wilupgu::backend::dtype::DataKind::F32;
+/// use wilupgu::backend::shader::{BindingRole::*, MetaField, MetaType, Workgroups};
+///
+/// const N: MetaField = MetaField { name: "n", ty: MetaType::Uint };
+///
+/// fn each_n(m: &[u32], _: Workgroups, l: &mut [usize]) {
+///     l.fill(m[0] as usize);
+/// }
+///
+/// mod native {
+///     pub mod axpy; // has `pub fn entry(meta: &[u32], bindings: &mut [NativeBinding])`
+/// }
+///
+/// wilupgu::shader_table! {
+///     AXPY / axpy [N] [Accumulate(F32), Input(F32)] [256, 1, 1] each_n
+/// }
+/// ```
+#[macro_export]
+macro_rules! shader_table {
     ($( $static:ident / $name:ident [$($field:expr),* $(,)?] [$($role:expr),* $(,)?] $workgroup_size:tt $min_lens:ident )*) => {
         $(
-            #[doc = concat!("The `", stringify!($name), "` builtin; see the catalog in the module docs.")]
-            pub static $static: Builtin = Builtin {
-                signature: Signature {
+            #[doc = concat!("The `", stringify!($name), "` shader.")]
+            pub static $static: $crate::tools::builtins::PortableShader = $crate::tools::builtins::PortableShader {
+                signature: $crate::backend::shader::Signature {
                     name: stringify!($name),
                     meta: &[$($field),*],
                     layout: &[$($role),*],
                     min_lens: $min_lens,
                     workgroup_size: $workgroup_size,
                 },
-                wgsl: Wgsl(Cow::Borrowed(include_str!(concat!("codes/wgsl/", stringify!($name), ".wgsl")))),
-                cuda: Cuda(Cow::Borrowed(include_str!(concat!("codes/cuda/", stringify!($name), ".cu")))),
-                native: Native(native::$name::entry),
+                wgsl: $crate::backend::shader::Wgsl(::std::borrow::Cow::Borrowed(include_str!(concat!("codes/wgsl/", stringify!($name), ".wgsl")))),
+                cuda: $crate::backend::shader::Cuda(::std::borrow::Cow::Borrowed(include_str!(concat!("codes/cuda/", stringify!($name), ".cu")))),
+                native: $crate::backend::shader::Native(native::$name::entry),
             };
         )*
 
-        /// Every builtin, in catalog order.
-        pub static ALL: &[&Builtin] = &[$(&$static),*];
+        /// Every shader of this table, in row order.
+        pub static ALL: &[&$crate::tools::builtins::PortableShader] = &[$(&$static),*];
     };
 }
 
@@ -154,7 +190,7 @@ fn reduce_lens(m: &[u32], wg: Workgroups, l: &mut [usize]) {
     *l.last_mut().expect("a reduction has an output slot") = partials;
 }
 
-builtins! {
+shader_table! {
     // STATIC / name             [meta]                                    [tensors]                                   workgroup     min_lens
 
     // linear algebra

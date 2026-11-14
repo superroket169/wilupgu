@@ -2,7 +2,7 @@ use super::*;
 use crate::backend::dtype::{DataType, F32};
 use crate::backend::shader::{Ptx, Shader, ShaderBinary};
 use crate::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
-use crate::tools::builtins::{Builtin, ADD, ALL, SCALE};
+use crate::tools::builtins::{PortableShader, ADD, ALL, SCALE};
 use crate::tools::compile::compilers::nvrtc::Nvrtc;
 use crate::tools::compile::ShaderCompiler;
 
@@ -21,7 +21,7 @@ fn device() -> Option<ComputeDevice<CudaBackend>> {
     Some(ComputeDevice::new(cuda, DeviceConfig::default()))
 }
 
-fn shader(builtin: &'static Builtin) -> Shader {
+fn shader(builtin: &'static PortableShader) -> Shader {
     let ptx: Ptx = Nvrtc::default().compile(&builtin.cuda).unwrap();
     Shader::new(&builtin.signature, ShaderBinary::Ptx(ptx))
 }

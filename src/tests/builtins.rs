@@ -27,7 +27,7 @@ fn native_source(s: &Signature) -> String {
 }
 
 // Every source this shader has, with the format's name.
-fn sources(b: &Builtin) -> Vec<(&'static str, String)> {
+fn sources(b: &PortableShader) -> Vec<(&'static str, String)> {
     vec![
         ("wgsl", b.wgsl.0.to_string()),
         ("native", native_source(&b.signature)),

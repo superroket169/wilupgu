@@ -3,7 +3,7 @@ use crate::backend::shader::{ShaderBinary, Workgroups};
 use crate::backend::{Backend, Topology};
 use crate::error::Error;
 use crate::safe::{ComputeDevice, MetaValue};
-use crate::tools::builtins::{Builtin, ALL};
+use crate::tools::builtins::{PortableShader, ALL};
 
 use MetaValue::{Float, Uint};
 
@@ -28,7 +28,7 @@ pub fn compare_builtins<A: Backend + Topology, B: Backend + Topology>(
 // Edge cases for each builtin: empty, one, and both sides of a workgroup's
 // edge. A reduction's partials are compared as a `Total` when native code
 // runs on a side, since it writes the whole sum to the first partial.
-pub fn cases(builtin: &Builtin, with_native: bool) -> Vec<Case> {
+pub fn cases(builtin: &PortableShader, with_native: bool) -> Vec<Case> {
     const EXACT: Check = close(1e-6, 0.0);
     let partials = if with_native {
         Check::Total {

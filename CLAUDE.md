@@ -30,9 +30,10 @@ planned).
   without an adapter.
 - `src/tools/` holds optional packages, each behind its own feature. A user
   can pick a backend and use none of them.
-  - `builtins/` (`tool-builtins`, default): the builtin shader table;
+  - `builtins/` (`tool-builtins`, default): `PortableShader`, the
+    exported `shader_table!` macro, and the builtin shader table made with it;
     `codes/{wgsl,native,cuda}/` has one file per shader per format.
-    Directory names mirror `Builtin` fields.
+    Directory names mirror `PortableShader` fields.
   - `plan/` (`tool-plan`, always built for tests): `deferred` (`Resolvable`,
     `Relation`, `Dynamic`), `id`, `tensor` (`TensorSpec`, `HollowTensor`,
     `AnyTensor`), `node` (`NodeSpec`), `call` (`CallSpec`, `Call`), `run`
