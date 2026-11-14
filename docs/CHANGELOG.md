@@ -23,6 +23,11 @@ were never published to crates.io.
   empty-tensor tests for the CPU and CUDA backends.
 - The `min_lens` test (exact-size vs padded buffers) runs on the WGSL and
   CUDA code of every builtin too, not only the native code.
+- `scripts/miri.sh`: every CPU test under Miri in its own process, or the
+  ones matching a filter with Miri's whole report, or under several thread
+  schedules (`SEEDS=N`).
+- CI's Miri job runs each test in its own process (cargo-nextest), then
+  the doctests.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
   and nvcc and NVRTC where an NVIDIA driver has no toolkit, then runs
   `scripts/tester_script.sh`.

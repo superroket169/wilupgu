@@ -63,6 +63,12 @@ land in. New tools are not on the list.
   - `mem::swap`, `mem::replace`, `mem::forget`;
   - drop order on panic.
 
+  A test that has to hit a race isn't run thousands of times hoping for
+  it: the state is set up so it happens every time (the pool for address
+  reuse), `loom` runs a test under every interleaving of its threads (the
+  capture lock in `ComputeDevice::capturing` first), and
+  `SEEDS=N scripts/miri.sh <test>` tries N schedules under Miri.
+
 ## Design
 
 Each tool gets its own feature once it builds (`tool-plan`,
@@ -157,8 +163,6 @@ for that is still to write.
 
 ## Checks
 
-- Run Miri per test in CI (`cargo miri nextest run`), so one UB doesn't
-  stop the run and hide the rest.
 - Run the CUDA tests under `compute-sanitizer` (it comes with the toolkit,
   so Colab has it): it reports every out-of-bounds read and write, where
   the exact-size vs padded `min_lens` test sees a read only when it changes
