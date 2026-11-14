@@ -533,7 +533,11 @@ fn capture_rejects_runs_from_another_scope() {
         })
     })
     .unwrap();
-    assert!(nested.is_err(), "a nested scope's run was recorded");
+    assert_eq!(
+        nested,
+        Err(Error::CapturedElsewhere),
+        "a nested scope's run"
+    );
 
     let mut threaded = Ok(());
     dev.scope(|s| {
@@ -553,7 +557,38 @@ fn capture_rejects_runs_from_another_scope() {
         })
     })
     .unwrap();
-    assert!(threaded.is_err(), "another thread's run was recorded");
+    assert_eq!(
+        threaded,
+        Err(Error::CapturedElsewhere),
+        "another thread's run"
+    );
+}
+
+// The backend records for the whole device, so two scopes can't capture at
+// once; once a capture ends, other scopes run and capture again.
+#[test]
+fn one_scope_captures_at_a_time() {
+    let dev = device(0);
+    let mut x = f32s(&dev, &[1.0]);
+    let mut node = scale_node(&dev, 1, 2.0);
+
+    let mut inner = None;
+    dev.scope(|s| {
+        s.capture(|| {
+            inner = Some(dev.scope(|s2| s2.capture(|| Ok(())).map(drop)));
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(inner, Some(Err(Error::CapturedElsewhere)));
+
+    let after = dev.scope(|s| {
+        let (x, n) = (s.bind(&mut x)?, s.bind_node(&mut node)?);
+        s.execute(n, &[Arg::Write(x)])?;
+        s.capture(|| s.execute(n, &[Arg::Write(x)])).map(drop)
+    });
+    assert_eq!(after, Ok(()));
+    assert_eq!(F32::unwrap(x.download()), Some(vec![2.0]));
 }
 
 // A buffer freed after the recording can come back at the same address as

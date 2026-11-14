@@ -11,6 +11,7 @@ use crate::backend::pool::BufferPool;
 use crate::backend::shader::{BindingRole, MetaType, Shader, Signature, Workgroups};
 use crate::backend::{Area as _, Areable, Backend, Carved, Node as _, Topology, COPY_ALIGN};
 use crate::error::Error;
+use std::sync::RwLock;
 
 pub(crate) mod rules;
 mod scope;
@@ -50,6 +51,11 @@ pub struct ComputeDevice<B: Backend + Topology> {
     /// Declared before `raw` so the pooled buffers are freed while the device is still open.
     pool: BufferPool<B::Buffer>,
     raw: B,
+    /// The id of the scope capturing on this device, if one is. A backend
+    /// records every run on the device while capturing, so `Scope::execute`
+    /// holds this read-locked across its check and its `execute_raw`: a run
+    /// of another scope is rejected, never recorded unchecked.
+    capturing: RwLock<Option<u64>>,
 }
 
 impl<B: Backend + Topology> ComputeDevice<B> {
@@ -58,6 +64,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         Self {
             pool: BufferPool::new(config.pool_bytes),
             raw,
+            capturing: RwLock::new(None),
         }
     }
 

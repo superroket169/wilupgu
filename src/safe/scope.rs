@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::PoisonError;
 
 use crate::backend::dtype::HostData;
 use crate::backend::{Access, Backend, Buffer as _, Capturable, Topology};
@@ -10,6 +12,9 @@ use super::{copy_ranges, rules, ComputeDevice, MetaValue, Node, Tensor};
 /// Invariant in 'scope, so a slot of one scope can't be given to another.
 type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
 
+// Every scope gets its own value, so a device knows which one is capturing.
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
+
 /// GPU work on one device, made by [`ComputeDevice::scope`]. Buffers and nodes
 /// are bound to it once, then named by their slots in as many runs as needed.
 ///
@@ -17,6 +22,8 @@ type Brand<'scope> = PhantomData<fn(&'scope ()) -> &'scope ()>;
 /// apart so a [`Recording`] borrows only the device, not the buffers.
 pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
+    /// What `ComputeDevice::capturing` holds while this scope captures.
+    id: u64,
     /// Each pointer comes from a `&'scope mut` given to `bind`/`bind_node`,
     /// so it stays valid and unaliased until the scope ends.
     bufs: RefCell<Vec<*mut Tensor<'d, B>>>,
@@ -76,6 +83,7 @@ impl<B: Backend + Topology> ComputeDevice<B> {
         let _sync = SyncOnDrop(self);
         let scope = Scope {
             dev: self,
+            id: NEXT_SCOPE.fetch_add(1, Ordering::Relaxed),
             bufs: RefCell::new(Vec::new()),
             nodes: RefCell::new(Vec::new()),
             recording: RefCell::new(None),
@@ -174,8 +182,18 @@ impl<'scope, 'env, 'd, B: Backend + Topology> Scope<'scope, 'env, 'd, B> {
     /// an `Input` slot doesn't get [`Arg::Read`] or another slot
     /// [`Arg::Write`], a buffer's kind isn't its slot's, a buffer is shorter
     /// than the shader's `min_lens` for the node's meta, or a written buffer is
-    /// in another slot too.
+    /// in another slot too, or if another scope is capturing on the device.
     pub fn execute(&self, node: NodeSlot<'scope>, args: &[Arg<'scope>]) -> Result<(), Error> {
+        // Held until `execute_raw` returns, so no capture of another scope
+        // starts between this check and the run.
+        let capturing = self
+            .dev
+            .capturing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        if capturing.is_some_and(|id| id != self.id) {
+            return Err(Error::CapturedElsewhere);
+        }
         // SAFETY: see `nodes`.
         let node = unsafe { &*self.nodes.borrow()[node.index] };
         self.check(node, args)?;
@@ -283,6 +301,16 @@ impl<B: Backend + Topology + Capturable> Drop for Recording<'_, B> {
     }
 }
 
+impl<B: Backend + Topology> ComputeDevice<B> {
+    // Frees the device for other scopes' runs and captures, after `end_capture`.
+    fn end_capturing(&self) {
+        *self
+            .capturing
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+}
+
 /// Ends a capture that `f` left by panicking, so the device doesn't stay recording.
 struct EndCaptureOnDrop<'a, B: Backend + Topology + Capturable> {
     dev: &'a ComputeDevice<B>,
@@ -297,6 +325,7 @@ impl<B: Backend + Topology + Capturable> Drop for EndCaptureOnDrop<'_, B> {
             if let Ok(raw) = self.dev.raw.end_capture() {
                 self.dev.raw.release_capture(raw);
             }
+            self.dev.end_capturing();
         }
     }
 }
@@ -306,8 +335,10 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
     /// each one is checked as usual. Uploads and downloads inside `f` aren't
     /// recorded: they happen right away.
     ///
-    /// Fails if this scope is already capturing, or if `f` fails; then nothing
-    /// is kept, also when `f` panics.
+    /// Fails if this scope is already capturing, if another scope is capturing
+    /// on the device ([`Error::CapturedElsewhere`]; until this capture ends,
+    /// so do runs of other scopes), or if `f` fails; then nothing is kept,
+    /// also when `f` panics.
     pub fn capture(
         &self,
         f: impl FnOnce() -> Result<(), Error>,
@@ -315,8 +346,21 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
         if self.recording.borrow().is_some() {
             return Err(Error::AlreadyCapturing);
         }
+        {
+            let mut capturing = self
+                .dev
+                .capturing
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            if capturing.is_some() {
+                return Err(Error::CapturedElsewhere);
+            }
+            // After `begin_capture`, which panics if the backend is already
+            // recording, so a panic there leaves the device free.
+            self.dev.raw.begin_capture();
+            *capturing = Some(self.id);
+        }
         *self.recording.borrow_mut() = Some(Vec::new());
-        self.dev.raw.begin_capture();
         let mut guard = EndCaptureOnDrop {
             dev: self.dev,
             recording: &self.recording,
@@ -331,9 +375,12 @@ impl<'scope, 'env, 'd, B: Backend + Topology + Capturable> Scope<'scope, 'env, '
             .take()
             .expect("set above, only taken here or on panic");
 
-        let raw = self.dev.raw.end_capture().map_err(Error::Backend)?;
+        // Ended before the device is free again, so no run of another scope
+        // reaches this recording.
+        let raw = self.dev.raw.end_capture();
+        self.dev.end_capturing();
         let recording = Recording {
-            raw: Some(raw),
+            raw: Some(raw.map_err(Error::Backend)?),
             calls,
             dev: self.dev,
         };

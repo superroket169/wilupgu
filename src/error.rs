@@ -82,6 +82,8 @@ pub enum Error {
     AlreadyCapturing,
     /// A replay inside a capture.
     ReplayWhileCapturing,
+    /// A run, or a capture, while another scope is capturing on the device.
+    CapturedElsewhere,
     /// A replay's recorded node or tensor isn't bound in the scope, or has
     /// moved.
     NotBound { what: &'static str },
@@ -207,6 +209,9 @@ impl fmt::Display for Error {
             Error::SameTensor => write!(f, "a copy from a tensor into itself"),
             Error::AlreadyCapturing => write!(f, "a capture inside a capture"),
             Error::ReplayWhileCapturing => write!(f, "a replay inside a capture"),
+            Error::CapturedElsewhere => {
+                write!(f, "another scope is capturing on this device")
+            }
             Error::NotBound { what } => write!(
                 f,
                 "a recorded {what} isn't bound in this scope, or has moved"

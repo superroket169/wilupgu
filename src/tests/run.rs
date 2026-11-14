@@ -578,6 +578,33 @@ fn a_failed_capture_gives_the_run_back() {
     assert_eq!(run.tensor(x_id).unwrap().len(), 1);
 }
 
+// `Run::capture` goes through `Scope::capture`, so it waits its turn like
+// any scope and gives the run back.
+#[test]
+fn capture_fails_while_another_scope_captures() {
+    let x = f32_tensor(vec![1.0, 2.0]);
+    let x_id = x.id();
+    let dev = device();
+    let run = plan(vec![x], vec![scale_call(x_id, 2, fixed(2.0))])
+        .build(&dev)
+        .map_err(|(_, e)| e)
+        .unwrap();
+
+    let mut inner = None;
+    dev.scope(|s| {
+        s.capture(|| {
+            inner = Some(run.capture());
+            Ok(())
+        })
+    })
+    .unwrap();
+    let Some(Err((run, e))) = inner else {
+        panic!("captured while another scope was capturing")
+    };
+    assert_eq!(e, Error::CapturedElsewhere);
+    assert!(run.capture().is_ok());
+}
+
 #[test]
 fn new_rejects_a_written_tensor_in_two_slots() {
     let y = f32_tensor(vec![1.0]);
