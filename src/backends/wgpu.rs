@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -133,7 +134,15 @@ pub struct WgpuBackend {
     queue: wgpu::Queue,
     limits: wgpu::Limits,
     pending: Mutex<Pending>,
+    // Each pipeline made once, by its code's format and bytes and which
+    // slots are read-only. Kept until the backend drops; there are as many
+    // as distinct shaders.
+    pipelines: Mutex<HashMap<PipelineKey, (wgpu::ComputePipeline, wgpu::BindGroupLayout)>>,
 }
+
+// A code's format (WGSL, GLSL, SPIR-V), its bytes, and each tensor slot's
+// read-only flag.
+type PipelineKey = (u8, Vec<u8>, Vec<bool>);
 
 impl WgpuBackend {
     /// Opens wilupgu on a device the caller already has, so a wgpu app and
@@ -158,6 +167,7 @@ impl WgpuBackend {
             device,
             queue,
             pending: Mutex::new(Pending::default()),
+            pipelines: Mutex::new(HashMap::new()),
         }
     }
 
@@ -414,44 +424,73 @@ impl Dispatch for WgpuBackend {
                 )
                 .collect();
 
-        // Validation errors are the shader's or the signature's; internal
-        // ones are the driver failing to compile it.
-        let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(name),
-                source,
-            });
-        let layout = self
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(name),
-                entries: &entries,
-            });
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(name),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            });
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(name),
-                layout: Some(&pipeline_layout),
-                module: &module,
-                entry_point: Some("entry"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-        for scope in [validation, internal] {
-            if let Some(e) = pollster::block_on(scope.pop()) {
-                return Err(format!("wgpu: shader `{name}`: {e}"));
+        // A pipeline and its layout are made once per code and slot roles, and
+        // shared by the nodes of that shader.
+        let code: Vec<u8> = match shader.binary() {
+            ShaderBinary::Wgsl(wgsl) => wgsl.0.as_bytes().to_vec(),
+            ShaderBinary::Glsl(glsl) => glsl.0.as_bytes().to_vec(),
+            ShaderBinary::Spirv(spirv) => bytemuck::cast_slice(&spirv.0[..]).to_vec(),
+            _ => unreachable!("matched above"),
+        };
+        let format = match shader.binary() {
+            ShaderBinary::Wgsl(_) => 0,
+            ShaderBinary::Glsl(_) => 1,
+            _ => 2,
+        };
+        let read_only: Vec<bool> = signature
+            .layout
+            .iter()
+            .map(|role| matches!(role, BindingRole::Input(_)))
+            .collect();
+        let key = (format, code, read_only);
+        // Held while building, so two threads don't build one pipeline twice.
+        let mut pipelines = self.pipelines.lock().unwrap();
+        let (pipeline, layout) = match pipelines.get(&key) {
+            Some(found) => found.clone(),
+            None => {
+                // Validation errors are the shader's or the signature's; internal
+                // ones are the driver failing to compile it.
+                let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+                let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                let module = self
+                    .device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(name),
+                        source,
+                    });
+                let layout =
+                    self.device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some(name),
+                            entries: &entries,
+                        });
+                let pipeline_layout =
+                    self.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some(name),
+                            bind_group_layouts: &[Some(&layout)],
+                            immediate_size: 0,
+                        });
+                let pipeline =
+                    self.device
+                        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some(name),
+                            layout: Some(&pipeline_layout),
+                            module: &module,
+                            entry_point: Some("entry"),
+                            compilation_options: Default::default(),
+                            cache: None,
+                        });
+                for scope in [validation, internal] {
+                    if let Some(e) = pollster::block_on(scope.pop()) {
+                        return Err(format!("wgpu: shader `{name}`: {e}"));
+                    }
+                }
+                pipelines.insert(key, (pipeline.clone(), layout.clone()));
+                (pipeline, layout)
             }
-        }
+        };
+        drop(pipelines);
 
         // At least one word: every shader binds a meta. A new buffer is
         // zeroed, and nothing ran on it, so the write needs no ordering.

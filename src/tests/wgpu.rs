@@ -222,3 +222,28 @@ fn min_lens_cover_what_wgsl_code_touches() {
     let Some(dev) = device(1) else { return };
     crate::tools::builtins::tests::min_lens_cover_what_code_touches(&dev, shader);
 }
+
+// Nodes of one shader share its pipeline, each with its own meta; another
+// shader gets its own.
+#[test]
+fn a_pipeline_is_made_once_per_shader() {
+    let Some(dev) = device(1) else { return };
+    let (add, scale) = (shader(&ADD), shader(&SCALE));
+    let wg = Workgroups::linear(1);
+    let mut first = dev.node(&add, &[MetaValue::Uint(1)], wg).unwrap();
+    let mut both = dev.node(&add, &[MetaValue::Uint(2)], wg).unwrap();
+    assert_eq!(dev.raw().pipelines.lock().unwrap().len(), 1);
+    let _scale = dev.node(&scale, &scale_meta(1, 2.0), wg).unwrap();
+    assert_eq!(dev.raw().pipelines.lock().unwrap().len(), 2);
+
+    let mut x = dev.tensor_from(&F32::wrap(vec![1.0, 1.0])).unwrap();
+    let mut y = dev.tensor_from(&F32::wrap(vec![10.0, 10.0])).unwrap();
+    dev.scope(|s| {
+        let (x, y) = (s.bind(&mut x)?, s.bind(&mut y)?);
+        let (first, both) = (s.bind_node(&mut first)?, s.bind_node(&mut both)?);
+        s.execute(first, &[Arg::Write(x), Arg::Read(y)])?;
+        s.execute(both, &[Arg::Write(x), Arg::Read(y)])
+    })
+    .unwrap();
+    assert_eq!(x.download_vec::<F32>().unwrap(), vec![21.0, 11.0]);
+}
