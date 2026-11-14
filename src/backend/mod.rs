@@ -104,6 +104,9 @@ pub trait Storage: Send + Sync + 'static {
     type Buffer: Buffer;
 
     /// A new buffer of at least `bytes` bytes. Its contents are unspecified.
+    /// `bytes` may be 0, for an empty tensor: the buffer is still a valid
+    /// one to bind, upload to and download from, so a backend whose driver
+    /// refuses 0 bytes rounds up.
     fn alloc_raw(&self, bytes: u64) -> Result<Self::Buffer, String>;
 
     /// Writes `data` to `buf`, starting `offset` bytes in.

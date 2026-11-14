@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::dtype::{DataType, F32};
+use crate::backend::dtype::{DataKind, DataType, F32};
 use crate::backend::shader::{Ptx, Shader, ShaderBinary};
 use crate::safe::{Arg, ComputeDevice, DeviceConfig, MetaValue};
 use crate::tools::builtins::{PortableShader, ADD, ALL, SCALE};
@@ -67,6 +67,25 @@ fn add_runs() {
     })
     .unwrap();
     assert_eq!(x.download_vec::<F32>().unwrap(), vec![11.0, 22.0, 33.0]);
+}
+
+// `Storage::alloc_raw` gives a valid buffer for 0 bytes.
+#[test]
+fn an_empty_tensor_round_trips_and_runs() {
+    let Some(dev) = device() else { return };
+    let mut x = dev.alloc(DataKind::F32, 0).unwrap();
+    let mut y = dev.alloc(DataKind::F32, 0).unwrap();
+    x.upload_slice::<F32>(&[]).unwrap();
+    x.zero().unwrap();
+    let mut add = dev
+        .node(&shader(&ADD), &[MetaValue::Uint(0)], Workgroups::linear(1))
+        .unwrap();
+    dev.scope(|s| {
+        let (x, y, add) = (s.bind(&mut x)?, s.bind(&mut y)?, s.bind_node(&mut add)?);
+        s.execute(add, &[Arg::Write(x), Arg::Read(y)])
+    })
+    .unwrap();
+    assert_eq!(x.download_vec::<F32>().unwrap(), Vec::<f32>::new());
 }
 
 #[test]
