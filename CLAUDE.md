@@ -79,8 +79,10 @@ Before reporting a change as done:
 - `cargo fmt --check`
 - `cargo build --no-default-features`
 
-Compile-time guarantees (what the borrow checker must reject) are tried in
-a scratch crate outside the repo, depending on wilupgu by path.
+Compile-time guarantees (what the borrow checker must reject) are kept as
+`compile_fail` doctests on `Scope`, each next to a passing twin; a new one
+is tried first in a scratch crate outside the repo, depending on wilupgu
+by path, to see that it fails for the intended reason.
 
 ## Comments
 

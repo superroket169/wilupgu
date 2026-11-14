@@ -20,6 +20,93 @@ static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
 ///
 /// 'env is what the closure borrows from outside, 'd the device. They are
 /// apart so a [`Recording`] borrows only the device, not the buffers.
+///
+/// # Compile-time guarantees
+///
+/// What the borrow checker accepts: a buffer made before the scope, reached
+/// inside it only through its slot, and a recording dropped before its
+/// device. Each block after this one changes one thing and doesn't compile.
+/// (That the host can't touch a bound buffer is shown in the crate docs.)
+///
+/// ```
+/// # use wilupgu::backends::CpuBackend;
+/// # use wilupgu::prelude::*;
+/// # fn main() -> Result<(), Error> {
+/// let dev = ComputeDevice::<CpuBackend>::first()?;
+/// let mut x = dev.alloc(DataKind::F32, 4)?;
+/// let recording = dev.scope(|s| {
+///     let slot = s.bind(&mut x)?;
+///     let _ = s.download(slot);
+///     s.capture(|| Ok(()))
+/// })?;
+/// drop(recording);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A buffer made inside the scope can't be bound: it would be freed while
+/// the device may still use it.
+///
+/// ```compile_fail,E0597
+/// # use wilupgu::backends::CpuBackend;
+/// # use wilupgu::prelude::*;
+/// # fn main() -> Result<(), Error> {
+/// # let dev = ComputeDevice::<CpuBackend>::first()?;
+/// dev.scope(|s| {
+///     let mut y = dev.alloc(DataKind::F32, 4)?;
+///     s.bind(&mut y)?; // `y` does not live long enough
+///     Ok::<(), Error>(())
+/// })?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A slot can't leave its scope.
+///
+/// ```compile_fail
+/// # use wilupgu::backends::CpuBackend;
+/// # use wilupgu::prelude::*;
+/// # fn main() -> Result<(), Error> {
+/// # let dev = ComputeDevice::<CpuBackend>::first()?;
+/// # let mut x = dev.alloc(DataKind::F32, 4)?;
+/// let slot = dev.scope(|s| s.bind(&mut x))?; // lifetime may not live long enough
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A slot can't be given to another scope, nested or not.
+///
+/// ```compile_fail,E0521
+/// # use wilupgu::backends::CpuBackend;
+/// # use wilupgu::prelude::*;
+/// # fn main() -> Result<(), Error> {
+/// # let dev = ComputeDevice::<CpuBackend>::first()?;
+/// # let mut x = dev.alloc(DataKind::F32, 4)?;
+/// dev.scope(|s| {
+///     let slot = s.bind(&mut x)?;
+///     dev.scope(|s2| {
+///         let _ = s2.download(slot); // borrowed data escapes outside of closure
+///     });
+///     Ok::<(), Error>(())
+/// })?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A recording can't outlive its device.
+///
+/// ```compile_fail,E0597
+/// # use wilupgu::backends::CpuBackend;
+/// # use wilupgu::prelude::*;
+/// # fn main() -> Result<(), Error> {
+/// let recording = {
+///     let dev = ComputeDevice::<CpuBackend>::first()?;
+///     dev.scope(|s| s.capture(|| Ok(())))? // `dev` does not live long enough
+/// };
+/// drop(recording);
+/// # Ok(())
+/// # }
+/// ```
 pub struct Scope<'scope, 'env: 'scope, 'd: 'env, B: Backend + Topology> {
     dev: &'d ComputeDevice<B>,
     /// What `ComputeDevice::capturing` holds while this scope captures.
