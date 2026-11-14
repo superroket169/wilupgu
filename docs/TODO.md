@@ -127,8 +127,6 @@ for that is still to write.
     rented cloud GPU, or volunteers running `scripts/tester_script`.
   - `submit_every` is a `pub` field (`AtomicU8`); it wants a setter or a
     `DeviceConfig` entry once the knob above is settled (#12).
-  - A wgpu app can't open wilupgu on its own `wgpu::Device`:
-    `WgpuBackend::from_device(device, queue)`.
   - A bind group is made per dispatch; cache it by node and buffers.
   - Fixed binding model: every slot is a whole storage buffer at offset 0;
     no uniforms, textures, push constants or indirect dispatch, and the API

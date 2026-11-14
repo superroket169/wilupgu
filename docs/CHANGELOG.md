@@ -12,7 +12,8 @@ were never published to crates.io.
   fail until the holes are closed.
 - `rust-version = "1.95"` in `Cargo.toml`, checked in CI with every
   feature on.
-- `WgpuBackend::device` and `WgpuBackend::queue`.
+- `WgpuBackend::device` and `WgpuBackend::queue`, and
+  `WgpuBackend::from_device`: wilupgu on a device a wgpu app already has.
 - `shader_table!`, exported: the macro the builtins are defined with, so
   another crate defines its own shaders the same way.
 - `scripts/setup.sh`: on Ubuntu or Debian (Colab included), installs Rust,
